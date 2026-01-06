@@ -1,0 +1,14 @@
+{
+    "version": 1.0,
+  
+    "menu": {
+        "cockpit-s3-browser": {
+            "label": "45Drives s3 browser",
+            "path": "index.html",
+            "order": 115
+            
+        }
+    },
+    "preload": ["index"]
+  }
+  
