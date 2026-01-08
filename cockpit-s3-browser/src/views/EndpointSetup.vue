@@ -8,7 +8,7 @@
               <!-- Left: search -->
               <div class="flex-1 max-w-md">
                 <input v-model.trim="search" type="text" placeholder="Search connections..."
-                  class="block w-full rounded-md border border-default  px-3 py-2 text-sm  shadow-sm placeholder:text-default/60 input-textlike bg-default text-default" />
+                  class="block w-full rounded-md border border-default  px-3 py-2 text-sm  shadow-sm placeholder:text-default input-textlike bg-default text-default" />
               </div>
 
               <!-- Right: actions -->
@@ -28,7 +28,7 @@
         <div class="overflow-x-auto">
           <table class="w-full border-collapse text-sm">
             <thead>
-              <tr class="border-b border-default bg-default/40 text-center text-default">
+              <tr class="border border-default border-collapse  bg-well w-full text-center items-center rounded-sm p-1">
                 <th class="px-4 py-3 font-semibold">Name</th>
                 <th class="px-4 py-3 font-semibold">Endpoint</th>
                 <th class="px-4 py-3 font-semibold">Region</th>
@@ -41,22 +41,22 @@
 
             <tbody>
               <tr v-if="!busy && filtered.length === 0">
-                <td colspan="7" class="px-4 py-10 text-center text-default/70">
+                <td colspan="7" class="px-4 py-10 text-center text-default">
                   No connections found.
                 </td>
               </tr>
 
               <tr v-for="c in filtered" :key="c.id"
-                class="border-b border-default/70 text-center last:border-b-0 hover:bg-default/20">
+                class=" border border-default border-collapse  w-full text-center items-center rounded-sm p-1">
                 <td class="px-4 py-3 text-default">
                   <div class="font-medium">{{ c.name }}</div>
                 </td>
 
-                <td class="px-4 py-3 text-default/80">
+                <td class="px-4 py-3 text-default">
                   <div class="max-w-[32rem] truncate" :title="c.endpoint">{{ c.endpoint }}</div>
                 </td>
 
-                <td class="px-4 py-3 text-default/80">{{ c.region || "—" }}</td>
+                <td class="px-4 py-3 text-default">{{ c.region || "—" }}</td>
 
                 <td class="px-4 py-3">
                   <span
@@ -66,8 +66,8 @@
                   </span>
                 </td>
 
-                <td class="px-4 py-3 text-default/80">{{ formatDate(c.updatedAt) }}</td>
-                <td class="px-4 py-3 text-default/80">{{ formatDate(c.lastUsedAt) }}</td>
+                <td class="px-4 py-3 text-default">{{ formatDate(c.updatedAt) }}</td>
+                <td class="px-4 py-3 text-default">{{ formatDate(c.lastUsedAt) }}</td>
 
                 <td class="px-4 py-3">
                   <div class="flex justify-center gap-2">
@@ -103,7 +103,7 @@
           <div class="w-full max-w-lg rounded-md border border-default bg-accent shadow-lg">
             <div class="border-b border-default px-5 py-4">
               <h2 class="text-base font-semibold text-default">Delete connection</h2>
-              <p class="mt-1 text-sm text-default/70">
+              <p class="mt-1 text-sm text-default">
                 This will remove the saved connection from the system.
               </p>
             </div>
@@ -111,10 +111,10 @@
             <div class="space-y-3 px-5 py-4 text-sm text-default">
               <div class="rounded-md border border-default bg-default p-3">
                 <div class="font-medium">{{ confirmDelete.item?.name }}</div>
-                <div class="mt-1 text-default/70">{{ confirmDelete.item?.endpoint }}</div>
+                <div class="mt-1 text-default">{{ confirmDelete.item?.endpoint }}</div>
               </div>
 
-              <p class="text-default/70">
+              <p class="text-default">
                 This action cannot be undone.
               </p>
             </div>

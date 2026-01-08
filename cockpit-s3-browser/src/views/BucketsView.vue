@@ -4,27 +4,21 @@
       <div class="rounded-md border border-default bg-accent shadow-sm">
         <div class="border-b border-default px-4 py-3 flex items-center justify-between gap-3">
           <div class="flex items-start gap-3">
-            <button
-              type="button"
-              class="inline-flex items-center justify-center rounded-md border border-default bg-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
-              :disabled="busy"
-              @click="goBack"
-            >
+            <button type="button"
+              class="inline-flex items-center btn-secondary justify-center rounded-md border border-default  px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+              :disabled="busy" @click="goBack">
               Back
             </button>
 
             <div>
               <div class="text-base font-semibold text-default">Buckets</div>
-              <div class="text-sm text-default/70">Connection: {{ connectionName || "—" }}</div>
+              <div class="text-sm text-default">Connection: {{ connectionName || "—" }}</div>
             </div>
           </div>
 
-          <button
-            type="button"
-            class="inline-flex items-center justify-center rounded-md border border-default bg-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="busy"
-            @click="refresh"
-          >
+          <button type="button"
+            class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="busy" @click="refresh">
             Refresh
           </button>
         </div>
@@ -35,25 +29,25 @@
           </div>
 
           <div class="mb-3 flex items-center gap-3">
-            <input
-              v-model.trim="query"
-              type="text"
-              placeholder="Search buckets..."
-              class="block w-full rounded-md border border-default px-3 py-2 text-sm shadow-sm placeholder:text-default/60 bg-default text-default focus:outline-none focus:ring-2 focus:ring-default"
-              :disabled="busy || buckets.length === 0"
-            />
-            <button
-              v-if="query"
-              type="button"
+            <div class="relative w-full">
+              <div class="pointer-events-none absolute left-3 top-6">
+                <MagnifyingGlassIcon class="h-4 w-4 text-default" />
+              </div>
+
+              <input v-model.trim="query" type="text" placeholder="Search buckets..."
+                class="block w-full rounded-md border border-default bg-default px-3 py-2 pl-9 text-sm text-default shadow-sm placeholder:text-default/60 focus:outline-none focus:ring-2 focus:ring-default"
+                :disabled="busy || buckets.length === 0" />
+            </div>
+
+
+            <button v-if="query" type="button"
               class="rounded-md border border-default bg-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
-              @click="query = ''"
-              :disabled="busy"
-            >
+              @click="query = ''" :disabled="busy">
               Clear
             </button>
           </div>
 
-          <div class="mb-3 flex items-center justify-between text-sm text-default/70">
+          <div class="mb-3 flex items-center justify-between text-sm text-default">
             <div>
               Total: <span class="text-default font-medium">{{ buckets.length }}</span>
               <span v-if="query">
@@ -62,37 +56,55 @@
             </div>
           </div>
 
-          <div v-if="busy" class="py-8 text-center text-default/70">
+          <div v-if="busy" class="py-8 text-center text-default">
             Loading buckets...
           </div>
 
-          <div v-else-if="buckets.length === 0" class="py-8 text-center text-default/70">
+          <div v-else-if="buckets.length === 0" class="py-8 text-center text-default">
             No buckets found.
           </div>
 
-          <div v-else-if="filteredBuckets.length === 0" class="py-8 text-center text-default/70">
+          <div v-else-if="filteredBuckets.length === 0" class="py-8 text-center text-default">
             No buckets match "{{ query }}".
           </div>
 
-          <div v-else class="overflow-x-auto">
+          <div class="overflow-x-auto rounded-md border border-default">
             <table class="w-full border-collapse text-sm">
               <thead>
-                <tr class="border-b border-default bg-default/40 text-left text-default">
-                  <th class="px-3 py-2 font-semibold">Bucket</th>
-                  <th class="px-3 py-2 font-semibold">Created</th>
+                <tr class="bg-well text-center text-default">
+                  <th class="px-3 py-2 font-semibold border-b border-default w-[22rem]">Bucket</th>
+                  <th class="px-3 py-2 font-semibold border-b border-default">Created</th>
+                  <th class="px-3 py-2 font-semibold border-b border-default">Actions</th>
                 </tr>
               </thead>
-              <tbody>
-                <tr
-  v-for="b in filteredBuckets"
-  :key="b.name"
-  class="border-b border-default/70 last:border-b-0 hover:bg-default/20 cursor-pointer"
-  @click="openBucket(b.name)"
->
-  <td class="px-3 py-2 text-default font-medium">{{ b.name }}</td>
-  <td class="px-3 py-2 text-default/80">{{ formatDate(b.creationDate) }}</td>
-</tr>
 
+              <tbody>
+                <tr v-for="b in filteredBuckets" :key="b.name" class="text-center hover:bg-default/20">
+                  <td class="px-3 py-2 text-default font-medium border-b border-default">
+                    <div class="flex">
+                      <div class="w-1/2 text-right flex justify-end">
+                        <ArchiveBoxIcon class="h-4 w-4 icon-default justify-self-end shrink-0" />
+
+                      </div>
+                      <div class="truncate w-1/2 text-left">{{ b.name }}</div>
+                    </div>
+                  </td>
+
+
+                  <td class="px-3 py-2 text-default border-b border-default">
+                    {{ formatDate(b.creationDate) }}
+                  </td>
+
+                  <td class="px-3 py-2 border-b border-default">
+                    <div class="flex justify-center">
+                      <button type="button"
+                        class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+                        :disabled="busy" @click="openBucket(b.name)">
+                        Open
+                      </button>
+                    </div>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -108,6 +120,8 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { listBuckets } from "../lib/s3Buckets";
 import type { BucketSummary } from "../types";
+import { ArchiveBoxIcon, MagnifyingGlassIcon } from "@heroicons/vue/20/solid";
+
 
 const route = useRoute();
 const router = useRouter();

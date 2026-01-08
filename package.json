@@ -10,5 +10,8 @@
     "prepare-deb": "chmod +x packaging/debian/DEBIAN/postinst",
     "package": "yarn build && yarn prepare-deb && dpkg-deb --build packaging/debian"
   },
-  "packageManager": "yarn@4.12.0"
+  "packageManager": "yarn@4.12.0",
+  "dependencies": {
+    "@heroicons/vue": "^2.2.0"
+  }
 }
