@@ -37,7 +37,7 @@ maxKeys?: number;
     "--prefix",
     params.prefix ?? "",
     "--max-keys",
-    String(params.maxKeys ?? 200),
+    String(params.maxKeys ?? 1000),
   ];
 
   if (params.delimiter) {

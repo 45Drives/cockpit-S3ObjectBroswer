@@ -12,6 +12,10 @@
   },
   "packageManager": "yarn@4.12.0",
   "dependencies": {
-    "@heroicons/vue": "^2.2.0"
+    "@heroicons/vue": "^2.2.0",
+    "vue-virtual-scroller": "^2.0.0-beta.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/line-clamp": "^0.4.4"
   }
 }
