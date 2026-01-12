@@ -78,14 +78,23 @@
                             <div class="w-full hover:bg-default border-b border-default cursor-pointer outline-none"
                                 :style="colsStyle + 'align-items:center; height:56px;'"
                                 :class="selectedId === rowId(r) ? 'bg-well' : ''" tabindex="0" @click="selectRow(r)"
-                                @dblclick="activateRow(r)" @keydown.enter.prevent="activateRow(r)">
+                                @dblclick="activateRow(r)" @keydown.enter.prevent="activateRow(r)"
+                                @contextmenu.prevent="openMenu($event, r)">
                                 <div class="px-3 py-2 text-default min-w-0">
                                     <div class="flex items-center gap-2 min-w-0">
                                         <span class="shrink-0 opacity-80 w-4 h-4"></span>
 
-                                        <button v-if="r.type === 'folder'" type="button"
-                                            class="font-semibold text-default hover:opacity-90 truncate min-w-0"
-                                            :disabled="busy" @click.stop="openPrefix(r.prefix)">
+                                        <button
+  v-if="r.type === 'folder'"
+  type="button"
+  class="font-semibold text-default hover:opacity-90 truncate min-w-0"
+  :disabled="busy"
+  @click.stop="selectRow(r)"
+  @dblclick.stop.prevent="openPrefix(r.prefix)"
+  @keydown.enter.stop.prevent="openPrefix(r.prefix)"
+  @contextmenu.stop.prevent="openMenu($event, r)"
+>
+                                            
                                             {{ r.name }}/
                                         </button>
 
@@ -132,7 +141,8 @@
                             <button type="button"
                                 class="w-full h-full rounded-md border border-default bg-default p-3 text-left hover:opacity-90 active:opacity-80"
                                 :class="selectedId === rowId(r) ? 'ring-2 ring-default' : ''" :disabled="busy"
-                                @click="selectRow(r)" @dblclick="activateRow(r)">
+                                @click="selectRow(r)" @dblclick="activateRow(r)"
+                                @contextmenu.prevent="openMenu($event, r)">
                                 <div class="flex flex-col items-center gap-2 h-full">
                                     <span class="shrink-0 opacity-80 flex justify-center">
                                         <svg v-if="iconForRow(r) === 'folder'" class="w-8 h-8" viewBox="0 0 24 24"
@@ -197,16 +207,23 @@
             </div>
         </div>
     </div>
+    <ObjectContextMenu
+  :open="menuOpen"
+  :pos="menuPos"
+  @close="menuOpen = false"
+  @action="onMenuAction"
+/>
+
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listObjects } from "../lib/s3Objects";
+import { listObjects, presignGetObject } from "../lib/s3Objects";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
-
+import ObjectContextMenu, { type MenuAction } from "../components/ObjectContextMenu.vue";
 
 
 const iconScroller = ref<any>(null);
@@ -271,6 +288,9 @@ const busy = ref(false);
 const error = ref("");
 const search = ref("");
 const pathInput = ref("");
+const menuOpen = ref(false);
+const menuPos = ref({ x: 0, y: 0 });
+const menuRow = ref<Row | null>(null);
 
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
@@ -648,5 +668,87 @@ watch(
     },
     { immediate: true }
 );
+
+function openMenu(e: MouseEvent, r: Row) {
+  e.preventDefault();
+  menuOpen.value = true;
+  menuPos.value = { x: e.clientX, y: e.clientY };
+  menuRow.value = r;
+  selectRow(r);
+}
+
+async function onMenuAction(action: MenuAction) {
+  const r = menuRow.value;
+  if (!r) return;
+
+  if (action === "copy") {
+    const key = r.type === "folder" ? r.prefix : r.key;
+    await navigator.clipboard.writeText(key);
+    return;
+  }
+
+  if (action === "download") {
+  if (r.type !== "file") return;
+
+  const popup = window.open("", "_blank");
+  if (!popup) {
+    // popup blocked fallback
+    const res = await presignGetObject({
+      connectionId: connectionId.value,
+      bucket: bucket.value,
+      key: r.key,
+      expiresSeconds: 900,
+    });
+    if (res.isErr()) {
+      error.value = res.error.message;
+      return;
+    }
+    window.location.href = res.value.url;
+    return;
+  }
+
+  // Optional: reduce white flash
+  try {
+    popup.document.title = "Downloading…";
+    popup.document.body.innerHTML = "<p>Downloading…</p>";
+  } catch {}
+
+  const res = await presignGetObject({
+    connectionId: connectionId.value,
+    bucket: bucket.value,
+    key: r.key,
+    expiresSeconds: 900,
+  });
+
+  if (res.isErr()) {
+    try { popup.close(); } catch {}
+    error.value = res.error.message;
+    return;
+  }
+
+  // Start download by navigating the popup
+  popup.location.href = res.value.url;
+
+  // Try to close the popup shortly after navigation starts
+  setTimeout(() => {
+    try { popup.close(); } catch {}
+  }, 1500);
+
+  return;
+}
+
+
+  
+
+  if (action === "delete") {
+    // confirm modal -> deleteObject(r)
+    return;
+  }
+
+  if (action === "rename") {
+    // open rename modal -> copy to new key then delete old key
+    return;
+  }
+}
 
 </script>

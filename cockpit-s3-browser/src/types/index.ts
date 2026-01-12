@@ -32,7 +32,7 @@ export type EndpointConfig = {
     id?: string | null;
     displayName?: string | null;
   };
-  
+
   export type ObjectFile = {
     type: "file";
     key: string;
@@ -89,3 +89,7 @@ export type EndpointConfig = {
     error?: string;
   };
   
+
+  export type PresignGetCliResult =
+  | { ok: true; url: string; expiresIn: number }
+  | { ok: false; error?: string };

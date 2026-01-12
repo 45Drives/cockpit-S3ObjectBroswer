@@ -4,7 +4,7 @@ import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 
 // @ts-ignore
 import s3browser_cli_script from "../scripts/s3browser-cli.py?raw";
-import { ListObjectsCliResult, ListObjectsResponse } from "../types";
+import { ListObjectsCliResult, ListObjectsResponse, PresignGetCliResult } from "../types";
 
 function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
   try {
@@ -62,5 +62,32 @@ maxKeys?: number;
         isTruncated: Boolean(res.isTruncated),
         nextContinuationToken: res.nextContinuationToken ?? null,
       });
+    });
+}
+
+
+export function presignGetObject(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  expiresSeconds?: number; // default 900
+}): ResultAsync<{ url: string; expiresIn: number }, ProcessError | SyntaxError> {
+  const args: string[] = [
+    "presign-get",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    "--expires",
+    String(params.expiresSeconds ?? 900),
+  ];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((proc) => proc.getStdout().trim())
+    .andThen((stdout) => safeJsonParse<PresignGetCliResult>(stdout))
+    .andThen((res) => {
+        console.log("download ", res)
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to presign download URL"));
+      return okAsync({ url: res.url, expiresIn: res.expiresIn });
     });
 }

@@ -157,6 +157,41 @@ def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:
   }
   sys.stdout.write(json.dumps(out) + "\n")
 
+def cmd_presign_get(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+
+  expires_raw = (get_flag_value(argv, "--expires", "900") or "900").strip()
+  try:
+    expires = int(expires_raw)
+  except ValueError:
+    raise ValueError("Invalid --expires")
+
+  if expires <= 0:
+    expires = 900
+  if expires > 7 * 24 * 3600:
+    expires = 7 * 24 * 3600
+
+  client = make_client(cfg)
+
+  # Force download + nice filename
+  filename = os.path.basename(key) or "download"
+  content_disp = f'attachment; filename="{filename}"'
+
+  url = client.generate_presigned_url(
+    "get_object",
+    Params={
+      "Bucket": bucket,
+      "Key": key,
+      "ResponseContentDisposition": content_disp,
+      "ResponseContentType": "application/octet-stream",
+    },
+    ExpiresIn=expires,
+  )
+
+  sys.stdout.write(json.dumps({"ok": True, "url": url, "expiresIn": expires}) + "\n")
+
+
 
 def main() -> None:
   if len(sys.argv) < 2:
@@ -176,7 +211,16 @@ def main() -> None:
     bucket = sys.argv[3]
     cmd_list_objects(conn_id, bucket, sys.argv[4:])
     return
+  if cmd == "presign-get":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli presign-get <connectionId> <bucket> <key> [--expires SEC]")
+    conn_id = sys.argv[2]
+    bucket = sys.argv[3]
+    key = sys.argv[4]
+    cmd_presign_get(conn_id, bucket, key, sys.argv[5:])
+    return
 
+  
   raise ValueError("Unknown command")
 
 
