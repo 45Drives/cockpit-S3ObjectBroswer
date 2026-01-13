@@ -191,6 +191,96 @@ def cmd_presign_get(conn_id: str, bucket: str, key: str, argv: List[str]) -> Non
 
   sys.stdout.write(json.dumps({"ok": True, "url": url, "expiresIn": expires}) + "\n")
 
+def cmd_delete_object(conn_id: str, bucket: str, key: str) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  client.delete_object(Bucket=bucket, Key=key)
+  sys.stdout.write(json.dumps({"ok": True}) + "\n")
+
+
+# s3browser-cli.py (full cmd_delete_prefix function with streaming progress)
+
+def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  def emit(obj: Dict[str, Any]) -> None:
+    sys.stdout.write(json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+  p = (prefix or "").strip()
+  if p and not p.endswith("/"):
+    p += "/"
+
+  token = None
+  deleted_requested = 0
+  error_total = 0
+  first_error = None
+
+  emit({"type": "start", "ok": True, "prefix": p})
+
+  try:
+    while True:
+      req: Dict[str, Any] = {"Bucket": bucket, "Prefix": p, "MaxKeys": 1000}
+      if token:
+        req["ContinuationToken"] = token
+
+      resp = client.list_objects_v2(**req)
+      items = resp.get("Contents") or []
+      keys = [{"Key": o["Key"]} for o in items if o.get("Key")]
+
+      if keys:
+        dresp = client.delete_objects(
+          Bucket=bucket,
+          Delete={"Objects": keys, "Quiet": True},
+        )
+
+        deleted_requested += len(keys)
+
+        errs = dresp.get("Errors") or []
+        if errs:
+          error_total += len(errs)
+          if first_error is None:
+            first_error = errs[0]
+
+        emit({
+          "type": "progress",
+          "ok": True,
+          "deletedRequested": deleted_requested,
+          "errors": error_total,
+        })
+
+      if not resp.get("IsTruncated"):
+        break
+      token = resp.get("NextContinuationToken")
+
+    out: Dict[str, Any] = {
+      "type": "result",
+      "ok": (error_total == 0),
+      "deletedRequested": deleted_requested,
+      "errors": error_total,
+    }
+    if first_error:
+      out["error"] = str(first_error)
+
+    emit(out)
+
+    if error_total != 0:
+      raise ValueError(out.get("error") or "Delete completed with errors")
+
+  except Exception as e:
+    emit({
+      "type": "result",
+      "ok": False,
+      "deletedRequested": deleted_requested,
+      "errors": error_total,
+      "error": str(e),
+    })
+    raise
+
 
 
 def main() -> None:
@@ -220,7 +310,18 @@ def main() -> None:
     cmd_presign_get(conn_id, bucket, key, sys.argv[5:])
     return
 
-  
+  if cmd == "delete-object":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli delete-object <connectionId> <bucket> <key>")
+    cmd_delete_object(sys.argv[2], sys.argv[3], sys.argv[4])
+    return
+
+  if cmd == "delete-prefix":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli delete-prefix <connectionId> <bucket> <prefix>")
+    cmd_delete_prefix(sys.argv[2], sys.argv[3], sys.argv[4])
+    return
+
   raise ValueError("Unknown command")
 
 

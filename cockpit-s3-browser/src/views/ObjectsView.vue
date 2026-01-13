@@ -57,7 +57,6 @@
 
                         <div class="flex-1"></div>
                     </div>
-
                     <!-- TABLE VIEW -->
                     <div v-if="viewMode === 'table'" class="rounded-md border border-default ">
                         <div class="bg-well text-left text-default w-full"
@@ -74,34 +73,40 @@
 
                         <RecycleScroller class="w-full overflow-y-auto  h-[96vh]"
                             style="scrollbar-gutter: stable; height: 96vh;;" :items="virtualRows" :item-size="56"
-                            key-field="__key" v-slot="{ item: r }">
+                            key-field="__key" v-slot="{ item: r, index }">
                             <div class="w-full hover:bg-default border-b border-default cursor-pointer outline-none"
                                 :style="colsStyle + 'align-items:center; height:56px;'"
-                                :class="selectedId === rowId(r) ? 'bg-well' : ''" tabindex="0" @click="selectRow(r)"
-                                @dblclick="activateRow(r)" @keydown.enter.prevent="activateRow(r)"
-                                @contextmenu.prevent="openMenu($event, r)">
+                                :class="selectedIds.has(rowId(r)) ? 'bg-well' : ''"
+                                @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
+                                @keydown.enter.prevent="onRowDblClick(r)"
+                                @contextmenu.prevent="openMenu($event, r, index)">
                                 <div class="px-3 py-2 text-default min-w-0">
                                     <div class="flex items-center gap-2 min-w-0">
                                         <span class="shrink-0 opacity-80 w-4 h-4"></span>
 
-                                        <button
-  v-if="r.type === 'folder'"
-  type="button"
-  class="font-semibold text-default hover:opacity-90 truncate min-w-0"
-  :disabled="busy"
-  @click.stop="selectRow(r)"
-  @dblclick.stop.prevent="openPrefix(r.prefix)"
-  @keydown.enter.stop.prevent="openPrefix(r.prefix)"
-  @contextmenu.stop.prevent="openMenu($event, r)"
->
-                                            
-                                            {{ r.name }}/
-                                        </button>
+                                        <div class="min-w-0 flex items-center gap-2">
+                                            <button v-if="r.type === 'folder'" type="button"
+                                                class="font-semibold text-default hover:opacity-90 truncate min-w-0"
+                                                :disabled="busy || isDeletingRow(r)"
+                                                @click.stop="onRowClick($event, r, index)"
+                                                @dblclick.stop.prevent="openPrefix(r.prefix)"
+                                                @keydown.enter.stop.prevent="openPrefix(r.prefix)"
+                                                @contextmenu.stop.prevent="openMenu($event, r, index)">
+                                                {{ r.name }}/
+                                            </button>
 
-                                        <div v-else class="min-w-0">
-                                            <div class="text-default text-sm truncate" :title="r.key">{{ r.name }}</div>
+                                            <div v-else class="min-w-0">
+                                                <div class="text-default text-sm truncate" :title="r.key">{{ r.name }}
+                                                </div>
+                                            </div>
+
+                                            <span v-if="isDeletingRow(r)"
+                                                class="text-xs rounded-full border border-default px-2 py-0.5 opacity-80">
+                                                Deleting…
+                                            </span>
                                         </div>
                                     </div>
+
                                 </div>
 
                                 <div class="px-3 py-2 text-default min-w-0 truncate">
@@ -137,12 +142,12 @@
                         <RecycleScroller ref="iconScroller" class=" w-full overflow-y-auto p-4  "
                             style="height: 96vh; scrollbar-gutter: stable; " :items="virtualRows"
                             :grid-items="gridItems" :item-size="120" :item-secondary-size="150" key-field="__key"
-                            v-slot="{ item: r }">
+                            v-slot="{ item: r, index }">
                             <button type="button"
                                 class="w-full h-full rounded-md border border-default bg-default p-3 text-left hover:opacity-90 active:opacity-80"
-                                :class="selectedId === rowId(r) ? 'ring-2 ring-default' : ''" :disabled="busy"
-                                @click="selectRow(r)" @dblclick="activateRow(r)"
-                                @contextmenu.prevent="openMenu($event, r)">
+                                :class="selectedIds.has(rowId(r)) ? 'ring-2 ring-default' : ''"
+                                @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
+                                @contextmenu.prevent="openMenu($event, r, index)">
                                 <div class="flex flex-col items-center gap-2 h-full">
                                     <span class="shrink-0 opacity-80 flex justify-center">
                                         <svg v-if="iconForRow(r) === 'folder'" class="w-8 h-8" viewBox="0 0 24 24"
@@ -178,6 +183,11 @@
                                             :title="`${r.fileType || '—'} · ${formatBytes(r.size)}`">
                                             {{ r.fileType || "—" }} · {{ formatBytes(r.size) }}
                                         </div>
+
+                                    </div>
+                                    <div v-if="isDeletingRow(r)"
+                                        class="text-xs mt-1 rounded-full border border-default px-2 py-0.5 opacity-80">
+                                        Deleting…
                                     </div>
 
                                 </div>
@@ -207,24 +217,24 @@
             </div>
         </div>
     </div>
-    <ObjectContextMenu
-  :open="menuOpen"
-  :pos="menuPos"
-  @close="menuOpen = false"
-  @action="onMenuAction"
-/>
+    <ObjectContextMenu :open="menuOpen" :pos="menuPos" @close="menuOpen = false" @action="onMenuAction" />
+    <ConfirmDeleteModal :open="deleteOpen" :kind="pendingDelete?.kind || 'file'" :name="pendingDelete?.name || ''"
+        :busy="false" :progressText="''" @cancel="cancelDelete" @confirm="confirmDeleteNow" />
+
+
 
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listObjects, presignGetObject } from "../lib/s3Objects";
+import { listObjects, presignGetObject, deleteObject, deletePrefixStreamed } from "../lib/s3Objects";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu, { type MenuAction } from "../components/ObjectContextMenu.vue";
-
+import ConfirmDeleteModal from "../components/ConfirmDeleteModal.vue";
+import { useDeleteTasksStore } from "../stores/deleteTasks";
 
 const iconScroller = ref<any>(null);
 const gridItems = ref(1);
@@ -271,6 +281,16 @@ type FileRow = {
 };
 type Row = FolderRow | FileRow;
 type ViewMode = "table" | "icons";
+type DeleteKind = "file" | "folder";
+
+
+
+const delStore = useDeleteTasksStore();
+
+
+// confirm modal pending target (separate from tasks)
+const pendingDelete = ref<{ kind: DeleteKind; name: string; key?: string; prefix?: string } | null>(null);
+
 
 const colsStyle =
     "display:grid; grid-template-columns: 1.6fr 0.6fr 0.6fr 0.9fr 0.8fr 0.7fr; width:100%;";
@@ -291,18 +311,21 @@ const pathInput = ref("");
 const menuOpen = ref(false);
 const menuPos = ref({ x: 0, y: 0 });
 const menuRow = ref<Row | null>(null);
+const selectedIds = ref<Set<string>>(new Set());
+const anchorIndex = ref<number | null>(null);
 
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
 
 const continuationToken = ref<string | null>(null);
 const hasMore = ref(false);
-const selectedId = ref<string>("");
 let runId = 0;
+const deleteOpen = ref(false);
 
 onBeforeUnmount(() => {
     runId++;
 });
+
 const prefetching = ref(false);
 
 async function fetchAllPagesSequentially() {
@@ -335,16 +358,16 @@ function rowId(r: Row) {
     return r.type === "folder" ? `d:${r.prefix}` : `f:${r.key}`;
 }
 
-function selectRow(r: Row) {
-    selectedId.value = rowId(r);
-}
-
 function activateRow(r: Row) {
+    if (isDeletingRow(r)) return;
     if (r.type === "folder") openPrefix(r.prefix);
     else openFile(r);
 }
 
-
+const selectedRows = computed<Row[]>(() => {
+  const ids = selectedIds.value;
+  return virtualRows.value.filter((r) => ids.has(rowId(r)));
+});
 
 function goBack() {
     router.back();
@@ -669,86 +692,249 @@ watch(
     { immediate: true }
 );
 
-function openMenu(e: MouseEvent, r: Row) {
-  e.preventDefault();
-  menuOpen.value = true;
-  menuPos.value = { x: e.clientX, y: e.clientY };
-  menuRow.value = r;
-  selectRow(r);
+function openMenu(e: MouseEvent, r: Row, index: number) {
+    if (isDeletingRow(r)) return;
+    e.preventDefault();
+
+    const id = rowId(r);
+
+    // Desktop convention: right-click selects row if not already selected
+    if (!selectedIds.value.has(id)) {
+        setSingleSelection(id, index);
+    } else {
+        // keep anchor sensible for next shift-click
+        anchorIndex.value = index;
+    }
+
+    menuOpen.value = true;
+    menuPos.value = { x: e.clientX, y: e.clientY };
+    menuRow.value = r;
 }
 
+
 async function onMenuAction(action: MenuAction) {
-  const r = menuRow.value;
-  if (!r) return;
+    const r = menuRow.value;
+    if (!r) return;
 
-  if (action === "copy") {
-    const key = r.type === "folder" ? r.prefix : r.key;
-    await navigator.clipboard.writeText(key);
-    return;
-  }
+    if (action === "copy") {
+  const items = effectiveSelection();
+  if (items.length === 0) return;
 
-  if (action === "download") {
-  if (r.type !== "file") return;
+  const lines = items.map((r) => (r.type === "folder" ? r.prefix : r.key));
+  await navigator.clipboard.writeText(lines.join("\n"));
+  return;
+}
 
-  const popup = window.open("", "_blank");
-  if (!popup) {
-    // popup blocked fallback
+if (action === "download") {
+  const items = effectiveSelection();
+  if (items.length === 0) return;
+
+  const files = items.filter(isFileRow);
+  if (files.length === 0) return;
+
+  for (const f of files) {
     const res = await presignGetObject({
       connectionId: connectionId.value,
       bucket: bucket.value,
-      key: r.key,
+      key: f.key,
       expiresSeconds: 900,
     });
+
     if (res.isErr()) {
       error.value = res.error.message;
       return;
     }
-    window.location.href = res.value.url;
-    return;
+
+    // trigger download without opening a new tab
+    const a = document.createElement("a");
+    a.href = res.value.url;
+    a.target = "_blank"; 
+    a.rel = "noopener noreferrer";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    await new Promise((r) => setTimeout(r, 250));
   }
-
-  // Optional: reduce white flash
-  try {
-    popup.document.title = "Downloading…";
-    popup.document.body.innerHTML = "<p>Downloading…</p>";
-  } catch {}
-
-  const res = await presignGetObject({
-    connectionId: connectionId.value,
-    bucket: bucket.value,
-    key: r.key,
-    expiresSeconds: 900,
-  });
-
-  if (res.isErr()) {
-    try { popup.close(); } catch {}
-    error.value = res.error.message;
-    return;
-  }
-
-  // Start download by navigating the popup
-  popup.location.href = res.value.url;
-
-  // Try to close the popup shortly after navigation starts
-  setTimeout(() => {
-    try { popup.close(); } catch {}
-  }, 1500);
 
   return;
 }
 
 
-  
 
-  if (action === "delete") {
-    // confirm modal -> deleteObject(r)
-    return;
-  }
 
-  if (action === "rename") {
-    // open rename modal -> copy to new key then delete old key
-    return;
+
+    if (action === "delete") {
+  const items = effectiveSelection();
+  if (items.length === 0) return;
+
+  for (const it of items) {
+    if (isDeletingRow(it)) continue;
+
+    if (it.type === "folder") {
+      const task = delStore.createTask({
+        connectionId: connectionId.value,
+        bucket: bucket.value,
+        kind: "folder",
+        name: it.name,
+        prefix: it.prefix,
+      });
+      void delStore.run(task, { deletePrefixStreamed, deleteObject });
+    } else {
+      const task = delStore.createTask({
+        connectionId: connectionId.value,
+        bucket: bucket.value,
+        kind: "file",
+        name: it.name,
+        key: it.key,
+      });
+      void delStore.run(task, { deletePrefixStreamed, deleteObject });
+    }
   }
+  await refresh();
+  return;
 }
 
+
+    if (action === "rename") {
+        // open rename modal -> copy to new key then delete old key
+        return;
+    }
+}
+
+async function confirmDeleteNow() {
+    const p = pendingDelete.value;
+    if (!p) return;
+
+    deleteOpen.value = false;
+    pendingDelete.value = null;
+
+    const task = delStore.createTask({
+        connectionId: connectionId.value,
+        bucket: bucket.value,
+        kind: p.kind,
+        name: p.name,
+        key: p.key,
+        prefix: p.prefix,
+    });
+
+    // run in background (don’t block page)
+    void delStore.run(task, { deletePrefixStreamed, deleteObject });
+}
+
+function isDeletingRow(r: Row): boolean {
+    for (const t of delStore.list) {
+        if (!t.busy) continue;
+        if (t.connectionId !== connectionId.value) continue;
+        if (t.bucket !== bucket.value) continue;
+
+        if (t.kind === "file" && t.key && r.type === "file") {
+            if (r.key === t.key) return true;
+        }
+
+        if (t.kind === "folder" && t.prefix) {
+            const path = r.type === "folder" ? r.prefix : r.key;
+            if (path === t.prefix || path.startsWith(t.prefix)) return true;
+        }
+    }
+    return false;
+}
+
+
+
+function cancelDelete() {
+    deleteOpen.value = false;
+    pendingDelete.value = null;
+}
+
+
+function setSingleSelection(id: string, index: number) {
+    selectedIds.value = new Set([id]);
+    anchorIndex.value = index;
+}
+
+function toggleSelection(id: string, index: number) {
+    const next = new Set(selectedIds.value);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selectedIds.value = next;
+    anchorIndex.value = index;
+}
+
+function selectRange(from: number, to: number, replace: boolean) {
+    const a = Math.min(from, to);
+    const b = Math.max(from, to);
+
+    const next = replace ? new Set<string>() : new Set(selectedIds.value);
+
+    for (let i = a; i <= b; i++) {
+        const rr = virtualRows.value[i];
+        if (!rr) continue;
+        next.add(rowId(rr));
+    }
+
+    selectedIds.value = next;
+}
+
+function onRowClick(e: MouseEvent, r: Row, index: number) {
+    if (isDeletingRow(r)) return;
+
+    const id = rowId(r);
+    const isToggle = e.ctrlKey || e.metaKey;
+    const isShift = e.shiftKey;
+
+    // Shift-click: range selection
+    if (isShift && anchorIndex.value != null) {
+        // Windows Explorer behavior:
+        // - Shift alone replaces selection with range
+        // - Ctrl/Cmd + Shift adds range
+        selectRange(anchorIndex.value, index, !isToggle);
+        return;
+    }
+
+    // Ctrl/Cmd-click: toggle
+    if (isToggle) {
+        toggleSelection(id, index);
+        return;
+    }
+
+    // Normal click: single
+    setSingleSelection(id, index);
+}
+
+function onRowDblClick(r: Row) {
+    if (isDeletingRow(r)) return;
+
+    // Ensure it becomes selected (optional; keeps desktop feel)
+    const id = rowId(r);
+    if (!selectedIds.value.has(id)) {
+        const idx = virtualRows.value.findIndex((x) => rowId(x) === id);
+        if (idx >= 0) setSingleSelection(id, idx);
+        else selectedIds.value = new Set([id]);
+    }
+
+    activateRow(r);
+}
+
+watch([connectionId, bucket, prefix], () => {
+    selectedIds.value = new Set();
+    anchorIndex.value = null;
+});
+
+function effectiveSelection(): Row[] {
+  const sel = selectedRows.value;
+  if (sel.length > 0) return sel;
+
+  // fallback: if user right-clicked without selecting first (shouldn't happen with your openMenu),
+  // still handle single-row actions
+  return menuRow.value ? [menuRow.value] : [];
+}
+
+function isFolderRow(r: Row): r is FolderRow {
+  return r.type === "folder";
+}
+function isFileRow(r: Row): r is FileRow {
+  return r.type === "file";
+}
 </script>
