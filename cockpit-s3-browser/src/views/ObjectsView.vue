@@ -27,6 +27,29 @@
                     <div v-if="error" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
                         {{ error }}
                     </div>
+                    <div
+  v-if="renameProgress"
+  class="mb-3 rounded-md border border-default bg-default p-3 text-sm"
+>
+  <div class="font-semibold">Renaming</div>
+  <button
+      type="button"
+      class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold"
+      :disabled="!renameCancel"
+      @click="cancelRename"
+    >
+      Cancel
+    </button>
+  <div class="mt-1">{{ renameStatusText }}</div>
+
+  <div v-if="renamePct != null" class="mt-2">
+    <div class="h-2 w-full rounded bg-well overflow-hidden">
+      <div class="h-2 bg-default" :style="{ width: renamePct + '%' }"></div>
+    </div>
+    <div class="mt-1 text-xs opacity-80">{{ renamePct }}%</div>
+  </div>
+</div>
+
 
                     <div class="mb-3 flex items-center gap-2">
                         <button type="button"
@@ -228,7 +251,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listObjects, presignGetObject, deleteObject, deletePrefixStreamed } from "../lib/s3Objects";
+import { listObjects, presignGetObject, deleteObject, deletePrefixStreamed, renameObjectStreamed } from "../lib/s3Objects";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
@@ -313,6 +336,8 @@ const menuPos = ref({ x: 0, y: 0 });
 const menuRow = ref<Row | null>(null);
 const selectedIds = ref<Set<string>>(new Set());
 const anchorIndex = ref<number | null>(null);
+const renameProgress = ref<{ done: number; total: number; bytes: number; size: number } | null>(null);
+const renameCancel = ref<null | (() => void)>(null);
 
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
@@ -365,8 +390,8 @@ function activateRow(r: Row) {
 }
 
 const selectedRows = computed<Row[]>(() => {
-  const ids = selectedIds.value;
-  return virtualRows.value.filter((r) => ids.has(rowId(r)));
+    const ids = selectedIds.value;
+    return virtualRows.value.filter((r) => ids.has(rowId(r)));
 });
 
 function goBack() {
@@ -717,90 +742,161 @@ async function onMenuAction(action: MenuAction) {
     if (!r) return;
 
     if (action === "copy") {
-  const items = effectiveSelection();
-  if (items.length === 0) return;
+        const items = effectiveSelection();
+        if (items.length === 0) return;
 
-  const lines = items.map((r) => (r.type === "folder" ? r.prefix : r.key));
-  await navigator.clipboard.writeText(lines.join("\n"));
-  return;
-}
-
-if (action === "download") {
-  const items = effectiveSelection();
-  if (items.length === 0) return;
-
-  const files = items.filter(isFileRow);
-  if (files.length === 0) return;
-
-  for (const f of files) {
-    const res = await presignGetObject({
-      connectionId: connectionId.value,
-      bucket: bucket.value,
-      key: f.key,
-      expiresSeconds: 900,
-    });
-
-    if (res.isErr()) {
-      error.value = res.error.message;
-      return;
+        const lines = items.map((r) => (r.type === "folder" ? r.prefix : r.key));
+        await navigator.clipboard.writeText(lines.join("\n"));
+        return;
     }
 
-    // trigger download without opening a new tab
-    const a = document.createElement("a");
-    a.href = res.value.url;
-    a.target = "_blank"; 
-    a.rel = "noopener noreferrer";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    if (action === "download") {
+        const items = effectiveSelection();
+        if (items.length === 0) return;
 
-    await new Promise((r) => setTimeout(r, 250));
-  }
+        const files = items.filter(isFileRow);
+        if (files.length === 0) return;
 
-  return;
-}
+        for (const f of files) {
+            const res = await presignGetObject({
+                connectionId: connectionId.value,
+                bucket: bucket.value,
+                key: f.key,
+                expiresSeconds: 900,
+            });
+
+            if (res.isErr()) {
+                error.value = res.error.message;
+                return;
+            }
+
+            // trigger download without opening a new tab
+            const a = document.createElement("a");
+            a.href = res.value.url;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+
+            await new Promise((r) => setTimeout(r, 250));
+        }
+
+        return;
+    }
 
 
 
 
 
     if (action === "delete") {
-  const items = effectiveSelection();
-  if (items.length === 0) return;
+        const items = effectiveSelection();
+        if (items.length === 0) return;
 
-  for (const it of items) {
-    if (isDeletingRow(it)) continue;
+        for (const it of items) {
+            if (isDeletingRow(it)) continue;
 
-    if (it.type === "folder") {
-      const task = delStore.createTask({
-        connectionId: connectionId.value,
-        bucket: bucket.value,
-        kind: "folder",
-        name: it.name,
-        prefix: it.prefix,
-      });
-      void delStore.run(task, { deletePrefixStreamed, deleteObject });
-    } else {
-      const task = delStore.createTask({
-        connectionId: connectionId.value,
-        bucket: bucket.value,
-        kind: "file",
-        name: it.name,
-        key: it.key,
-      });
-      void delStore.run(task, { deletePrefixStreamed, deleteObject });
+            if (it.type === "folder") {
+                const task = delStore.createTask({
+                    connectionId: connectionId.value,
+                    bucket: bucket.value,
+                    kind: "folder",
+                    name: it.name,
+                    prefix: it.prefix,
+                });
+                void delStore.run(task, { deletePrefixStreamed, deleteObject });
+            } else {
+                const task = delStore.createTask({
+                    connectionId: connectionId.value,
+                    bucket: bucket.value,
+                    kind: "file",
+                    name: it.name,
+                    key: it.key,
+                });
+                void delStore.run(task, { deletePrefixStreamed, deleteObject });
+            }
+        }
+        await refresh();
+        return;
     }
+
+
+    if (action === "rename") {
+  const items = effectiveSelection();
+  const files = items.filter(isFileRow);
+  if (files.length !== 1 || items.length !== 1) {
+    error.value = "Select a single file to rename.";
+    return;
   }
-  await refresh();
+
+  const f = files[0];
+  const newName = window.prompt("Rename to:", f.name);
+  if (!newName) return;
+
+  const basePrefix = prefix.value || "";
+  const cleaned = newName.replace(/\//g, "").trim();
+  if (!cleaned) return;
+
+  const dstKey = (basePrefix ? basePrefix : "") + cleaned;
+
+  busy.value = true;
+  error.value = "";
+
+  const job = renameObjectStreamed({
+    connectionId: connectionId.value,
+    bucket: bucket.value,
+    srcKey: f.key,
+    dstKey,
+    concurrency: 6,
+    onEvent: (ev) => {
+      if (ev.type === "start") {
+        renameProgress.value = {
+          done: 0,
+          total: Number(ev.totalParts ?? 0),
+          bytes: 0,
+          size: Number(ev.size ?? 0),
+        };
+      } else if (ev.type === "progress") {
+        if (!renameProgress.value) {
+          renameProgress.value = { done: 0, total: 0, bytes: 0, size: 0 };
+        }
+        renameProgress.value.done = Number(ev.partsDone ?? renameProgress.value.done);
+        renameProgress.value.total = Number(ev.totalParts ?? renameProgress.value.total);
+        renameProgress.value.bytes = Number(ev.bytesCopied ?? renameProgress.value.bytes);
+        renameProgress.value.size = Number(ev.size ?? renameProgress.value.size);
+      } else if (ev.type === "result") {
+        // Let the result event clear UI state
+        renameProgress.value = null;
+        renameCancel.value = null;
+
+        if (!ev.ok) {
+          error.value = ev.error || "Rename canceled/failed";
+        }
+      }
+    },
+  });
+
+  // expose cancel to UI
+  renameCancel.value = job.cancel;
+
+  try {
+    const res = await job.run;
+    if (res.isErr()) {
+      error.value = res.error.message;
+      return;
+    }
+
+    updateRowAfterRename(f.key, dstKey);
+  } finally {
+    busy.value = false;
+  }
+
   return;
 }
 
 
-    if (action === "rename") {
-        // open rename modal -> copy to new key then delete old key
-        return;
-    }
+
 }
 
 async function confirmDeleteNow() {
@@ -923,18 +1019,55 @@ watch([connectionId, bucket, prefix], () => {
 });
 
 function effectiveSelection(): Row[] {
-  const sel = selectedRows.value;
-  if (sel.length > 0) return sel;
-
-  // fallback: if user right-clicked without selecting first (shouldn't happen with your openMenu),
-  // still handle single-row actions
-  return menuRow.value ? [menuRow.value] : [];
+    const sel = selectedRows.value;
+    if (sel.length > 0) return sel;
+    return menuRow.value ? [menuRow.value] : [];
 }
 
-function isFolderRow(r: Row): r is FolderRow {
-  return r.type === "folder";
-}
+
 function isFileRow(r: Row): r is FileRow {
-  return r.type === "file";
+    return r.type === "file";
 }
+
+
+function updateRowAfterRename(srcKey: string, dstKey: string) {
+  const i = rows.value.findIndex((r) => r.type === "file" && r.key === srcKey);
+  if (i < 0) return;
+
+  const old = rows.value[i] as FileRow;
+
+  const newName = nameFromKey(dstKey);
+  rows.value[i] = {
+    ...old,
+    key: dstKey,
+    name: newName,
+    fileType: guessFileTypeFromKey(dstKey),
+  };
+}
+
+
+
+const renameStatusText = computed(() => {
+  if (!renameProgress.value) return "";
+  const p = renameProgress.value;
+  if (p.size > 0) {
+    const pct = Math.floor((p.bytes / p.size) * 100);
+    return `Renaming… ${pct}% (${formatBytes(p.bytes)} / ${formatBytes(p.size)})`;
+  }
+  if (p.total > 0) return `Renaming… ${p.done} / ${p.total} parts`;
+  return "Renaming…";
+});
+
+const renamePct = computed(() => {
+  if (!renameProgress.value) return null;
+  const p = renameProgress.value;
+  if (p.size <= 0) return null;
+  return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
+});
+
+function cancelRename() {
+  renameCancel.value?.();
+}
+
+
 </script>

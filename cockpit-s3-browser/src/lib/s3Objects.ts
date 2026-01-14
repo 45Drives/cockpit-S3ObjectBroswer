@@ -189,3 +189,76 @@ export function deleteObject(params: {
       });
     });
   }  
+
+  type RenameObjectEvent =
+  | { type: "start"; ok: boolean; src?: string; dst?: string; size?: number; totalParts?: number; partSize?: number; concurrency?: number }
+  | { type: "progress"; ok: boolean; partsDone?: number; totalParts?: number; bytesCopied?: number; size?: number }
+  | { type: "result"; ok: boolean; src?: string; dst?: string; size?: number; error?: string };
+
+export function renameObjectStreamed(params: {
+  connectionId: string;
+  bucket: string;
+  srcKey: string;
+  dstKey: string;
+  concurrency?: number;
+  onEvent: (ev: RenameObjectEvent) => void;
+}): { run: ResultAsync<void, ProcessError | SyntaxError>; cancel: () => void } {
+  const args: string[] = [
+    "rename-object",
+    params.connectionId,
+    params.bucket,
+    params.srcKey,
+    params.dstKey,
+    "--stream",
+    "--concurrency",
+    String(params.concurrency ?? 6),
+  ];
+
+  const proc = server.spawnProcess(pyCmd(args, "try"));
+
+  let buf = "";
+  let finalResult: any = null;
+
+  proc.stream((chunk) => {
+    buf += chunk;
+
+    while (true) {
+      const i = buf.indexOf("\n");
+      if (i < 0) break;
+
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+
+      try {
+        const obj = JSON.parse(line) as any;
+        if (obj && typeof obj === "object" && typeof obj.type === "string") {
+          params.onEvent(obj as RenameObjectEvent);
+          if (obj.type === "result") finalResult = obj;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  const run = proc.wait(true).andThen(() => {
+    if (finalResult && finalResult.type === "result") {
+      if (!finalResult.ok) return errAsync(new SyntaxError(finalResult.error || "Failed to rename object"));
+      return okAsync(undefined);
+    }
+    return errAsync(new SyntaxError("Rename did not return a final result message"));
+  });
+
+  const cancel = () => {
+    try {
+      (proc as any).kill?.("SIGTERM");
+      (proc as any).terminate?.();
+      (proc as any).signal?.("SIGTERM");
+    } catch {
+      // ignore
+    }
+  };
+
+  return { run, cancel };
+}

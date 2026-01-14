@@ -3,10 +3,23 @@ import json
 import os
 import sys
 from typing import Any, Dict, List, Optional
+import math
+import urllib.parse
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import signal
+
+
 
 import botocore.session # type: ignore
 from botocore.config import Config # type: ignore
 from botocore.exceptions import BotoCoreError, ClientError # type: ignore
+
+
+MIN_PART_SIZE = 64 * 1024 * 1024  # 64 MiB
+MAX_PARTS = 10000
+DEFAULT_CONCURRENCY = 6
+_current_abort = None  # type: Optional[callable]
 
 BASE_DIR = "/etc/45drives/s3-object-browser/connections"
 
@@ -30,6 +43,20 @@ def endpoint_url_from_cfg(cfg: Dict[str, Any]) -> str:
 
   scheme = "https" if bool(cfg.get("useTls")) else "http"
   return f"{scheme}://{raw}"
+
+
+def s3_copy_source(bucket: str, key: str) -> str:
+  return f"{bucket}/{urllib.parse.quote(key, safe='')}"
+
+def choose_part_size(size: int) -> int:
+  if size <= 0:
+    return MIN_PART_SIZE
+  min_size_for_limit = int(math.ceil(size / MAX_PARTS))
+  return max(MIN_PART_SIZE, min_size_for_limit)
+
+def emit_ndjson(obj: Dict[str, Any]) -> None:
+  sys.stdout.write(json.dumps(obj) + "\n")
+  sys.stdout.flush()
 
 
 def make_client(cfg: Dict[str, Any]):
@@ -199,6 +226,149 @@ def cmd_delete_object(conn_id: str, bucket: str, key: str) -> None:
   client.delete_object(Bucket=bucket, Key=key)
   sys.stdout.write(json.dumps({"ok": True}) + "\n")
 
+def multipart_copy_parallel(
+  client: Any,
+  bucket: str,
+  src_key: str,
+  dst_key: str,
+  concurrency: int,
+  emit: Optional[Any] = None,
+) -> None:
+  head = client.head_object(Bucket=bucket, Key=src_key)
+  size = int(head.get("ContentLength") or 0)
+
+  part_size = choose_part_size(size)
+  total_parts = int(math.ceil(size / part_size)) if size > 0 else 1
+
+  # Create multipart upload and preserve common headers/metadata
+  create_args: Dict[str, Any] = {
+    "Bucket": bucket,
+    "Key": dst_key,
+    "ContentType": head.get("ContentType") or "application/octet-stream",
+  }
+  if head.get("CacheControl"):
+    create_args["CacheControl"] = head["CacheControl"]
+  if head.get("ContentDisposition"):
+    create_args["ContentDisposition"] = head["ContentDisposition"]
+  if head.get("ContentEncoding"):
+    create_args["ContentEncoding"] = head["ContentEncoding"]
+  if head.get("ContentLanguage"):
+    create_args["ContentLanguage"] = head["ContentLanguage"]
+  if head.get("Metadata"):
+    create_args["Metadata"] = head["Metadata"]
+
+  mpu = client.create_multipart_upload(**create_args)
+  upload_id = mpu["UploadId"]
+  def abort():
+    try:
+      client.abort_multipart_upload(Bucket=bucket, Key=dst_key, UploadId=upload_id)
+    except Exception:
+      pass
+
+  install_cancel_handler(abort)
+
+  if emit:
+    emit({
+      "type": "start",
+      "ok": True,
+      "multipart": True,
+      "src": src_key,
+      "dst": dst_key,
+      "size": size,
+      "partSize": part_size,
+      "totalParts": total_parts,
+      "concurrency": concurrency,
+      "uploadId": upload_id,
+    })
+
+  lock = threading.Lock()
+  parts_done = 0
+
+  def copy_one_part(part_num: int) -> Dict[str, Any]:
+    start = (part_num - 1) * part_size
+    end = min(size - 1, start + part_size - 1)
+    byte_range = f"bytes={start}-{end}" if size > 0 else "bytes=0-0"
+
+    resp = client.upload_part_copy(
+      Bucket=bucket,
+      Key=dst_key,
+      PartNumber=part_num,
+      UploadId=upload_id,
+      CopySource=s3_copy_source(bucket, src_key),
+      CopySourceRange=byte_range,
+    )
+
+    etag = (resp.get("CopyPartResult") or {}).get("ETag")
+    if not etag:
+      raise ValueError(f"Missing ETag for part {part_num}")
+
+    nonlocal parts_done
+    if emit:
+      with lock:
+        parts_done += 1
+        bytes_copied = int(min(size, parts_done * part_size))
+        emit({
+          "type": "progress",
+          "ok": True,
+          "partsDone": parts_done,
+          "totalParts": total_parts,
+          "bytesCopied": bytes_copied,
+          "size": size,
+        })
+
+    return {"ETag": etag, "PartNumber": part_num}
+
+  try:
+    # Submit all parts with limited concurrency
+    parts: List[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+      futures = [ex.submit(copy_one_part, i) for i in range(1, total_parts + 1)]
+      for fut in as_completed(futures):
+        parts.append(fut.result())
+
+    # Must complete with parts in ascending PartNumber
+    parts.sort(key=lambda p: int(p["PartNumber"]))
+
+    client.complete_multipart_upload(
+      Bucket=bucket,
+      Key=dst_key,
+      UploadId=upload_id,
+      MultipartUpload={"Parts": parts},
+    )
+
+  except KeyboardInterrupt:
+  # Cancel path: abort and report "Canceled"
+    try:
+      client.abort_multipart_upload(Bucket=bucket, Key=dst_key, UploadId=upload_id)
+    except Exception:
+      pass
+
+    if emit:
+      emit({
+        "type": "result",
+        "ok": False,
+        "src": src_key,
+        "dst": dst_key,
+        "error": "Canceled",
+      })
+    raise
+
+  except Exception as e:
+    try:
+      client.abort_multipart_upload(Bucket=bucket, Key=dst_key, UploadId=upload_id)
+    except Exception:
+      pass
+
+    if emit:
+      emit({
+        "type": "result",
+        "ok": False,
+        "src": src_key,
+        "dst": dst_key,
+        "error": str(e),
+      })
+    raise
+
 
 # s3browser-cli.py (full cmd_delete_prefix function with streaming progress)
 
@@ -281,6 +451,77 @@ def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
     })
     raise
 
+def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+  emitted_result = False
+
+  if not src_key or not dst_key:
+    raise ValueError("Missing src or dst key")
+  if src_key == dst_key:
+    sys.stdout.write(json.dumps({"ok": True}) + "\n")
+    return
+
+  stream = "--stream" in argv
+  conc_raw = get_flag_value(argv, "--concurrency", str(DEFAULT_CONCURRENCY)) or str(DEFAULT_CONCURRENCY)
+  try:
+    concurrency = int(conc_raw)
+  except ValueError:
+    raise ValueError("Invalid --concurrency")
+  if concurrency < 1:
+    concurrency = 1
+  if concurrency > 32:
+    concurrency = 32
+
+  def emit(obj: Dict[str, Any]) -> None:
+    nonlocal emitted_result
+    if obj.get("type") == "result":
+      emitted_result = True
+    emit_ndjson(obj)
+
+  head = client.head_object(Bucket=bucket, Key=src_key)
+  size = int(head.get("ContentLength") or 0)
+
+  MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
+
+
+  try:
+    if size >= MULTIPART_THRESHOLD:
+      multipart_copy_parallel(client, bucket, src_key, dst_key, concurrency, emit if stream else None)
+    else:
+      if stream:
+        emit({
+          "type": "start",
+          "ok": True,
+          "multipart": False,
+          "src": src_key,
+          "dst": dst_key,
+          "size": size,
+          "totalParts": 1,
+          "concurrency": 1,
+        })
+      client.copy_object(
+        Bucket=bucket,
+        Key=dst_key,
+        CopySource={"Bucket": bucket, "Key": src_key},
+        MetadataDirective="COPY",
+      )
+      if stream:
+        emit({"type": "progress", "ok": True, "partsDone": 1, "totalParts": 1, "bytesCopied": size, "size": size})
+       
+    # Delete source only after successful copy
+    client.delete_object(Bucket=bucket, Key=src_key)
+    if stream:
+      emit({"type": "result", "ok": True, "src": src_key, "dst": dst_key, "size": size})
+
+    if not stream:
+      sys.stdout.write(json.dumps({"ok": True, "src": src_key, "dst": dst_key}) + "\n")
+
+  except Exception as e:
+    if stream and not emitted_result:
+      emit({"type": "result", "ok": False, "src": src_key, "dst": dst_key, "size": size, "error": str(e)})
+    raise
 
 
 def main() -> None:
@@ -321,8 +562,30 @@ def main() -> None:
       raise ValueError("Usage: s3browser-cli delete-prefix <connectionId> <bucket> <prefix>")
     cmd_delete_prefix(sys.argv[2], sys.argv[3], sys.argv[4])
     return
+  
+  if cmd == "rename-object":
+    if len(sys.argv) < 6:
+      raise ValueError("Usage: s3browser-cli rename-object <connectionId> <bucket> <srcKey> <dstKey> [--stream] [--concurrency N]")
+    cmd_rename_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+    return
+  
 
   raise ValueError("Unknown command")
+
+
+def install_cancel_handler(abort_fn):
+  global _current_abort
+  _current_abort = abort_fn
+
+  def _handler(signum, frame):
+    try:
+      if _current_abort:
+        _current_abort()
+    finally:
+      raise KeyboardInterrupt("Canceled")
+
+  signal.signal(signal.SIGTERM, _handler)
+  signal.signal(signal.SIGINT, _handler)
 
 
 if __name__ == "__main__":
