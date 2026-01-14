@@ -8,9 +8,8 @@ import urllib.parse
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import signal
-
-
-
+import tarfile
+import time
 import botocore.session # type: ignore
 from botocore.config import Config # type: ignore
 from botocore.exceptions import BotoCoreError, ClientError # type: ignore
@@ -58,6 +57,27 @@ def emit_ndjson(obj: Dict[str, Any]) -> None:
   sys.stdout.write(json.dumps(obj) + "\n")
   sys.stdout.flush()
 
+def iter_keys_under_prefix(client: Any, bucket: str, prefix: str):
+  token = None
+  while True:
+    req: Dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": 1000}
+    if token:
+      req["ContinuationToken"] = token
+
+    resp = client.list_objects_v2(**req)
+    for o in (resp.get("Contents") or []):
+      key = o.get("Key")
+      if not key:
+        continue
+      # ignore "folder marker" keys if present
+      if key.endswith("/"):
+        continue
+      yield key, int(o.get("Size") or 0), o.get("LastModified")
+
+    if not resp.get("IsTruncated"):
+      break
+    token = resp.get("NextContinuationToken")
+
 
 def make_client(cfg: Dict[str, Any]):
   endpoint = endpoint_url_from_cfg(cfg)
@@ -75,8 +95,14 @@ def make_client(cfg: Dict[str, Any]):
     region_name=region,
     aws_access_key_id=access_key,
     aws_secret_access_key=secret_key,
-    verify=True,  # always verify certs
-    config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+    verify=True,
+    config=Config(
+      signature_version="s3v4",
+      s3={
+        "addressing_style": "path",
+        "payload_signing_enabled": False,  # important for some gateways
+      },
+    ),
   )
 
 def cmd_list_buckets(conn_id: str) -> None:
@@ -522,6 +548,296 @@ def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, arg
     if stream and not emitted_result:
       emit({"type": "result", "ok": False, "src": src_key, "dst": dst_key, "size": size, "error": str(e)})
     raise
+def read_exact(stream, n: int) -> bytes:
+  chunks = []
+  remaining = n
+  while remaining > 0:
+    b = stream.read(remaining)
+    if not b:
+      break
+    chunks.append(b)
+    remaining -= len(b)
+  return b"".join(chunks)
+
+def choose_upload_part_size(size: int, min_part: int = 8 * 1024 * 1024) -> int:
+  if size <= 0:
+    return min_part
+  by_max_parts = int(math.ceil(size / MAX_PARTS))
+  return max(min_part, by_max_parts)
+
+def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  size_raw = (get_flag_value(argv, "--size", None) or "").strip()
+  if not size_raw:
+    raise ValueError("Missing --size")
+  try:
+    total_size = int(size_raw)
+  except ValueError:
+    raise ValueError("Invalid --size")
+  if total_size < 0:
+    raise ValueError("Invalid --size")
+
+  content_type = (get_flag_value(argv, "--content-type", "application/octet-stream") or "application/octet-stream").strip()
+
+  multipart_threshold = 64 * 1024 * 1024  # 64 MiB
+
+  def emit(obj: Dict[str, Any]) -> None:
+    emit_ndjson(obj)
+
+  bytes_read = 0
+  upload_id_holder = {"id": None}
+
+  def abort():
+    uid = upload_id_holder["id"]
+    if not uid:
+      return
+    try:
+      client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=uid)
+    except Exception:
+      pass
+
+  install_cancel_handler(abort)
+
+  emit({
+    "type": "start",
+    "ok": True,
+    "bucket": bucket,
+    "key": key,
+    "size": total_size,
+    "contentType": content_type,
+    "multipart": bool(total_size >= multipart_threshold),
+  })
+
+  stream = sys.stdin.buffer
+
+  try:
+    if total_size < multipart_threshold:
+      buf = read_exact(stream, total_size)
+      bytes_read = len(buf)
+      emit({"type": "progress", "ok": True, "bytesRead": bytes_read, "size": total_size})
+
+      if bytes_read != total_size:
+        raise ValueError(f"Incomplete upload: read {bytes_read} of {total_size} bytes")
+
+      client.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=buf,
+        ContentType=content_type or "application/octet-stream",
+        ContentLength=total_size,
+      )
+
+      emit({"type": "result", "ok": True, "bucket": bucket, "key": key, "size": total_size})
+      return
+
+
+
+    part_size = choose_upload_part_size(total_size, min_part=8 * 1024 * 1024)
+    total_parts = int(math.ceil(total_size / part_size)) if total_size > 0 else 1
+
+    mpu = client.create_multipart_upload(
+      Bucket=bucket,
+      Key=key,
+      ContentType=content_type or "application/octet-stream",
+    )
+    upload_id = mpu["UploadId"]
+    upload_id_holder["id"] = upload_id
+
+    emit({"type": "mpu", "ok": True, "uploadId": upload_id, "partSize": part_size, "totalParts": total_parts})
+
+    parts: List[Dict[str, Any]] = []
+    part_number = 1
+
+    while bytes_read < total_size:
+      want = min(part_size, total_size - bytes_read)
+      buf = read_exact(stream, want)
+      if not buf:
+        break
+
+      bytes_read += len(buf)
+      emit({"type": "progress", "ok": True, "bytesRead": bytes_read, "size": total_size})
+
+      resp = client.upload_part(
+        Bucket=bucket,
+        Key=key,
+        UploadId=upload_id,
+        PartNumber=part_number,
+        Body=buf,
+      )
+      etag = resp.get("ETag")
+      if not etag:
+        raise ValueError(f"Missing ETag for part {part_number}")
+
+      parts.append({"ETag": str(etag).strip('"'), "PartNumber": part_number})
+      emit({"type": "part", "ok": True, "partNumber": part_number, "partsDone": len(parts), "totalParts": total_parts})
+      part_number += 1
+
+    if bytes_read != total_size:
+      raise ValueError(f"Incomplete upload: read {bytes_read} of {total_size} bytes")
+
+    client.complete_multipart_upload(
+      Bucket=bucket,
+      Key=key,
+      UploadId=upload_id,
+      MultipartUpload={"Parts": parts},
+    )
+
+    emit({"type": "result", "ok": True, "bucket": bucket, "key": key, "size": total_size})
+
+  except KeyboardInterrupt:
+    emit({"type": "result", "ok": False, "bucket": bucket, "key": key, "size": total_size, "error": "Canceled"})
+    raise
+  except Exception as e:
+    emit({"type": "result", "ok": False, "bucket": bucket, "key": key, "size": total_size, "error": str(e)})
+    raise
+
+def install_cancel_handler(abort_fn):
+  global _current_abort
+  _current_abort = abort_fn
+
+  def _handler(signum, frame):
+    try:
+      if _current_abort:
+        _current_abort()
+    finally:
+      raise KeyboardInterrupt("Canceled")
+
+  signal.signal(signal.SIGTERM, _handler)
+  signal.signal(signal.SIGINT, _handler)
+
+def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  # Normalize prefix: no leading "/" and always trailing "/" (unless empty)
+  p = (prefix or "").lstrip("/")
+  if p and not p.endswith("/"):
+    p += "/"
+
+  # Optional flags
+  strip_components_raw = (get_flag_value(argv, "--strip-components", "0") or "0").strip()
+  try:
+    strip_components = max(0, int(strip_components_raw))
+  except ValueError:
+    strip_components = 0
+
+  # Progress must go to STDERR only. STDOUT must be the tar.gz bytes only.
+  def emit_err(obj: Dict[str, Any]) -> None:
+    sys.stderr.write(json.dumps(obj) + "\n")
+    sys.stderr.flush()
+
+  canceled = {"yes": False}
+
+  def abort():
+    canceled["yes"] = True
+
+  install_cancel_handler(abort)
+
+  # Collect keys first so we can emit totals
+  keys: List[Dict[str, Any]] = []
+  total_bytes = 0
+  for key, size, lm in iter_keys_under_prefix(client, bucket, p):
+    keys.append({"key": key, "size": int(size or 0), "lastModified": lm})
+    total_bytes += int(size or 0)
+
+  emit_err({
+    "type": "start",
+    "ok": True,
+    "bucket": bucket,
+    "prefix": p,
+    "files": len(keys),
+    "totalBytes": total_bytes,
+  })
+
+  out = sys.stdout.buffer  # tar.gz stream destination
+
+  sent_bytes = 0
+  file_index = 0
+
+  try:
+    # Stream tar.gz directly (no buffering full archive)
+    with tarfile.open(fileobj=out, mode="w|gz") as tar:
+      for it in keys:
+        if canceled["yes"]:
+          raise KeyboardInterrupt("Canceled")
+
+        key = it["key"]
+        size = int(it["size"] or 0)
+        lm = it.get("lastModified")
+
+        # Name inside tar: remove selected prefix
+        arcname = key[len(p):] if p and key.startswith(p) else key
+
+        # Optionally strip path components inside the tar
+        if strip_components > 0:
+          parts = [x for x in arcname.split("/") if x]
+          if len(parts) > strip_components:
+            arcname = "/".join(parts[strip_components:])
+          else:
+            arcname = parts[-1] if parts else ""
+
+        if not arcname:
+          continue
+
+        # Fetch object stream
+        obj = client.get_object(Bucket=bucket, Key=key)
+        body = obj["Body"]  # streaming file-like object
+    
+        try:
+          # Build tar header first
+          ti = tarfile.TarInfo(name=arcname)
+          ti.size = size
+
+          try:
+            if lm is not None:
+              ti.mtime = int(lm.timestamp())
+            else:
+              ti.mtime = int(time.time())
+          except Exception:
+            ti.mtime = int(time.time())
+
+          # Add file content (streamed)
+          tar.addfile(ti, fileobj=body)
+
+        finally:
+          # Always close the streaming body
+          try:
+            body.close()
+          except Exception:
+            pass
+
+        file_index += 1
+        sent_bytes += size
+
+        emit_err({
+          "type": "progress",
+          "ok": True,
+          "fileIndex": file_index,
+          "files": len(keys),
+          "bytes": sent_bytes,
+          "totalBytes": total_bytes,
+          "key": key,
+        })
+
+    emit_err({
+      "type": "result",
+      "ok": True,
+      "files": len(keys),
+      "bytes": sent_bytes,
+      "totalBytes": total_bytes,
+    })
+
+  except KeyboardInterrupt:
+    emit_err({"type": "result", "ok": False, "error": "Canceled"})
+    raise
+  except Exception as e:
+    emit_err({"type": "result", "ok": False, "error": str(e)})
+    raise
+
 
 
 def main() -> None:
@@ -568,32 +884,37 @@ def main() -> None:
       raise ValueError("Usage: s3browser-cli rename-object <connectionId> <bucket> <srcKey> <dstKey> [--stream] [--concurrency N]")
     cmd_rename_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
     return
-  
+  if cmd == "upload-stdin":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli upload-stdin <connectionId> <bucket> <key> --size N [--content-type CT]")
+    cmd_upload_stdin(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+    return
+  if cmd == "download-prefix-targz":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli download-prefix-targz <connectionId> <bucket> <prefix> [--strip-components N]")
+    cmd_download_prefix_targz(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+    return
+
 
   raise ValueError("Unknown command")
 
 
-def install_cancel_handler(abort_fn):
-  global _current_abort
-  _current_abort = abort_fn
-
-  def _handler(signum, frame):
-    try:
-      if _current_abort:
-        _current_abort()
-    finally:
-      raise KeyboardInterrupt("Canceled")
-
-  signal.signal(signal.SIGTERM, _handler)
-  signal.signal(signal.SIGINT, _handler)
 
 
 if __name__ == "__main__":
+  cmd0 = sys.argv[1] if len(sys.argv) > 1 else ""
   try:
     main()
   except (ClientError, BotoCoreError) as e:
-    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    if cmd0 == "download-prefix-targz":
+      sys.stderr.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    else:
+      sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
     sys.exit(2)
   except Exception as e:
-    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    if cmd0 == "download-prefix-targz":
+      sys.stderr.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    else:
+      sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
     sys.exit(1)
+

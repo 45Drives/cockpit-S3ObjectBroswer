@@ -20,6 +20,41 @@
                             :disabled="busy" @click="refresh">
                             <ArrowPathIcon class="h-4 w-4"></ArrowPathIcon>
                         </button>
+                        <div class="relative" ref="uploadMenuRef">
+  <button
+    type="button"
+    class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
+    :disabled="busy || uploadBusy"
+    @click="toggleUploadMenu"
+  >
+    Upload
+  </button>
+
+  <div
+    v-if="uploadMenuOpen"
+    class="absolute right-0 mt-2 w-44 rounded-md border border-default bg-default shadow-lg z-[9999]"
+  >
+    <button
+      type="button"
+      class="w-full text-left px-3 py-2 text-sm hover:bg-well"
+      :disabled="busy || uploadBusy"
+      @click="chooseUpload('files')"
+    >
+      Files…
+    </button>
+
+    <button
+      type="button"
+      class="w-full text-left px-3 py-2 text-sm hover:bg-well"
+      :disabled="busy || uploadBusy"
+      @click="chooseUpload('folder')"
+    >
+      Folder…
+    </button>
+  </div>
+</div>
+
+
                     </div>
                 </div>
 
@@ -27,28 +62,74 @@
                     <div v-if="error" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
                         {{ error }}
                     </div>
-                    <div
-  v-if="renameProgress"
-  class="mb-3 rounded-md border border-default bg-default p-3 text-sm"
->
-  <div class="font-semibold">Renaming</div>
-  <button
-      type="button"
-      class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold"
-      :disabled="!renameCancel"
-      @click="cancelRename"
-    >
-      Cancel
-    </button>
-  <div class="mt-1">{{ renameStatusText }}</div>
+                    <div v-if="uploadItems.length" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="font-semibold">Upload queue: {{ uploadItems.length }}</div>
+                            <div v-if="overallPct != null" class="text-xs opacity-80">Overall: {{ overallPct }}%</div>
+                        </div>
 
-  <div v-if="renamePct != null" class="mt-2">
-    <div class="h-2 w-full rounded bg-well overflow-hidden">
-      <div class="h-2 bg-default" :style="{ width: renamePct + '%' }"></div>
-    </div>
-    <div class="mt-1 text-xs opacity-80">{{ renamePct }}%</div>
-  </div>
-</div>
+                        <div class="mt-2 max-h-44 overflow-auto space-y-1">
+                            <div v-for="u in uploadItems" :key="u.id" class="flex items-center justify-between gap-2">
+                                <div class="min-w-0 truncate" :title="u.file.name">{{ u.file.name }}</div>
+
+                                <div class="shrink-0 text-xs opacity-80">
+                                    <span v-if="u.status === 'uploading'">
+                                        {{ formatBytes(u.bytes) }} / {{ formatBytes(u.file.size) }}
+                                    </span>
+                                    <span v-else-if="u.status === 'queued'">Queued</span>
+                                    <span v-else-if="u.status === 'done'">Done</span>
+                                    <span v-else-if="u.status === 'canceled'">Canceled</span>
+                                    <span v-else>Failed</span>
+                                </div>
+                            </div>
+                            <template v-for="u in uploadItems" :key="u.id + ':err'">
+                                <div v-if="u.status === 'failed' && u.error" class="text-xs text-red-700">
+                                    {{ u.file.name }}: {{ u.error }}
+                                </div>
+                            </template>
+
+                        </div>
+                    </div>
+
+                    <div v-if="uploadProgress" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="font-semibold">Uploading: {{ uploadProgress.filename }}</div>
+
+                            <button type="button"
+                                class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold"
+                                :disabled="!(uploadCancelAll || uploadCancel)" @click="(uploadCancelAll || uploadCancel)?.()
+                                    ">
+                                Cancel
+                            </button>
+                        </div>
+
+                        <div class="mt-1">{{ formatBytes(uploadProgress.bytes) }} / {{ formatBytes(uploadProgress.size)
+                        }}</div>
+
+                        <div v-if="uploadPct != null" class="mt-2">
+                            <div class="h-2 w-full rounded bg-well overflow-hidden">
+                                <div class="h-2 bg-default" :style="{ width: uploadPct + '%' }"></div>
+                            </div>
+                            <div class="mt-1 text-xs opacity-80">{{ uploadPct }}%</div>
+                        </div>
+                    </div>
+
+                    <div v-if="renameProgress" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
+                        <div class="font-semibold">Renaming</div>
+                        <button type="button"
+                            class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold"
+                            :disabled="!renameCancel" @click="cancelRename">
+                            Cancel
+                        </button>
+                        <div class="mt-1">{{ renameStatusText }}</div>
+
+                        <div v-if="renamePct != null" class="mt-2">
+                            <div class="h-2 w-full rounded bg-well overflow-hidden">
+                                <div class="h-2 bg-default" :style="{ width: renamePct + '%' }"></div>
+                            </div>
+                            <div class="mt-1 text-xs opacity-80">{{ renamePct }}%</div>
+                        </div>
+                    </div>
 
 
                     <div class="mb-3 flex items-center gap-2">
@@ -251,7 +332,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listObjects, presignGetObject, deleteObject, deletePrefixStreamed, renameObjectStreamed } from "../lib/s3Objects";
+import { listObjects, presignGetObject, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz } from "../lib/s3Objects";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
@@ -751,40 +832,55 @@ async function onMenuAction(action: MenuAction) {
     }
 
     if (action === "download") {
-        const items = effectiveSelection();
-        if (items.length === 0) return;
+  const items = effectiveSelection();
+  if (items.length === 0) return;
 
-        const files = items.filter(isFileRow);
-        if (files.length === 0) return;
+  const folders = items.filter((r): r is FolderRow => r.type === "folder");
+  const files = items.filter(isFileRow);
 
-        for (const f of files) {
-            const res = await presignGetObject({
-                connectionId: connectionId.value,
-                bucket: bucket.value,
-                key: f.key,
-                expiresSeconds: 900,
-            });
-
-            if (res.isErr()) {
-                error.value = res.error.message;
-                return;
-            }
-
-            // trigger download without opening a new tab
-            const a = document.createElement("a");
-            a.href = res.value.url;
-            a.target = "_blank";
-            a.rel = "noopener noreferrer";
-            a.style.display = "none";
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-
-            await new Promise((r) => setTimeout(r, 250));
-        }
-
-        return;
+  // Folders: stream tar.gz from server
+  for (const d of folders) {
+    const res = await downloadPrefixTarGz({
+      connectionId: connectionId.value,
+      bucket: bucket.value,
+      prefix: d.prefix,
+    });
+    if (res.isErr()) {
+      error.value = res.error.message;
+      return;
     }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  // Files: presigned URL (your existing approach)
+  for (const f of files) {
+    const res = await presignGetObject({
+      connectionId: connectionId.value,
+      bucket: bucket.value,
+      key: f.key,
+      expiresSeconds: 900,
+    });
+
+    if (res.isErr()) {
+      error.value = res.error.message;
+      return;
+    }
+
+    const a = document.createElement("a");
+    a.href = res.value.url;
+    a.target = "_self";
+    a.rel = "noopener noreferrer";
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  return;
+}
+
 
 
 
@@ -823,77 +919,77 @@ async function onMenuAction(action: MenuAction) {
 
 
     if (action === "rename") {
-  const items = effectiveSelection();
-  const files = items.filter(isFileRow);
-  if (files.length !== 1 || items.length !== 1) {
-    error.value = "Select a single file to rename.";
-    return;
-  }
-
-  const f = files[0];
-  const newName = window.prompt("Rename to:", f.name);
-  if (!newName) return;
-
-  const basePrefix = prefix.value || "";
-  const cleaned = newName.replace(/\//g, "").trim();
-  if (!cleaned) return;
-
-  const dstKey = (basePrefix ? basePrefix : "") + cleaned;
-
-  busy.value = true;
-  error.value = "";
-
-  const job = renameObjectStreamed({
-    connectionId: connectionId.value,
-    bucket: bucket.value,
-    srcKey: f.key,
-    dstKey,
-    concurrency: 6,
-    onEvent: (ev) => {
-      if (ev.type === "start") {
-        renameProgress.value = {
-          done: 0,
-          total: Number(ev.totalParts ?? 0),
-          bytes: 0,
-          size: Number(ev.size ?? 0),
-        };
-      } else if (ev.type === "progress") {
-        if (!renameProgress.value) {
-          renameProgress.value = { done: 0, total: 0, bytes: 0, size: 0 };
+        const items = effectiveSelection();
+        const files = items.filter(isFileRow);
+        if (files.length !== 1 || items.length !== 1) {
+            error.value = "Select a single file to rename.";
+            return;
         }
-        renameProgress.value.done = Number(ev.partsDone ?? renameProgress.value.done);
-        renameProgress.value.total = Number(ev.totalParts ?? renameProgress.value.total);
-        renameProgress.value.bytes = Number(ev.bytesCopied ?? renameProgress.value.bytes);
-        renameProgress.value.size = Number(ev.size ?? renameProgress.value.size);
-      } else if (ev.type === "result") {
-        // Let the result event clear UI state
-        renameProgress.value = null;
-        renameCancel.value = null;
 
-        if (!ev.ok) {
-          error.value = ev.error || "Rename canceled/failed";
+        const f = files[0];
+        const newName = window.prompt("Rename to:", f.name);
+        if (!newName) return;
+
+        const basePrefix = prefix.value || "";
+        const cleaned = newName.replace(/\//g, "").trim();
+        if (!cleaned) return;
+
+        const dstKey = (basePrefix ? basePrefix : "") + cleaned;
+
+        busy.value = true;
+        error.value = "";
+
+        const job = renameObjectStreamed({
+            connectionId: connectionId.value,
+            bucket: bucket.value,
+            srcKey: f.key,
+            dstKey,
+            concurrency: 6,
+            onEvent: (ev) => {
+                if (ev.type === "start") {
+                    renameProgress.value = {
+                        done: 0,
+                        total: Number(ev.totalParts ?? 0),
+                        bytes: 0,
+                        size: Number(ev.size ?? 0),
+                    };
+                } else if (ev.type === "progress") {
+                    if (!renameProgress.value) {
+                        renameProgress.value = { done: 0, total: 0, bytes: 0, size: 0 };
+                    }
+                    renameProgress.value.done = Number(ev.partsDone ?? renameProgress.value.done);
+                    renameProgress.value.total = Number(ev.totalParts ?? renameProgress.value.total);
+                    renameProgress.value.bytes = Number(ev.bytesCopied ?? renameProgress.value.bytes);
+                    renameProgress.value.size = Number(ev.size ?? renameProgress.value.size);
+                } else if (ev.type === "result") {
+                    // Let the result event clear UI state
+                    renameProgress.value = null;
+                    renameCancel.value = null;
+
+                    if (!ev.ok) {
+                        error.value = ev.error || "Rename canceled/failed";
+                    }
+                }
+            },
+        });
+
+        // expose cancel to UI
+        renameCancel.value = job.cancel;
+
+        try {
+            const res = await job.run;
+            if (res.isErr()) {
+                error.value = res.error.message;
+                return;
+            }
+
+            updateRowAfterRename(f.key, dstKey);
+        } finally {
+            busy.value = false;
         }
-      }
-    },
-  });
 
-  // expose cancel to UI
-  renameCancel.value = job.cancel;
-
-  try {
-    const res = await job.run;
-    if (res.isErr()) {
-      error.value = res.error.message;
-      return;
+        return;
     }
-
-    updateRowAfterRename(f.key, dstKey);
-  } finally {
-    busy.value = false;
-  }
-
-  return;
-}
 
 
 
@@ -1031,43 +1127,409 @@ function isFileRow(r: Row): r is FileRow {
 
 
 function updateRowAfterRename(srcKey: string, dstKey: string) {
-  const i = rows.value.findIndex((r) => r.type === "file" && r.key === srcKey);
-  if (i < 0) return;
+    const i = rows.value.findIndex((r) => r.type === "file" && r.key === srcKey);
+    if (i < 0) return;
 
-  const old = rows.value[i] as FileRow;
+    const old = rows.value[i] as FileRow;
 
-  const newName = nameFromKey(dstKey);
-  rows.value[i] = {
-    ...old,
-    key: dstKey,
-    name: newName,
-    fileType: guessFileTypeFromKey(dstKey),
-  };
+    const newName = nameFromKey(dstKey);
+    rows.value[i] = {
+        ...old,
+        key: dstKey,
+        name: newName,
+        fileType: guessFileTypeFromKey(dstKey),
+    };
 }
 
 
 
 const renameStatusText = computed(() => {
-  if (!renameProgress.value) return "";
-  const p = renameProgress.value;
-  if (p.size > 0) {
-    const pct = Math.floor((p.bytes / p.size) * 100);
-    return `Renaming… ${pct}% (${formatBytes(p.bytes)} / ${formatBytes(p.size)})`;
-  }
-  if (p.total > 0) return `Renaming… ${p.done} / ${p.total} parts`;
-  return "Renaming…";
+    if (!renameProgress.value) return "";
+    const p = renameProgress.value;
+    if (p.size > 0) {
+        const pct = Math.floor((p.bytes / p.size) * 100);
+        return `Renaming… ${pct}% (${formatBytes(p.bytes)} / ${formatBytes(p.size)})`;
+    }
+    if (p.total > 0) return `Renaming… ${p.done} / ${p.total} parts`;
+    return "Renaming…";
 });
 
 const renamePct = computed(() => {
-  if (!renameProgress.value) return null;
-  const p = renameProgress.value;
-  if (p.size <= 0) return null;
-  return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
+    if (!renameProgress.value) return null;
+    const p = renameProgress.value;
+    if (p.size <= 0) return null;
+    return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
 });
 
 function cancelRename() {
-  renameCancel.value?.();
+    renameCancel.value?.();
 }
+
+
+const uploadBusy = ref(false);
+const uploadProgress = ref<{ bytes: number; size: number; filename: string } | null>(null);
+const uploadCancel = ref<null | (() => void)>(null);
+
+const uploadPct = computed(() => {
+    if (!uploadProgress.value) return null;
+    const p = uploadProgress.value;
+    if (p.size <= 0) return null;
+    return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
+});
+type UploadStatus = "queued" | "uploading" | "done" | "failed" | "canceled";
+
+type UploadItem = {
+    id: string;
+    file: File;
+    dstKey: string;
+    bytes: number;
+    status: UploadStatus;
+    canceled: boolean;
+    error?: string;
+    cancel?: () => void;
+};
+
+
+const uploadItems = ref<UploadItem[]>([]);
+const uploadCancelAll = ref<null | (() => void)>(null);
+
+
+async function pickAndUploadMultiple() {
+    if (!connectionId.value || !bucket.value) return;
+
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+
+    input.onchange = async () => {
+        const files = Array.from(input.files ?? []);
+        if (files.length === 0) return;
+
+        const base = prefix.value || "";
+
+        uploadItems.value = files.map((f) => ({
+            id: uid(),
+            file: f,
+            dstKey: base + f.name,
+            bytes: 0,
+            status: "queued",
+            canceled: false,
+        }));
+
+        const conc = chooseSafeConcurrency(files);
+        await uploadManyWithPool(conc);
+    };
+
+    input.click();
+}
+
+
+async function uploadSingleViaStdin(file: File, dstKey: string) {
+    uploadBusy.value = true;
+    error.value = "";
+    uploadProgress.value = { filename: file.name, bytes: 0, size: file.size };
+
+    const job = uploadObjectFromStdinStreamed({
+        connectionId: connectionId.value,
+        bucket: bucket.value,
+        key: dstKey,
+        size: file.size,
+        contentType: file.type || "application/octet-stream",
+        onEvent: (ev) => {
+            if (ev.type === "progress") {
+                uploadProgress.value = {
+                    filename: file.name,
+                    bytes: Number(ev.bytesRead ?? 0),
+                    size: file.size,
+                };
+            } else if (ev.type === "result") {
+                if (!ev.ok) error.value = ev.error || "Upload failed";
+            }
+        },
+    });
+
+    uploadCancel.value = job.cancel;
+
+    const chunkSize = 1024 * 1024; // 1 MiB
+    let offset = 0;
+
+    try {
+        while (offset < file.size) {
+            const end = Math.min(file.size, offset + chunkSize);
+
+            // Most compatible in embedded browsers
+            const ab = await file.slice(offset, end).arrayBuffer();
+            const chunk = new Uint8Array(ab);
+            job.writeChunk(chunk);
+
+            offset = end;
+        }
+
+        job.end();
+
+        const res = await job.run;
+        if (res.isErr()) {
+            error.value = res.error.message;
+            return;
+        }
+
+        await refresh();
+    } catch (e: any) {
+        error.value = e?.message || "Upload failed";
+        try {
+            job.cancel();
+        } catch { }
+    } finally {
+        uploadBusy.value = false;
+        uploadCancel.value = null;
+        uploadProgress.value = null;
+    }
+}
+function uid() {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function chooseSafeConcurrency(files: File[]) {
+    const sizes = files.map((f) => f.size || 0);
+    const total = sizes.reduce((a, b) => a + b, 0);
+    const max = sizes.reduce((a, b) => Math.max(a, b), 0);
+    const count = files.length;
+
+    const MiB = 1024 * 1024;
+
+    // If any file is big-ish, stay conservative.
+    if (max >= 512 * MiB) return 2;
+
+    // Many small files benefit from hiding per-file overhead.
+    if (count >= 6 && total <= 512 * MiB) return 3;
+
+    return 2;
+}
+
+function nextQueuedItem(): UploadItem | null {
+    return uploadItems.value.find((u) => u.status === "queued") || null;
+}
+
+function anyUploading(): UploadItem | null {
+    return uploadItems.value.find((u) => u.status === "uploading") || null;
+}
+
+const overallBytes = computed(() =>
+    uploadItems.value.reduce((s, u) => s + (u.file.size || 0), 0)
+);
+
+const overallSent = computed(() =>
+    uploadItems.value.reduce((s, u) => s + (u.bytes || 0), 0)
+);
+
+const overallPct = computed(() => {
+    const t = overallBytes.value;
+    if (!t) return null;
+    return Math.max(0, Math.min(100, Math.floor((overallSent.value / t) * 100)));
+});
+
+async function uploadManyWithPool(limit: number) {
+    uploadBusy.value = true;
+    error.value = "";
+    uploadProgress.value = null;
+    uploadCancel.value = null;
+
+    let canceledAll = false;
+
+    uploadCancelAll.value = () => {
+        canceledAll = true;
+
+        // cancel any active jobs
+        for (const u of uploadItems.value) {
+            if (u.status === "uploading") u.cancel?.();
+            if (u.status === "queued") {
+                u.canceled = true;
+                u.status = "canceled";
+            }
+        }
+
+
+        // keep old hook safe if your UI still calls uploadCancel
+        uploadCancel.value?.();
+    };
+
+    async function worker() {
+        while (true) {
+            if (canceledAll) return;
+
+            const item = nextQueuedItem();
+            if (!item) return;
+
+            item.status = "uploading";
+            item.error = undefined;
+
+            try {
+                await uploadOneItemViaStdin(item);
+                if (!item.canceled) item.status = "done";
+
+            } catch (e: any) {
+                if (!item.canceled) {
+                    item.status = "failed";
+                    item.error = e?.message || "Upload failed";
+                }
+
+            }
+        }
+    }
+
+    try {
+        const n = Math.max(1, Math.min(limit, uploadItems.value.length));
+        await Promise.all(Array.from({ length: n }, () => worker()));
+        await refresh();
+    } finally {
+        uploadBusy.value = false;
+        uploadCancelAll.value = null;
+        uploadCancel.value = null;
+        uploadProgress.value = null;
+    }
+}
+async function uploadOneItemViaStdin(item: UploadItem) {
+    const file = item.file;
+
+    // Keep your existing single progress card updated
+    uploadProgress.value = { filename: file.name, bytes: item.bytes, size: file.size };
+
+    const job = uploadObjectFromStdinStreamed({
+        connectionId: connectionId.value,
+        bucket: bucket.value,
+        key: item.dstKey,
+        size: file.size,
+        contentType: file.type || "application/octet-stream",
+        onEvent: (ev) => {
+            if (ev.type === "progress") {
+                const b = Number(ev.bytesRead ?? 0);
+                item.bytes = b;
+
+                // sync old single progress
+                uploadProgress.value = { filename: file.name, bytes: b, size: file.size };
+            } else if (ev.type === "result") {
+                if (!ev.ok) {
+                    item.status = "failed";
+                    item.error = ev.error || "Upload failed";
+                }
+            }
+        },
+    });
+
+    item.cancel = () => {
+        item.canceled = true;
+        item.status = "canceled";
+        try { job.cancel(); } catch { }
+    };
+
+    // Optional: keep old cancel button working for "current file"
+    uploadCancel.value = () => item.cancel?.();
+
+    const chunkSize = 1024 * 1024; // 1 MiB
+    let offset = 0;
+
+    try {
+        while (offset < file.size) {
+            if (item.canceled) throw new Error("Canceled");
+
+            const end = Math.min(file.size, offset + chunkSize);
+            const ab = await file.slice(offset, end).arrayBuffer();
+            job.writeChunk(new Uint8Array(ab));
+            offset = end;
+        }
+
+        job.end();
+
+        const res = await job.run;
+        if (res.isErr()) throw new Error(res.error.message);
+    } finally {
+        // If there are still other uploads running, they will overwrite uploadProgress shortly.
+        const still = anyUploading();
+        if (!still) uploadProgress.value = null;
+    }
+}
+async function pickAndUploadFolder() {
+  if (!connectionId.value || !bucket.value) return;
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+
+  // Chromium / Electron: directory selection
+  // TS doesn't know about these attrs, so set via setAttribute
+  input.setAttribute("webkitdirectory", "");
+  input.setAttribute("directory", "");
+
+  input.onchange = async () => {
+    const files = Array.from(input.files ?? []);
+    if (files.length === 0) return;
+
+    const base = prefix.value || "";
+
+    uploadItems.value = files.map((f) => {
+      const rel =
+        ((f as any).webkitRelativePath as string | undefined) || f.name;
+
+      // Normalize to S3-style
+      const relNorm = rel.replace(/\\/g, "/").replace(/^\/+/, "");
+
+      return {
+        id: uid(),
+        file: f,
+        // base prefix + folder structure from picker
+        dstKey: base + relNorm,
+        bytes: 0,
+        status: "queued",
+        canceled: false,
+      } satisfies UploadItem;
+    });
+
+    const conc = chooseSafeConcurrency(files);
+    await uploadManyWithPool(conc);
+  };
+
+  input.click();
+}
+
+type UploadPickKind = "files" | "folder";
+
+const uploadMenuOpen = ref(false);
+const uploadMenuRef = ref<HTMLElement | null>(null);
+
+function toggleUploadMenu() {
+  if (busy.value || uploadBusy.value) return;
+  uploadMenuOpen.value = !uploadMenuOpen.value;
+}
+
+function closeUploadMenu() {
+  uploadMenuOpen.value = false;
+}
+
+async function chooseUpload(kind: UploadPickKind) {
+  closeUploadMenu();
+  if (kind === "files") {
+    await pickAndUploadMultiple();
+  } else {
+    await pickAndUploadFolder();
+  }
+}
+
+function onDocMouseDown(e: MouseEvent) {
+  if (!uploadMenuOpen.value) return;
+  const el = uploadMenuRef.value;
+  if (!el) return;
+  if (e.target instanceof Node && !el.contains(e.target)) {
+    closeUploadMenu();
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("mousedown", onDocMouseDown);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("mousedown", onDocMouseDown);
+});
 
 
 </script>

@@ -3,7 +3,7 @@ import type { ProcessError } from "@45drives/houston-common-lib";
 import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 
 // @ts-ignore
-import s3browser_cli_script from "../scripts/s3browser-cli.py?raw";
+// import s3browser_cli_script from "../scripts/s3browser-cli.py?raw";
 import { ListObjectsCliResult, ListObjectsResponse, PresignGetCliResult } from "../types";
 
 function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
@@ -16,11 +16,12 @@ function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
 
 function pyCmd(args: string[], superuser: "try" | "require" = "try") {
   return new Command(
-    ["/usr/bin/env", "python3", "-u","-c", s3browser_cli_script, ...args],
+    ["/usr/bin/env", "python3", "-u", S3BROWSER_CLI_PATH, ...args],
     { superuser }
   );
 }
 
+const S3BROWSER_CLI_PATH = "/conn.py";
 
 export function listObjects(params: {
 connectionId: string;
@@ -261,4 +262,145 @@ export function renameObjectStreamed(params: {
   };
 
   return { run, cancel };
+}
+
+
+export type UploadStdinEvent =
+  | { type: "start"; ok: boolean; bucket?: string; key?: string; size?: number; contentType?: string; multipart?: boolean }
+  | { type: "mpu"; ok: boolean; uploadId?: string; partSize?: number; totalParts?: number }
+  | { type: "progress"; ok: boolean; bytesRead?: number; size?: number }
+  | { type: "part"; ok: boolean; partNumber?: number; partsDone?: number; totalParts?: number }
+  | { type: "result"; ok: boolean; bucket?: string; key?: string; size?: number; error?: string };
+
+export type UploadStdinJob = {
+  writeChunk: (chunk: Uint8Array) => void;
+  end: () => void;
+  cancel: () => void;
+  run: ResultAsync<void, ProcessError | SyntaxError>;
+};
+
+export function uploadObjectFromStdinStreamed(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  size: number;
+  contentType?: string;
+  onEvent: (ev: UploadStdinEvent) => void;
+}): UploadStdinJob {
+  const args: string[] = [
+    "upload-stdin",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    "--size",
+    String(params.size),
+    "--content-type",
+    params.contentType || "application/octet-stream",
+  ];
+
+  const proc = server.spawnProcess(pyCmd(args, "try"));
+
+  let buf = "";
+  let final: any = null;
+
+  proc.stream((chunk: string) => {
+    buf += chunk;
+
+    while (true) {
+      const i = buf.indexOf("\n");
+      if (i < 0) break;
+
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+
+      if (!line) continue;
+
+      try {
+        const obj = JSON.parse(line) as any;
+        if (obj && typeof obj === "object" && typeof obj.type === "string") {
+          params.onEvent(obj as UploadStdinEvent);
+          if (obj.type === "result") final = obj;
+        } else if (obj && obj.ok === false) {
+          // fallback / crash-style message
+          final = { type: "result", ok: false, error: String(obj.error ?? "Upload failed") };
+          params.onEvent(final as UploadStdinEvent);
+        }
+      } catch {
+        // ignore non-JSON / partial
+      }
+    }
+  });
+
+  const run: ResultAsync<void, ProcessError | SyntaxError> = proc.wait(true).andThen(() => {
+    if (final && final.type === "result") {
+      if (!final.ok) return errAsync(new SyntaxError(final.error || "Upload failed"));
+      return okAsync(undefined);
+    }
+    return errAsync(new SyntaxError("Upload did not return a final result message"));
+  });
+
+  const writeChunk = (chunk: Uint8Array) => {
+    // IMPORTANT: stream=true to keep stdin open
+    proc.write(chunk, true);
+  };
+
+  const end = () => {
+    try {
+      (proc as any).closeStdin?.();
+      return;
+    } catch {}
+    try {
+      (proc as any).end?.();
+      return;
+    } catch {}
+  };
+
+  const cancel = () => {
+    try {
+      (proc as any).kill?.("SIGTERM");
+      return;
+    } catch {}
+    try {
+      (proc as any).terminate?.();
+      return;
+    } catch {}
+  };
+
+  return { writeChunk, end, cancel, run };
+}
+
+
+export function downloadPrefixTarGz(params: {
+  connectionId: string;
+  bucket: string;
+  prefix: string; // folder prefix like "photos/2025/" (or "photos/2025")
+  filename?: string; // optional override
+  stripComponents?: number; // optional, if you implemented it in python
+}): ResultAsync<void, ProcessError> {
+  const p = (params.prefix || "").replace(/^\/+/, "");
+  const normalized = p === "" ? "" : p.endsWith("/") ? p : p + "/";
+
+  const filename =
+    params.filename ||
+    (normalized
+      ? `${normalized.replace(/\/$/, "").split("/").pop() || "folder"}.tar.gz`
+      : "bucket.tar.gz");
+
+  const args: string[] = [
+    "download-prefix-targz",
+    params.connectionId,
+    params.bucket,
+    normalized,
+  ];
+
+  if (typeof params.stripComponents === "number") {
+    args.push("--strip-components", String(params.stripComponents));
+  }
+  const cmd = pyCmd(args, "try");
+  console.log("[download-prefix] argv:", cmd);
+  // This triggers a browser download via Cockpit channel
+  return okAsync(undefined).map(() => {
+    server.downloadCommandOutput(pyCmd(args, "try"), filename);
+  });
+
 }
