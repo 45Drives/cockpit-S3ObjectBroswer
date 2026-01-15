@@ -81,6 +81,22 @@ def emit_ndjson(obj: Dict[str, Any]) -> None:
   sys.stdout.write(json.dumps(obj) + "\n")
   sys.stdout.flush()
 
+def basename_of_key(key: str) -> str:
+  parts = (key or "").split("/")
+  return parts[-1] if parts else key
+
+def folder_name_from_prefix(prefix: str) -> str:
+  s = normalize_prefix(prefix)
+  t = s[:-1] if s.endswith("/") else s
+  parts = [x for x in t.split("/") if x]
+  return parts[-1] if parts else t
+
+def normalize_prefix(p: str) -> str:
+  s = (p or "").lstrip("/")
+  if s and not s.endswith("/"):
+    s += "/"
+  return s
+
 def iter_keys_under_prefix(client: Any, bucket: str, prefix: str):
   token = None
   while True:
@@ -583,11 +599,273 @@ def read_exact(stream, n: int) -> bytes:
     remaining -= len(b)
   return b"".join(chunks)
 
+
+
+def cmd_copy_object(conn_id: str, bucket: str, src_key: str, dst_key: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  if not src_key or not dst_key:
+    raise ValueError("Missing src or dst key")
+  if src_key == dst_key:
+    sys.stdout.write(json.dumps({"ok": True, "src": src_key, "dst": dst_key}) + "\n")
+    return
+
+  conc_raw = get_flag_value(argv, "--concurrency", str(DEFAULT_CONCURRENCY)) or str(DEFAULT_CONCURRENCY)
+  try:
+    concurrency = int(conc_raw)
+  except ValueError:
+    raise ValueError("Invalid --concurrency")
+  if concurrency < 1:
+    concurrency = 1
+  if concurrency > 32:
+    concurrency = 32
+
+  head = client.head_object(Bucket=bucket, Key=src_key)
+  size = int(head.get("ContentLength") or 0)
+
+  MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
+
+  try:
+    if size >= MULTIPART_THRESHOLD:
+      multipart_copy_parallel(client, bucket, src_key, dst_key, concurrency, emit=None)
+    else:
+      client.copy_object(
+        Bucket=bucket,
+        Key=dst_key,
+        CopySource={"Bucket": bucket, "Key": src_key},
+        MetadataDirective="COPY",
+      )
+
+    sys.stdout.write(json.dumps({"ok": True, "src": src_key, "dst": dst_key, "size": size}) + "\n")
+
+  except Exception as e:
+    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    raise
+
+
+def cmd_copy_prefix(conn_id: str, bucket: str, src_prefix: str, dst_prefix: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  src_p = normalize_prefix(src_prefix)
+  dst_p = normalize_prefix(dst_prefix)
+
+  if not src_p or not dst_p:
+    raise ValueError("Missing srcPrefix or dstPrefix")
+  if src_p == dst_p:
+    sys.stdout.write(json.dumps({"ok": True, "srcPrefix": src_p, "dstPrefix": dst_p, "files": 0, "bytes": 0}) + "\n")
+    return
+
+  conc_raw = get_flag_value(argv, "--concurrency", str(DEFAULT_CONCURRENCY)) or str(DEFAULT_CONCURRENCY)
+  try:
+    concurrency = int(conc_raw)
+  except ValueError:
+    raise ValueError("Invalid --concurrency")
+  if concurrency < 1:
+    concurrency = 1
+  if concurrency > 32:
+    concurrency = 32
+
+  # Collect keys first (so we can show totals if you later stream)
+  keys: List[Dict[str, Any]] = []
+  total_bytes = 0
+  for key, size, lm in iter_keys_under_prefix(client, bucket, src_p):
+    rel = key[len(src_p):] if key.startswith(src_p) else key
+    dst_key = dst_p + rel
+    keys.append({"src": key, "dst": dst_key, "size": int(size or 0)})
+    total_bytes += int(size or 0)
+
+  if not keys:
+    sys.stdout.write(json.dumps({"ok": True, "srcPrefix": src_p, "dstPrefix": dst_p, "files": 0, "bytes": 0}) + "\n")
+    return
+
+  canceled = {"yes": False}
+
+  def abort():
+    canceled["yes"] = True
+
+  install_cancel_handler(abort)
+
+  def do_one(it: Dict[str, Any]) -> Dict[str, Any]:
+    if canceled["yes"]:
+      raise KeyboardInterrupt("Canceled")
+
+    src_key = it["src"]
+    dst_key = it["dst"]
+
+    # Simple copy; overwrite if exists (S3 semantics)
+    client.copy_object(
+      Bucket=bucket,
+      Key=dst_key,
+      CopySource={"Bucket": bucket, "Key": src_key},
+      MetadataDirective="COPY",
+    )
+    return it
+
+  done_files = 0
+  done_bytes = 0
+
+  try:
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+      futs = [ex.submit(do_one, it) for it in keys]
+      for fut in as_completed(futs):
+        it = fut.result()
+        done_files += 1
+        done_bytes += int(it.get("size") or 0)
+
+    sys.stdout.write(json.dumps({
+      "ok": True,
+      "srcPrefix": src_p,
+      "dstPrefix": dst_p,
+      "files": done_files,
+      "bytes": done_bytes,
+      "totalBytes": total_bytes,
+    }) + "\n")
+
+  except KeyboardInterrupt:
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "error": "Canceled",
+      "srcPrefix": src_p,
+      "dstPrefix": dst_p,
+      "files": done_files,
+      "bytes": done_bytes,
+      "totalBytes": total_bytes,
+    }) + "\n")
+    raise
+
+  except Exception as e:
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "error": str(e),
+      "srcPrefix": src_p,
+      "dstPrefix": dst_p,
+      "files": done_files,
+      "bytes": done_bytes,
+      "totalBytes": total_bytes,
+    }) + "\n")
+    raise
+
+def cmd_move_prefix(conn_id: str, bucket: str, src_prefix: str, dst_prefix: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  src_p = normalize_prefix(src_prefix)
+  dst_p = normalize_prefix(dst_prefix)
+
+  if not src_p or not dst_p:
+    raise ValueError("Missing srcPrefix or dstPrefix")
+  if src_p == dst_p:
+    sys.stdout.write(json.dumps({"ok": True, "srcPrefix": src_p, "dstPrefix": dst_p, "files": 0, "bytes": 0}) + "\n")
+    return
+
+  conc_raw = get_flag_value(argv, "--concurrency", str(DEFAULT_CONCURRENCY)) or str(DEFAULT_CONCURRENCY)
+  try:
+    concurrency = int(conc_raw)
+  except ValueError:
+    raise ValueError("Invalid --concurrency")
+  if concurrency < 1:
+    concurrency = 1
+  if concurrency > 32:
+    concurrency = 32
+
+  keys: List[Dict[str, Any]] = []
+  total_bytes = 0
+  for key, size, lm in iter_keys_under_prefix(client, bucket, src_p):
+    rel = key[len(src_p):] if key.startswith(src_p) else key
+    dst_key = dst_p + rel
+    keys.append({"src": key, "dst": dst_key, "size": int(size or 0)})
+    total_bytes += int(size or 0)
+
+  if not keys:
+    sys.stdout.write(json.dumps({"ok": True, "srcPrefix": src_p, "dstPrefix": dst_p, "files": 0, "bytes": 0}) + "\n")
+    return
+
+  canceled = {"yes": False}
+
+  def abort():
+    canceled["yes"] = True
+
+  install_cancel_handler(abort)
+
+  def do_one(it: Dict[str, Any]) -> Dict[str, Any]:
+    if canceled["yes"]:
+      raise KeyboardInterrupt("Canceled")
+
+    src_key = it["src"]
+    dst_key = it["dst"]
+
+    client.copy_object(
+      Bucket=bucket,
+      Key=dst_key,
+      CopySource={"Bucket": bucket, "Key": src_key},
+      MetadataDirective="COPY",
+    )
+
+    # Only delete after successful copy
+    client.delete_object(Bucket=bucket, Key=src_key)
+
+    return it
+
+  done_files = 0
+  done_bytes = 0
+
+  try:
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+      futs = [ex.submit(do_one, it) for it in keys]
+      for fut in as_completed(futs):
+        it = fut.result()
+        done_files += 1
+        done_bytes += int(it.get("size") or 0)
+
+    sys.stdout.write(json.dumps({
+      "ok": True,
+      "srcPrefix": src_p,
+      "dstPrefix": dst_p,
+      "files": done_files,
+      "bytes": done_bytes,
+      "totalBytes": total_bytes,
+    }) + "\n")
+
+  except KeyboardInterrupt:
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "error": "Canceled",
+      "srcPrefix": src_p,
+      "dstPrefix": dst_p,
+      "files": done_files,
+      "bytes": done_bytes,
+      "totalBytes": total_bytes,
+    }) + "\n")
+    raise
+
+  except Exception as e:
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "error": str(e),
+      "srcPrefix": src_p,
+      "dstPrefix": dst_p,
+      "files": done_files,
+      "bytes": done_bytes,
+      "totalBytes": total_bytes,
+    }) + "\n")
+    raise
+
+
 def choose_upload_part_size(size: int, min_part: int = 8 * 1024 * 1024) -> int:
   if size <= 0:
     return min_part
   by_max_parts = int(math.ceil(size / MAX_PARTS))
   return max(min_part, by_max_parts)
+
+
+
+
+
 
 def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
@@ -1199,6 +1477,25 @@ def main() -> None:
       raise ValueError("Usage: s3browser-cli download-job-status <jobId>")
     cmd_download_job_status(sys.argv[2])
     return
+  
+  if cmd == "copy-object":
+    if len(sys.argv) < 6:
+      raise ValueError("Usage: s3browser-cli copy-object <connectionId> <bucket> <srcKey> <dstKey> [--concurrency N]")
+    cmd_copy_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+    return
+
+  if cmd == "copy-prefix":
+    if len(sys.argv) < 6:
+      raise ValueError("Usage: s3browser-cli copy-prefix <connectionId> <bucket> <srcPrefix> <dstPrefix> [--concurrency N]")
+    cmd_copy_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+    return
+
+  if cmd == "move-prefix":
+    if len(sys.argv) < 6:
+      raise ValueError("Usage: s3browser-cli move-prefix <connectionId> <bucket> <srcPrefix> <dstPrefix> [--concurrency N]")
+    cmd_move_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+    return
+
 
 
   raise ValueError("Unknown command")

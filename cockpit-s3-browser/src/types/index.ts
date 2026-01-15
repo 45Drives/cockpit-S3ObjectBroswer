@@ -97,12 +97,13 @@ export type EndpointConfig = {
   export type ClipKind = "copy" | "cut";
 
   export type ClipItem =
-    | { type: "file"; key: string; name: string; size?: number }
+    | { type: "file"; key: string; name: string }
     | { type: "folder"; prefix: string; name: string };
-
-  export type Clipboard = {
-    kind: ClipKind;
+  
+  export type ClipboardState = {
+    kind: ClipKind | null;
     connectionId: string;
     bucket: string;
     items: ClipItem[];
+    createdAt: number;
   };

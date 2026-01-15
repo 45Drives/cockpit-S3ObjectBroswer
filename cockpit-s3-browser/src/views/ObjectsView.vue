@@ -50,20 +50,54 @@
                         {{ error }}
                     </div>
                     <div v-if="downloadBusy" class="mb-3 rounded-md border border-yellow-300 bg-default p-3 text-sm">
-  <div class="font-semibold">Download in progress</div>
-  <div class="opacity-80">Do not close or refresh this tab.</div>
+                        <div class="font-semibold">Download in progress</div>
+                        <div class="opacity-80">Do not close or refresh this tab.</div>
 
-  <div class="mt-2 space-y-1 text-xs">
-    <div v-for="j in downloadJobs" :key="j.id">
-      <span class="font-semibold">{{ j.name }}</span>
-      <span class="opacity-80"> — {{ j.state }}</span>
-      <span v-if="j.totalBytes && j.bytes != null" class="opacity-80">
-        ({{ formatBytes(j.bytes) }} / {{ formatBytes(j.totalBytes) }})
-      </span>
-      <span v-if="j.error" class="text-red-700"> — {{ j.error }}</span>
-    </div>
-  </div>
-</div>
+                        <div class="mt-2 space-y-1 text-xs">
+                            <div v-for="j in downloadJobs" :key="j.id">
+                                <span class="font-semibold">{{ j.name }}</span>
+                                <span class="opacity-80"> — {{ j.state }}</span>
+                                <span v-if="j.totalBytes && j.bytes != null" class="opacity-80">
+                                    ({{ formatBytes(j.bytes) }} / {{ formatBytes(j.totalBytes) }})
+                                </span>
+                                <span v-if="j.error" class="text-red-700"> — {{ j.error }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-if="pasteItems.length" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="font-semibold">
+                                Pasting: {{ pasteDone }} / {{ pasteTotal }}
+                            </div>
+                            <div v-if="pastePct != null" class="text-xs opacity-80">{{ pastePct }}%</div>
+                        </div>
+
+                        <div v-if="pastePct != null" class="mt-2">
+                            <div class="h-2 w-full rounded bg-well overflow-hidden">
+                                <div class="h-2 bg-default" :style="{ width: pastePct + '%' }"></div>
+                            </div>
+                        </div>
+
+                        <div class="mt-2 max-h-44 overflow-auto space-y-1 text-xs">
+                            <div v-for="p in pasteItems" :key="p.id" class="flex items-center justify-between gap-2">
+                                <div class="min-w-0 truncate" :title="p.dstKey">{{ p.name }}</div>
+                                <div class="shrink-0 opacity-80">
+                                    <span v-if="p.step === 'queued'">Queued</span>
+                                    <span v-else-if="p.step === 'copying'">Copying…</span>
+                                    <span v-else-if="p.step === 'done'">Done</span>
+                                    <span v-else-if="p.step === 'canceled'">Canceled</span>
+                                    <span v-else>Failed</span>
+                                </div>
+                            </div>
+
+                            <template v-for="p in pasteItems" :key="p.id + ':err'">
+                                <div v-if="p.step === 'failed' && p.error" class="text-red-700">
+                                    {{ p.name }}: {{ p.error }}
+                                </div>
+                            </template>
+
+                        </div>
+                    </div>
 
                     <div v-if="uploadItems.length" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
                         <div class="flex items-center justify-between gap-3">
@@ -109,7 +143,7 @@
                         </div>
 
                         <div class="mt-1">{{ formatBytes(uploadProgress.bytes) }} / {{ formatBytes(uploadProgress.size)
-                        }}</div>
+                            }}</div>
 
                         <div v-if="uploadPct != null" class="mt-2">
                             <div class="h-2 w-full rounded bg-well overflow-hidden">
@@ -135,6 +169,20 @@
                             <div class="mt-1 text-xs opacity-80">{{ renamePct }}%</div>
                         </div>
                     </div>
+                    <div v-if="transferBusy" class="mb-3 rounded-md border border-yellow-300 bg-default p-3 text-sm">
+                        <div class="font-semibold">Transfer in progress</div>
+                        <div class="opacity-80">Do not close or refresh this tab.</div>
+
+                        <div class="mt-2 space-y-1 text-xs">
+                            <div v-for="j in transferJobs" :key="j.id">
+                                <span class="font-semibold">{{ j.kind.toUpperCase() }}</span>
+                                <span class="opacity-80"> — {{ j.name }}</span>
+                                <span class="opacity-80"> — {{ j.state }}</span>
+                                <span v-if="j.error" class="text-red-700"> — {{ j.error }}</span>
+                            </div>
+                        </div>
+                    </div>
+
 
 
                     <div class="mb-3 flex items-center gap-2">
@@ -179,75 +227,79 @@
                             <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Storage class
                             </div>
                         </div>
+                        <div class="w-full" @contextmenu="openMenuAtPoint">
+                            <RecycleScroller class="w-full overflow-y-auto h-[96vh]"
+                                style="scrollbar-gutter: stable; height: 96vh;;" :items="virtualRows" :item-size="56"
+                                key-field="__key" v-slot="{ item: r, index }">
+                                <div class="w-full hover:bg-default border-b border-default cursor-pointer outline-none"
+                                    :style="colsStyle + 'align-items:center; height:56px;'"
+                                    :class="selectedIds.has(rowId(r)) ? 'bg-well' : ''"
+                                    @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
+                                    @keydown.enter.prevent="onRowDblClick(r)"
+                                    @contextmenu.prevent.stop="openMenu($event, r, index)">
+                                    <div class="px-3 py-2 text-default min-w-0">
+                                        <div class="flex items-center gap-2 min-w-0">
+                                            <span class="shrink-0 opacity-80 w-4 h-4"></span>
 
-                        <RecycleScroller class="w-full overflow-y-auto  h-[96vh]"
-                            style="scrollbar-gutter: stable; height: 96vh;;" :items="virtualRows" :item-size="56"
-                            key-field="__key" v-slot="{ item: r, index }">
-                            <div class="w-full hover:bg-default border-b border-default cursor-pointer outline-none"
-                                :style="colsStyle + 'align-items:center; height:56px;'"
-                                :class="selectedIds.has(rowId(r)) ? 'bg-well' : ''"
-                                @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
-                                @keydown.enter.prevent="onRowDblClick(r)"
-                                @contextmenu.prevent="openMenu($event, r, index)">
-                                <div class="px-3 py-2 text-default min-w-0">
-                                    <div class="flex items-center gap-2 min-w-0">
-                                        <span class="shrink-0 opacity-80 w-4 h-4"></span>
+                                            <div class="min-w-0 flex items-center gap-2">
+                                                <button v-if="r.type === 'folder'" type="button"
+                                                    class="font-semibold text-default hover:opacity-90 truncate min-w-0"
+                                                    :disabled="busy || isDeletingRow(r)"
+                                                    @click.stop="onRowClick($event, r, index)"
+                                                    @dblclick.stop.prevent="openPrefix(r.prefix)"
+                                                    @keydown.enter.stop.prevent="openPrefix(r.prefix)"
+                                                    @contextmenu.stop.prevent="openMenu($event, r, index)">
+                                                    {{ r.name }}/
+                                                </button>
 
-                                        <div class="min-w-0 flex items-center gap-2">
-                                            <button v-if="r.type === 'folder'" type="button"
-                                                class="font-semibold text-default hover:opacity-90 truncate min-w-0"
-                                                :disabled="busy || isDeletingRow(r)"
-                                                @click.stop="onRowClick($event, r, index)"
-                                                @dblclick.stop.prevent="openPrefix(r.prefix)"
-                                                @keydown.enter.stop.prevent="openPrefix(r.prefix)"
-                                                @contextmenu.stop.prevent="openMenu($event, r, index)">
-                                                {{ r.name }}/
-                                            </button>
-
-                                            <div v-else class="min-w-0">
-                                                <div class="text-default text-sm truncate" :title="r.key">{{ r.name }}
+                                                <div v-else class="min-w-0">
+                                                    <div class="text-default text-sm truncate" :title="r.key">{{ r.name
+                                                    }}
+                                                    </div>
                                                 </div>
-                                            </div>
 
-                                            <span v-if="isDeletingRow(r)"
-                                                class="text-xs rounded-full border border-default px-2 py-0.5 opacity-80">
-                                                Deleting…
-                                            </span>
+                                                <span v-if="isDeletingRow(r)"
+                                                    class="text-xs rounded-full border border-default px-2 py-0.5 opacity-80">
+                                                    Deleting…
+                                                </span>
+                                            </div>
                                         </div>
+
                                     </div>
 
-                                </div>
+                                    <div class="px-3 py-2 text-default min-w-0 truncate">
+                                        <span v-if="r.type === 'file'">{{ r.fileType || "—" }}</span>
+                                        <span v-else>folder</span>
+                                    </div>
 
-                                <div class="px-3 py-2 text-default min-w-0 truncate">
-                                    <span v-if="r.type === 'file'">{{ r.fileType || "—" }}</span>
-                                    <span v-else>folder</span>
-                                </div>
+                                    <div class="px-3 py-2 text-default min-w-0 truncate">
+                                        <span v-if="r.type === 'file'">{{ formatBytes(r.size) }}</span>
+                                        <span v-else>—</span>
+                                    </div>
 
-                                <div class="px-3 py-2 text-default min-w-0 truncate">
-                                    <span v-if="r.type === 'file'">{{ formatBytes(r.size) }}</span>
-                                    <span v-else>—</span>
-                                </div>
+                                    <div class="px-3 py-2 text-default min-w-0 truncate">
+                                        <span v-if="r.type === 'file'">{{ formatDate(r.lastModified) }}</span>
+                                        <span v-else>—</span>
+                                    </div>
 
-                                <div class="px-3 py-2 text-default min-w-0 truncate">
-                                    <span v-if="r.type === 'file'">{{ formatDate(r.lastModified) }}</span>
-                                    <span v-else>—</span>
-                                </div>
+                                    <div class="px-3 py-2 text-default min-w-0 truncate">
+                                        <span v-if="r.type === 'file'">{{ r.ownerDisplayName || r.ownerId || "—"
+                                        }}</span>
+                                        <span v-else>—</span>
+                                    </div>
 
-                                <div class="px-3 py-2 text-default min-w-0 truncate">
-                                    <span v-if="r.type === 'file'">{{ r.ownerDisplayName || r.ownerId || "—" }}</span>
-                                    <span v-else>—</span>
+                                    <div class="px-3 py-2 text-default min-w-0 truncate">
+                                        <span v-if="r.type === 'file'">{{ r.storageClass || "—" }}</span>
+                                        <span v-else>—</span>
+                                    </div>
                                 </div>
-
-                                <div class="px-3 py-2 text-default min-w-0 truncate">
-                                    <span v-if="r.type === 'file'">{{ r.storageClass || "—" }}</span>
-                                    <span v-else>—</span>
-                                </div>
-                            </div>
-                        </RecycleScroller>
+                            </RecycleScroller>
+                        </div>
                     </div>
 
                     <!-- ICON VIEW -->
-                    <div v-else class="rounded-md border border-default overflow-y-scroll">
+                    <div v-else class="rounded-md border border-default overflow-y-scroll"
+                        @contextmenu="openMenuAtPoint">
                         <RecycleScroller ref="iconScroller" class=" w-full overflow-y-auto p-4  "
                             style="height: 96vh; scrollbar-gutter: stable; " :items="virtualRows"
                             :grid-items="gridItems" :item-size="120" :item-secondary-size="150" key-field="__key"
@@ -256,7 +308,7 @@
                                 class="w-full h-full rounded-md border border-default bg-default p-3 text-left hover:opacity-90 active:opacity-80"
                                 :class="selectedIds.has(rowId(r)) ? 'ring-2 ring-default' : ''"
                                 @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
-                                @contextmenu.prevent="openMenu($event, r, index)">
+                                @contextmenu.prevent.stop="openMenu($event, r, index)">
                                 <div class="flex flex-col items-center gap-2 h-full">
                                     <span class="shrink-0 opacity-80 flex justify-center">
                                         <svg v-if="iconForRow(r) === 'folder'" class="w-8 h-8" viewBox="0 0 24 24"
@@ -326,7 +378,8 @@
             </div>
         </div>
     </div>
-    <ObjectContextMenu :open="menuOpen" :pos="menuPos" @close="menuOpen = false" @action="onMenuAction" />
+    <ObjectContextMenu :open="menuOpen" :pos="menuPos" :canPaste="canPasteHere" @close="menuOpen = false"
+        @action="onMenuAction" />
     <ConfirmDeleteModal :open="deleteOpen" :kind="pendingDelete?.kind || 'file'" :name="pendingDelete?.name || ''"
         :busy="false" :progressText="''" @cancel="cancelDelete" @confirm="confirmDeleteNow" />
 
@@ -337,7 +390,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listObjects, presignGetObject, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus } from "../lib/s3Objects";
+import {
+    listObjects, presignGetObject, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus
+    , copyPrefix, movePrefix, copyObject
+} from "../lib/s3Objects";
+import { useClipboardStore } from "../stores/clipboard";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
@@ -394,54 +451,54 @@ type DeleteKind = "file" | "folder";
 type DownloadState = "running" | "done" | "failed" | "canceled";
 
 type DownloadJob = {
-  id: string;           // jobId
-  kind: "object" | "prefix-targz";
-  name: string;         // filename or prefix
-  bytes?: number;
-  totalBytes?: number;
-  state: DownloadState;
-  error?: string;
-  updatedAt?: number;
+    id: string;           // jobId
+    kind: "object" | "prefix-targz";
+    name: string;         // filename or prefix
+    bytes?: number;
+    totalBytes?: number;
+    state: DownloadState;
+    error?: string;
+    updatedAt?: number;
 };
 
 let downloadPollTimer: number | null = null;
 
 function startDownloadPolling() {
-  if (downloadPollTimer != null) return;
+    if (downloadPollTimer != null) return;
 
-  downloadPollTimer = window.setInterval(async () => {
-    const running = downloadJobs.value.filter((j) => j.state === "running");
-    if (running.length === 0) {
-      stopDownloadPolling();
-      return;
-    }
+    downloadPollTimer = window.setInterval(async () => {
+        const running = downloadJobs.value.filter((j) => j.state === "running");
+        if (running.length === 0) {
+            stopDownloadPolling();
+            return;
+        }
 
-    for (const j of running) {
-      const res = await getDownloadJobStatus({ jobId: j.id });
-      if (res.isErr()) continue;
+        for (const j of running) {
+            const res = await getDownloadJobStatus({ jobId: j.id });
+            if (res.isErr()) continue;
 
-      const s = res.value;
+            const s = res.value;
 
-      if (typeof s.state === "string") j.state = s.state as DownloadState;
-      if (typeof s.bytes === "number") j.bytes = s.bytes;
-      if (typeof s.totalBytes === "number") j.totalBytes = s.totalBytes;
-      if (typeof s.error === "string") j.error = s.error;
-      if (typeof s.updatedAt === "number") j.updatedAt = s.updatedAt;
-    }
+            if (typeof s.state === "string") j.state = s.state as DownloadState;
+            if (typeof s.bytes === "number") j.bytes = s.bytes;
+            if (typeof s.totalBytes === "number") j.totalBytes = s.totalBytes;
+            if (typeof s.error === "string") j.error = s.error;
+            if (typeof s.updatedAt === "number") j.updatedAt = s.updatedAt;
+        }
 
-    downloadJobs.value = [...downloadJobs.value];
-  }, 500);
+        downloadJobs.value = [...downloadJobs.value];
+    }, 500);
 }
 
 function stopDownloadPolling() {
-  if (downloadPollTimer == null) return;
-  clearInterval(downloadPollTimer);
-  downloadPollTimer = null;
+    if (downloadPollTimer == null) return;
+    clearInterval(downloadPollTimer);
+    downloadPollTimer = null;
 }
 
 
 const downloadJobs = ref<DownloadJob[]>([]);
-    const downloadBusy = computed(() => downloadJobs.value.some(j => j.state === "running"));
+const downloadBusy = computed(() => downloadJobs.value.some(j => j.state === "running"));
 
 const delStore = useDeleteTasksStore();
 
@@ -473,8 +530,11 @@ const selectedIds = ref<Set<string>>(new Set());
 const anchorIndex = ref<number | null>(null);
 const renameProgress = ref<{ done: number; total: number; bytes: number; size: number } | null>(null);
 const renameCancel = ref<null | (() => void)>(null);
-const downloadNote = ref<string>("");
+const clip = useClipboardStore();
 
+const canPasteHere = computed(() =>
+    clip.canPaste(connectionId.value, bucket.value)
+);
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
 
@@ -875,99 +935,105 @@ function openMenu(e: MouseEvent, r: Row, index: number) {
 
 async function onMenuAction(action: MenuAction) {
     const r = menuRow.value;
-    if (!r) return;
+    if (action !== "paste" && !r) return;
+
 
     if (action === "copy") {
         const items = effectiveSelection();
         if (items.length === 0) return;
+        clip.set("copy", connectionId.value, bucket.value, selectionToClipItems(items));
+        return;
+    }
 
-        const lines = items.map((r) => (r.type === "folder" ? r.prefix : r.key));
-        await navigator.clipboard.writeText(lines.join("\n"));
+    if (action === "cut") {
+        const items = effectiveSelection();
+        if (items.length === 0) return;
+        clip.set("cut", connectionId.value, bucket.value, selectionToClipItems(items));
         return;
     }
 
     if (action === "download") {
-  const items = effectiveSelection();
-  if (items.length === 0) return;
+        const items = effectiveSelection();
+        if (items.length === 0) return;
 
-  const folders = items.filter((r): r is FolderRow => r.type === "folder");
-  const files = items.filter(isFileRow);
+        const folders = items.filter((r): r is FolderRow => r.type === "folder");
+        const files = items.filter(isFileRow);
 
-  // Start polling as soon as we enqueue jobs
-  startDownloadPolling();
+        // Start polling as soon as we enqueue jobs
+        startDownloadPolling();
 
-  // Folders -> tar.gz
-  for (const d of folders) {
-    const jobId = newJobId();
+        // Folders -> tar.gz
+        for (const d of folders) {
+            const jobId = newJobId();
 
-    downloadJobs.value.unshift({
-      id: jobId,
-      kind: "prefix-targz",
-      name: `${d.name}.tar.gz`,
-      state: "running",
-      bytes: 0,
-      totalBytes: 0,
-    });
+            downloadJobs.value.unshift({
+                id: jobId,
+                kind: "prefix-targz",
+                name: `${d.name}.tar.gz`,
+                state: "running",
+                bytes: 0,
+                totalBytes: 0,
+            });
 
-    const res = await downloadPrefixTarGz({
-      connectionId: connectionId.value,
-      bucket: bucket.value,
-      prefix: d.prefix,
-      jobId,
-      filename: `${d.name}.tar.gz`,
-    });
+            const res = await downloadPrefixTarGz({
+                connectionId: connectionId.value,
+                bucket: bucket.value,
+                prefix: d.prefix,
+                jobId,
+                filename: `${d.name}.tar.gz`,
+            });
 
-    if (res.isErr()) {
-      const j = downloadJobs.value.find((x) => x.id === jobId);
-      if (j) {
-        j.state = "failed";
-        j.error = res.error.message;
-        downloadJobs.value = [...downloadJobs.value];
-      }
-      error.value = res.error.message;
-      return;
+            if (res.isErr()) {
+                const j = downloadJobs.value.find((x) => x.id === jobId);
+                if (j) {
+                    j.state = "failed";
+                    j.error = res.error.message;
+                    downloadJobs.value = [...downloadJobs.value];
+                }
+                error.value = res.error.message;
+                return;
+            }
+
+            await new Promise((r) => setTimeout(r, 250));
+        }
+
+        // Files -> streamed object
+        for (const f of files) {
+            const jobId = newJobId();
+
+            downloadJobs.value.unshift({
+                id: jobId,
+                kind: "object",
+                name: f.name,
+                state: "running",
+                bytes: 0,
+                totalBytes: f.size,
+            });
+
+            const res = await downloadObject({
+                connectionId: connectionId.value,
+                bucket: bucket.value,
+                key: f.key,
+                filename: f.name,
+                jobId,
+            });
+
+            if (res.isErr()) {
+                const j = downloadJobs.value.find((x) => x.id === jobId);
+                if (j) {
+                    j.state = "failed";
+                    j.error = res.error.message;
+                    downloadJobs.value = [...downloadJobs.value];
+                }
+                error.value = res.error.message;
+                return;
+            }
+
+            await new Promise((r) => setTimeout(r, 250));
+        }
+
+        return;
     }
-
-    await new Promise((r) => setTimeout(r, 250));
-  }
-
-  // Files -> streamed object
-  for (const f of files) {
-    const jobId = newJobId();
-
-    downloadJobs.value.unshift({
-      id: jobId,
-      kind: "object",
-      name: f.name,
-      state: "running",
-      bytes: 0,
-      totalBytes: f.size,
-    });
-
-    const res = await downloadObject({
-      connectionId: connectionId.value,
-      bucket: bucket.value,
-      key: f.key,
-      filename: f.name,
-      jobId,
-    });
-
-    if (res.isErr()) {
-      const j = downloadJobs.value.find((x) => x.id === jobId);
-      if (j) {
-        j.state = "failed";
-        j.error = res.error.message;
-        downloadJobs.value = [...downloadJobs.value];
-      }
-      error.value = res.error.message;
-      return;
-    }
-
-    await new Promise((r) => setTimeout(r, 250));
-  }
-
-  return;
-}
 
     if (action === "delete") {
         const items = effectiveSelection();
@@ -1073,6 +1139,168 @@ async function onMenuAction(action: MenuAction) {
 
         return;
     }
+
+    if (action === "paste") {
+        if (!clip.canPaste(connectionId.value, bucket.value)) return;
+
+        const dstBasePrefix = normalizePrefixNoLead(prefix.value || "");
+        const kind = clip.kind; // "copy" | "cut"
+        const srcItems = [...clip.items];
+
+        error.value = "";
+        busy.value = true;
+
+        try {
+            // 1) Plan items so UI shows total immediately
+            const planned: PasteItem[] = [];
+            const usedNames = new Set<string>();
+
+            for (const it of srcItems) {
+                if (it.type === "file") {
+                    const originalName = basenameFromKey(it.key);
+                    const name = makeUniqueName(originalName, usedNames);
+                    const dstKey = dstBasePrefix ? dstBasePrefix + name : name;
+
+                    if (dstKey === it.key) continue;
+
+                    planned.push({
+                        id: uid(),
+                        itemType: "file",
+                        srcKey: it.key,
+                        dstKey,
+                        name,
+                        step: "queued",
+                    });
+                } else {
+                    const srcPrefix = normalizePrefixNoLead(it.prefix);
+                    const folderName = makeUniqueName(folderNameFromPrefix(it.prefix), usedNames);
+                    const dstPrefix = dstBasePrefix ? `${dstBasePrefix}${folderName}/` : `${folderName}/`;
+
+                    if (kind === "cut" && isPasteIntoSelfPrefix(srcPrefix, dstPrefix)) {
+                        error.value = `Cannot move "${folderName}" into itself.`;
+                        return;
+                    }
+                    if (srcPrefix === dstPrefix) continue;
+
+                    planned.push({
+                        id: uid(),
+                        itemType: "folder",
+                        srcKey: srcPrefix,
+                        dstKey: dstPrefix,
+                        name: folderName + "/",
+                        step: "queued",
+                    });
+                }
+            }
+
+            pasteItems.value = planned;
+
+            // 2) Execute planned items sequentially (simple + predictable UI)
+            for (const p of pasteItems.value) {
+                p.step = "copying";
+                pasteItems.value = [...pasteItems.value];
+
+                const jobId = uid();
+                transferJobs.value.push({
+                    id: jobId,
+                    kind: kind === "cut" ? "move" : "copy",
+                    itemType: p.itemType,
+                    name: p.name,
+                    src: p.srcKey,
+                    dst: p.dstKey,
+                    state: "running",
+                    startedAt: Date.now(),
+                });
+                const tIdx = transferJobs.value.findIndex(j => j.id === jobId);
+
+                try {
+                    if (p.itemType === "file") {
+                        if (kind === "cut") {
+                            const job = renameObjectStreamed({
+                                connectionId: connectionId.value,
+                                bucket: bucket.value,
+                                srcKey: p.srcKey,
+                                dstKey: p.dstKey,
+                                concurrency: 6,
+                                onEvent: (ev) => {
+                                    if (ev.type === "result") {
+                                        if (tIdx >= 0) {
+                                            transferJobs.value[tIdx].state = ev.ok ? "done" : "failed";
+                                            transferJobs.value[tIdx].error = ev.ok ? undefined : (ev.error || "Move failed");
+                                            transferJobs.value[tIdx].finishedAt = Date.now();
+                                        }
+                                    }
+                                },
+                            });
+
+                            const res = await job.run;
+                            if (res.isErr()) throw new Error(res.error.message);
+                        } else {
+                            const res = await copyObject({
+                                connectionId: connectionId.value,
+                                bucket: bucket.value,
+                                srcKey: p.srcKey,
+                                dstKey: p.dstKey,
+                                concurrency: 6,
+                            });
+                            if (res.isErr()) throw new Error(res.error.message);
+                        }
+                    } else {
+                        // folder/prefix
+                        const res = kind === "cut"
+                            ? await movePrefix({
+                                connectionId: connectionId.value,
+                                bucket: bucket.value,
+                                srcPrefix: p.srcKey,
+                                dstPrefix: p.dstKey,
+                                concurrency: 6,
+                            })
+                            : await copyPrefix({
+                                connectionId: connectionId.value,
+                                bucket: bucket.value,
+                                srcPrefix: p.srcKey,
+                                dstPrefix: p.dstKey,
+                                concurrency: 6,
+                            });
+
+                        if (res.isErr()) throw new Error(res.error.message);
+                    }
+
+                    // success
+                    p.step = "done";
+                    pasteItems.value = [...pasteItems.value];
+
+                    if (tIdx >= 0) {
+                        transferJobs.value[tIdx].state = "done";
+                        transferJobs.value[tIdx].finishedAt = Date.now();
+                    }
+                } catch (e: any) {
+                    const msg = e?.message || "Paste failed";
+                    p.step = "failed";
+                    p.error = msg;
+                    pasteItems.value = [...pasteItems.value];
+
+                    if (tIdx >= 0) {
+                        transferJobs.value[tIdx].state = "failed";
+                        transferJobs.value[tIdx].error = msg;
+                        transferJobs.value[tIdx].finishedAt = Date.now();
+                    }
+
+                    error.value = msg;
+                    return; // stop on first error (change to continue if you want)
+                }
+            }
+
+            // 3) Clear clipboard if it was a cut (move)
+            if (clip.kind === "cut") clip.clear();
+
+            await refresh();
+            return;
+        } finally {
+            busy.value = false;
+        }
+    }
+
 }
 
 async function confirmDeleteNow() {
@@ -1365,9 +1593,6 @@ async function uploadSingleViaStdin(file: File, dstKey: string) {
         uploadProgress.value = null;
     }
 }
-function uid() {
-    return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
 
 function chooseSafeConcurrency(files: File[]) {
     const sizes = files.map((f) => f.size || 0);
@@ -1604,15 +1829,24 @@ function onDocMouseDown(e: MouseEvent) {
 }
 
 function onBeforeUnload(e: BeforeUnloadEvent) {
-    if (!downloadBusy.value) return;
+    if (!downloadBusy.value && !transferBusy.value && !pasteBusy.value) return;
     e.preventDefault();
     e.returnValue = "";
 }
 
+
+
 function newJobId(): string {
-  const c: any = globalThis.crypto as any;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+    const c: any = globalThis.crypto as any;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+
+function joinKey(prefix: string, name: string): string {
+    const p = normalizePrefix(prefix);
+    if (!p) return name.replace(/^\/+/, "");
+    return p + name.replace(/^\/+/, "");
 }
 
 
@@ -1626,6 +1860,127 @@ onBeforeUnmount(() => {
     document.removeEventListener("mousedown", onDocMouseDown);
     window.removeEventListener("beforeunload", onBeforeUnload);
 
+});
+
+
+type TransferKind = "copy" | "move";
+type TransferItemType = "file" | "folder";
+type TransferState = "running" | "done" | "failed" | "canceled";
+
+type TransferJob = {
+    id: string;
+    kind: TransferKind;
+    itemType: TransferItemType;
+    name: string;            // display name
+    src: string;             // src key or src prefix
+    dst: string;             // dst key or dst prefix
+    state: TransferState;
+    error?: string;
+    startedAt: number;
+    finishedAt?: number;
+};
+
+const transferJobs = ref<TransferJob[]>([]);
+const transferBusy = computed(() => transferJobs.value.some(j => j.state === "running"));
+
+function uid() {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function normalizePrefixNoLead(p: string): string {
+    let s = (p || "").replace(/^\/+/, "");
+    if (s && !s.endsWith("/")) s += "/";
+    return s;
+}
+
+function basenameFromKey(k: string) {
+    const parts = (k || "").split("/");
+    return parts[parts.length - 1] || k;
+}
+
+function folderNameFromPrefix(p: string) {
+    const s = normalizePrefixNoLead(p);
+    const trimmed = s.endsWith("/") ? s.slice(0, -1) : s;
+    const parts = trimmed.split("/").filter(Boolean);
+    return parts[parts.length - 1] || trimmed || "folder";
+}
+
+function selectionToClipItems(items: Row[]) {
+    return items.map((it) =>
+        it.type === "folder"
+            ? ({ type: "folder", prefix: it.prefix, name: it.name } as const)
+            : ({ type: "file", key: it.key, name: it.name } as const)
+    );
+}
+
+/**
+ * Collision handling (UI-only):
+ * - S3 overwrites by default. If you want "no overwrite", you must check destination existence server-side.
+ * - This just avoids collisions among the items being pasted in the same operation.
+ */
+function makeUniqueName(base: string, used: Set<string>) {
+    if (!used.has(base)) {
+        used.add(base);
+        return base;
+    }
+    const dot = base.lastIndexOf(".");
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    const ext = dot > 0 ? base.slice(dot) : "";
+    let i = 1;
+    while (true) {
+        const cand = `${stem} (${i})${ext}`;
+        if (!used.has(cand)) {
+            used.add(cand);
+            return cand;
+        }
+        i += 1;
+    }
+}
+
+function isPasteIntoSelfPrefix(srcPrefix: string, dstPrefix: string) {
+    const s = normalizePrefixNoLead(srcPrefix);
+    const d = normalizePrefixNoLead(dstPrefix);
+    // moving/copying a folder into itself or its subfolder should be blocked
+    return d === s || d.startsWith(s);
+}
+function openMenuAtPoint(e: MouseEvent) {
+    e.preventDefault();
+
+    // do not change selection
+    menuOpen.value = true;
+    menuPos.value = { x: e.clientX, y: e.clientY };
+    menuRow.value = null;
+    anchorIndex.value = null;
+}
+type PasteStep = "queued" | "copying" | "done" | "failed" | "canceled";
+
+type PasteItem = {
+    id: string;
+    itemType: "file" | "folder";
+    srcKey: string; // file key OR prefix
+    dstKey: string; // file key OR prefix
+    name: string;
+    step: PasteStep;
+    error?: string;
+};
+
+const pasteItems = ref<PasteItem[]>([]);
+const pasteBusy = computed(() => pasteItems.value.some(i => i.step === "queued" || i.step === "copying"));
+
+const pasteTotal = computed(() => pasteItems.value.length);
+const pasteDone = computed(() => pasteItems.value.filter(i => i.step === "done").length);
+
+const pastePct = computed(() => {
+    const t = pasteTotal.value;
+    if (!t) return null;
+    return Math.floor((pasteDone.value / t) * 100);
+});
+watch(pasteBusy, (b) => {
+    if (!b && pasteItems.value.length && pasteItems.value.every(p => p.step === "done")) {
+        setTimeout(() => {
+            if (!pasteBusy.value) pasteItems.value = [];
+        }, 2000);
+    }
 });
 
 

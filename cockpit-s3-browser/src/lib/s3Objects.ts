@@ -1,5 +1,5 @@
 import { Command, server } from "@45drives/houston-common-lib";
-import type { ProcessError } from "@45drives/houston-common-lib";
+import { ProcessError } from "@45drives/houston-common-lib";
 import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 
 // @ts-ignore
@@ -445,3 +445,64 @@ export function getDownloadJobStatus(params: {
       return okAsync(res);
     });
 }
+
+export function copyObject(params: {
+  connectionId: string;
+  bucket: string;
+  srcKey: string;
+  dstKey: string;
+  concurrency?: number;
+}): ResultAsync<void, ProcessError | SyntaxError> {
+  const args: string[] = ["copy-object", params.connectionId, params.bucket, params.srcKey, params.dstKey];
+  if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<{ ok: boolean; error?: string }>(s))
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Copy failed"));
+      return okAsync(undefined);
+    });
+}
+
+export function copyPrefix(params: {
+  connectionId: string;
+  bucket: string;
+  srcPrefix: string;
+  dstPrefix: string;
+  concurrency?: number;
+}): ResultAsync<void, ProcessError | SyntaxError> {
+  const args: string[] = ["copy-prefix", params.connectionId, params.bucket, params.srcPrefix, params.dstPrefix];
+  if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<{ ok: boolean; error?: string }>(s))
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Copy prefix failed"));
+      return okAsync(undefined);
+    });
+}
+
+export function movePrefix(params: {
+  connectionId: string;
+  bucket: string;
+  srcPrefix: string;
+  dstPrefix: string;
+  concurrency?: number;
+}): ResultAsync<void, ProcessError | SyntaxError> {
+  const args: string[] = ["move-prefix", params.connectionId, params.bucket, params.srcPrefix, params.dstPrefix];
+  if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<{ ok: boolean; error?: string }>(s))
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Move prefix failed"));
+      return okAsync(undefined);
+    });
+}
+
