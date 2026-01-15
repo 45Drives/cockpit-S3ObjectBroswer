@@ -66,7 +66,7 @@ maxKeys?: number;
     });
 }
 
-
+//this function it to generate presigned urls for downloading objects
 export function presignGetObject(params: {
   connectionId: string;
   bucket: string;
@@ -87,7 +87,6 @@ export function presignGetObject(params: {
     .map((proc) => proc.getStdout().trim())
     .andThen((stdout) => safeJsonParse<PresignGetCliResult>(stdout))
     .andThen((res) => {
-        console.log("download ", res)
       if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to presign download URL"));
       return okAsync({ url: res.url, expiresIn: res.expiresIn });
     });
@@ -373,9 +372,10 @@ export function uploadObjectFromStdinStreamed(params: {
 export function downloadPrefixTarGz(params: {
   connectionId: string;
   bucket: string;
-  prefix: string; // folder prefix like "photos/2025/" (or "photos/2025")
-  filename?: string; // optional override
-  stripComponents?: number; // optional, if you implemented it in python
+  prefix: string;
+  filename?: string;
+  stripComponents?: number;
+  jobId: string;
 }): ResultAsync<void, ProcessError> {
   const p = (params.prefix || "").replace(/^\/+/, "");
   const normalized = p === "" ? "" : p.endsWith("/") ? p : p + "/";
@@ -391,16 +391,57 @@ export function downloadPrefixTarGz(params: {
     params.connectionId,
     params.bucket,
     normalized,
+    "--job-id",
+    params.jobId,
   ];
 
   if (typeof params.stripComponents === "number") {
     args.push("--strip-components", String(params.stripComponents));
   }
-  const cmd = pyCmd(args, "try");
-  console.log("[download-prefix] argv:", cmd);
-  // This triggers a browser download via Cockpit channel
+
   return okAsync(undefined).map(() => {
     server.downloadCommandOutput(pyCmd(args, "try"), filename);
   });
+}
 
+
+export function downloadObject(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  filename?: string;
+  jobId: string;
+}): ResultAsync<void, ProcessError> {
+  const filename = params.filename || (params.key.split("/").pop() || "download");
+
+  const args: string[] = [
+    "download-object",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    "--job-id",
+    params.jobId,
+  ];
+
+  return okAsync(undefined).map(() => {
+    server.downloadCommandOutput(pyCmd(args, "try"), filename);
+  });
+}
+
+
+export function getDownloadJobStatus(params: {
+  jobId: string;
+}): ResultAsync<any, ProcessError | SyntaxError> {
+  const args: string[] = ["download-job-status", params.jobId];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((proc) => proc.getStdout().trim())
+    .andThen((stdout) => safeJsonParse<any>(stdout))
+    .andThen((res) => {
+      if (!res || res.ok === false) {
+        return errAsync(new SyntaxError(res?.error || "Failed to read job status"));
+      }
+      return okAsync(res);
+    });
 }

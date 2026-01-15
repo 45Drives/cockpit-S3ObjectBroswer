@@ -21,38 +21,25 @@
                             <ArrowPathIcon class="h-4 w-4"></ArrowPathIcon>
                         </button>
                         <div class="relative" ref="uploadMenuRef">
-  <button
-    type="button"
-    class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
-    :disabled="busy || uploadBusy"
-    @click="toggleUploadMenu"
-  >
-    Upload
-  </button>
+                            <button type="button"
+                                class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
+                                :disabled="busy || uploadBusy" @click="toggleUploadMenu">
+                                Upload
+                            </button>
 
-  <div
-    v-if="uploadMenuOpen"
-    class="absolute right-0 mt-2 w-44 rounded-md border border-default bg-default shadow-lg z-[9999]"
-  >
-    <button
-      type="button"
-      class="w-full text-left px-3 py-2 text-sm hover:bg-well"
-      :disabled="busy || uploadBusy"
-      @click="chooseUpload('files')"
-    >
-      Files…
-    </button>
+                            <div v-if="uploadMenuOpen"
+                                class="absolute right-0 mt-2 w-44 rounded-md border border-default bg-default shadow-lg z-[9999]">
+                                <button type="button" class="w-full text-left px-3 py-2 text-sm hover:bg-well"
+                                    :disabled="busy || uploadBusy" @click="chooseUpload('files')">
+                                    Files…
+                                </button>
 
-    <button
-      type="button"
-      class="w-full text-left px-3 py-2 text-sm hover:bg-well"
-      :disabled="busy || uploadBusy"
-      @click="chooseUpload('folder')"
-    >
-      Folder…
-    </button>
-  </div>
-</div>
+                                <button type="button" class="w-full text-left px-3 py-2 text-sm hover:bg-well"
+                                    :disabled="busy || uploadBusy" @click="chooseUpload('folder')">
+                                    Folder…
+                                </button>
+                            </div>
+                        </div>
 
 
                     </div>
@@ -62,6 +49,22 @@
                     <div v-if="error" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
                         {{ error }}
                     </div>
+                    <div v-if="downloadBusy" class="mb-3 rounded-md border border-yellow-300 bg-default p-3 text-sm">
+  <div class="font-semibold">Download in progress</div>
+  <div class="opacity-80">Do not close or refresh this tab.</div>
+
+  <div class="mt-2 space-y-1 text-xs">
+    <div v-for="j in downloadJobs" :key="j.id">
+      <span class="font-semibold">{{ j.name }}</span>
+      <span class="opacity-80"> — {{ j.state }}</span>
+      <span v-if="j.totalBytes && j.bytes != null" class="opacity-80">
+        ({{ formatBytes(j.bytes) }} / {{ formatBytes(j.totalBytes) }})
+      </span>
+      <span v-if="j.error" class="text-red-700"> — {{ j.error }}</span>
+    </div>
+  </div>
+</div>
+
                     <div v-if="uploadItems.length" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
                         <div class="flex items-center justify-between gap-3">
                             <div class="font-semibold">Upload queue: {{ uploadItems.length }}</div>
@@ -87,6 +90,8 @@
                                     {{ u.file.name }}: {{ u.error }}
                                 </div>
                             </template>
+
+
 
                         </div>
                     </div>
@@ -332,7 +337,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listObjects, presignGetObject, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz } from "../lib/s3Objects";
+import { listObjects, presignGetObject, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus } from "../lib/s3Objects";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
@@ -386,8 +391,57 @@ type FileRow = {
 type Row = FolderRow | FileRow;
 type ViewMode = "table" | "icons";
 type DeleteKind = "file" | "folder";
+type DownloadState = "running" | "done" | "failed" | "canceled";
+
+type DownloadJob = {
+  id: string;           // jobId
+  kind: "object" | "prefix-targz";
+  name: string;         // filename or prefix
+  bytes?: number;
+  totalBytes?: number;
+  state: DownloadState;
+  error?: string;
+  updatedAt?: number;
+};
+
+let downloadPollTimer: number | null = null;
+
+function startDownloadPolling() {
+  if (downloadPollTimer != null) return;
+
+  downloadPollTimer = window.setInterval(async () => {
+    const running = downloadJobs.value.filter((j) => j.state === "running");
+    if (running.length === 0) {
+      stopDownloadPolling();
+      return;
+    }
+
+    for (const j of running) {
+      const res = await getDownloadJobStatus({ jobId: j.id });
+      if (res.isErr()) continue;
+
+      const s = res.value;
+
+      if (typeof s.state === "string") j.state = s.state as DownloadState;
+      if (typeof s.bytes === "number") j.bytes = s.bytes;
+      if (typeof s.totalBytes === "number") j.totalBytes = s.totalBytes;
+      if (typeof s.error === "string") j.error = s.error;
+      if (typeof s.updatedAt === "number") j.updatedAt = s.updatedAt;
+    }
+
+    downloadJobs.value = [...downloadJobs.value];
+  }, 500);
+}
+
+function stopDownloadPolling() {
+  if (downloadPollTimer == null) return;
+  clearInterval(downloadPollTimer);
+  downloadPollTimer = null;
+}
 
 
+const downloadJobs = ref<DownloadJob[]>([]);
+    const downloadBusy = computed(() => downloadJobs.value.some(j => j.state === "running"));
 
 const delStore = useDeleteTasksStore();
 
@@ -419,6 +473,7 @@ const selectedIds = ref<Set<string>>(new Set());
 const anchorIndex = ref<number | null>(null);
 const renameProgress = ref<{ done: number; total: number; bytes: number; size: number } | null>(null);
 const renameCancel = ref<null | (() => void)>(null);
+const downloadNote = ref<string>("");
 
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
@@ -838,53 +893,81 @@ async function onMenuAction(action: MenuAction) {
   const folders = items.filter((r): r is FolderRow => r.type === "folder");
   const files = items.filter(isFileRow);
 
-  // Folders: stream tar.gz from server
+  // Start polling as soon as we enqueue jobs
+  startDownloadPolling();
+
+  // Folders -> tar.gz
   for (const d of folders) {
+    const jobId = newJobId();
+
+    downloadJobs.value.unshift({
+      id: jobId,
+      kind: "prefix-targz",
+      name: `${d.name}.tar.gz`,
+      state: "running",
+      bytes: 0,
+      totalBytes: 0,
+    });
+
     const res = await downloadPrefixTarGz({
       connectionId: connectionId.value,
       bucket: bucket.value,
       prefix: d.prefix,
+      jobId,
+      filename: `${d.name}.tar.gz`,
     });
+
     if (res.isErr()) {
+      const j = downloadJobs.value.find((x) => x.id === jobId);
+      if (j) {
+        j.state = "failed";
+        j.error = res.error.message;
+        downloadJobs.value = [...downloadJobs.value];
+      }
       error.value = res.error.message;
       return;
     }
+
     await new Promise((r) => setTimeout(r, 250));
   }
 
-  // Files: presigned URL (your existing approach)
+  // Files -> streamed object
   for (const f of files) {
-    const res = await presignGetObject({
+    const jobId = newJobId();
+
+    downloadJobs.value.unshift({
+      id: jobId,
+      kind: "object",
+      name: f.name,
+      state: "running",
+      bytes: 0,
+      totalBytes: f.size,
+    });
+
+    const res = await downloadObject({
       connectionId: connectionId.value,
       bucket: bucket.value,
       key: f.key,
-      expiresSeconds: 900,
+      filename: f.name,
+      jobId,
     });
 
     if (res.isErr()) {
+      const j = downloadJobs.value.find((x) => x.id === jobId);
+      if (j) {
+        j.state = "failed";
+        j.error = res.error.message;
+        downloadJobs.value = [...downloadJobs.value];
+      }
       error.value = res.error.message;
       return;
     }
-
-    const a = document.createElement("a");
-    a.href = res.value.url;
-    a.target = "_self";
-    a.rel = "noopener noreferrer";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
 
     await new Promise((r) => setTimeout(r, 250));
   }
 
   return;
 }
-
-
-
-
-
 
     if (action === "delete") {
         const items = effectiveSelection();
@@ -990,9 +1073,6 @@ async function onMenuAction(action: MenuAction) {
 
         return;
     }
-
-
-
 }
 
 async function confirmDeleteNow() {
@@ -1449,46 +1529,46 @@ async function uploadOneItemViaStdin(item: UploadItem) {
     }
 }
 async function pickAndUploadFolder() {
-  if (!connectionId.value || !bucket.value) return;
+    if (!connectionId.value || !bucket.value) return;
 
-  const input = document.createElement("input");
-  input.type = "file";
-  input.multiple = true;
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
 
-  // Chromium / Electron: directory selection
-  // TS doesn't know about these attrs, so set via setAttribute
-  input.setAttribute("webkitdirectory", "");
-  input.setAttribute("directory", "");
+    // Chromium / Electron: directory selection
+    // TS doesn't know about these attrs, so set via setAttribute
+    input.setAttribute("webkitdirectory", "");
+    input.setAttribute("directory", "");
 
-  input.onchange = async () => {
-    const files = Array.from(input.files ?? []);
-    if (files.length === 0) return;
+    input.onchange = async () => {
+        const files = Array.from(input.files ?? []);
+        if (files.length === 0) return;
 
-    const base = prefix.value || "";
+        const base = prefix.value || "";
 
-    uploadItems.value = files.map((f) => {
-      const rel =
-        ((f as any).webkitRelativePath as string | undefined) || f.name;
+        uploadItems.value = files.map((f) => {
+            const rel =
+                ((f as any).webkitRelativePath as string | undefined) || f.name;
 
-      // Normalize to S3-style
-      const relNorm = rel.replace(/\\/g, "/").replace(/^\/+/, "");
+            // Normalize to S3-style
+            const relNorm = rel.replace(/\\/g, "/").replace(/^\/+/, "");
 
-      return {
-        id: uid(),
-        file: f,
-        // base prefix + folder structure from picker
-        dstKey: base + relNorm,
-        bytes: 0,
-        status: "queued",
-        canceled: false,
-      } satisfies UploadItem;
-    });
+            return {
+                id: uid(),
+                file: f,
+                // base prefix + folder structure from picker
+                dstKey: base + relNorm,
+                bytes: 0,
+                status: "queued",
+                canceled: false,
+            } satisfies UploadItem;
+        });
 
-    const conc = chooseSafeConcurrency(files);
-    await uploadManyWithPool(conc);
-  };
+        const conc = chooseSafeConcurrency(files);
+        await uploadManyWithPool(conc);
+    };
 
-  input.click();
+    input.click();
 }
 
 type UploadPickKind = "files" | "folder";
@@ -1497,38 +1577,55 @@ const uploadMenuOpen = ref(false);
 const uploadMenuRef = ref<HTMLElement | null>(null);
 
 function toggleUploadMenu() {
-  if (busy.value || uploadBusy.value) return;
-  uploadMenuOpen.value = !uploadMenuOpen.value;
+    if (busy.value || uploadBusy.value) return;
+    uploadMenuOpen.value = !uploadMenuOpen.value;
 }
 
 function closeUploadMenu() {
-  uploadMenuOpen.value = false;
+    uploadMenuOpen.value = false;
 }
 
 async function chooseUpload(kind: UploadPickKind) {
-  closeUploadMenu();
-  if (kind === "files") {
-    await pickAndUploadMultiple();
-  } else {
-    await pickAndUploadFolder();
-  }
+    closeUploadMenu();
+    if (kind === "files") {
+        await pickAndUploadMultiple();
+    } else {
+        await pickAndUploadFolder();
+    }
 }
 
 function onDocMouseDown(e: MouseEvent) {
-  if (!uploadMenuOpen.value) return;
-  const el = uploadMenuRef.value;
-  if (!el) return;
-  if (e.target instanceof Node && !el.contains(e.target)) {
-    closeUploadMenu();
-  }
+    if (!uploadMenuOpen.value) return;
+    const el = uploadMenuRef.value;
+    if (!el) return;
+    if (e.target instanceof Node && !el.contains(e.target)) {
+        closeUploadMenu();
+    }
 }
 
+function onBeforeUnload(e: BeforeUnloadEvent) {
+    if (!downloadBusy.value) return;
+    e.preventDefault();
+    e.returnValue = "";
+}
+
+function newJobId(): string {
+  const c: any = globalThis.crypto as any;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+
 onMounted(() => {
-  document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("mousedown", onDocMouseDown);
+    window.addEventListener("beforeunload", onBeforeUnload);
+
 });
 
 onBeforeUnmount(() => {
-  document.removeEventListener("mousedown", onDocMouseDown);
+    document.removeEventListener("mousedown", onDocMouseDown);
+    window.removeEventListener("beforeunload", onBeforeUnload);
+
 });
 
 

@@ -93,3 +93,16 @@ export type EndpointConfig = {
   export type PresignGetCliResult =
   | { ok: true; url: string; expiresIn: number }
   | { ok: false; error?: string };
+
+  export type ClipKind = "copy" | "cut";
+
+  export type ClipItem =
+    | { type: "file"; key: string; name: string; size?: number }
+    | { type: "folder"; prefix: string; name: string };
+
+  export type Clipboard = {
+    kind: ClipKind;
+    connectionId: string;
+    bucket: string;
+    items: ClipItem[];
+  };

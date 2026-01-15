@@ -19,6 +19,7 @@ MIN_PART_SIZE = 64 * 1024 * 1024  # 64 MiB
 MAX_PARTS = 10000
 DEFAULT_CONCURRENCY = 6
 _current_abort = None  # type: Optional[callable]
+JOB_DIR = "/run/s3browser/downloads"
 
 BASE_DIR = "/etc/45drives/s3-object-browser/connections"
 
@@ -42,6 +43,29 @@ def endpoint_url_from_cfg(cfg: Dict[str, Any]) -> str:
 
   scheme = "https" if bool(cfg.get("useTls")) else "http"
   return f"{scheme}://{raw}"
+
+def write_job(job_id: str, data: Dict[str, Any]) -> None:
+  if not job_id:
+    return
+
+  os.makedirs(JOB_DIR, mode=0o700, exist_ok=True)
+
+  path = os.path.join(JOB_DIR, f"{job_id}.json")
+  data2 = dict(data)
+  data2["jobId"] = job_id
+  data2["updatedAt"] = int(time.time())
+
+  tmp = path + ".tmp"
+  with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(data2, f)
+  os.replace(tmp, path)  # atomic write
+
+def new_job_id() -> str:
+  # no uuid import needed
+  return f"{int(time.time()*1000)}-{os.getpid()}-{abs(hash(os.urandom(8)))%10_000_000}"
+
+def get_job_id(argv: List[str]) -> str:
+  return (get_flag_value(argv, "--job-id", "") or "").strip() or new_job_id()
 
 
 def s3_copy_source(bucket: str, key: str) -> str:
@@ -709,6 +733,8 @@ def install_cancel_handler(abort_fn):
   signal.signal(signal.SIGINT, _handler)
 
 def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List[str]) -> None:
+  job_id = get_job_id(argv)
+
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
@@ -744,13 +770,26 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
     keys.append({"key": key, "size": int(size or 0), "lastModified": lm})
     total_bytes += int(size or 0)
 
+  # Emit start to STDERR + write start job file
   emit_err({
     "type": "start",
     "ok": True,
+    "jobId": job_id,
     "bucket": bucket,
     "prefix": p,
     "files": len(keys),
     "totalBytes": total_bytes,
+  })
+
+  write_job(job_id, {
+    "type": "start",
+    "ok": True,
+    "kind": "prefix-targz",
+    "bucket": bucket,
+    "prefix": p,
+    "files": len(keys),
+    "totalBytes": total_bytes,
+    "state": "running",
   })
 
   out = sys.stdout.buffer  # tar.gz stream destination
@@ -786,7 +825,7 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
         # Fetch object stream
         obj = client.get_object(Bucket=bucket, Key=key)
         body = obj["Body"]  # streaming file-like object
-    
+
         try:
           # Build tar header first
           ti = tarfile.TarInfo(name=arcname)
@@ -816,6 +855,7 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
         emit_err({
           "type": "progress",
           "ok": True,
+          "jobId": job_id,
           "fileIndex": file_index,
           "files": len(keys),
           "bytes": sent_bytes,
@@ -823,21 +863,271 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
           "key": key,
         })
 
+        write_job(job_id, {
+          "type": "progress",
+          "ok": True,
+          "kind": "prefix-targz",
+          "bucket": bucket,
+          "prefix": p,
+          "fileIndex": file_index,
+          "files": len(keys),
+          "bytes": sent_bytes,
+          "totalBytes": total_bytes,
+          "key": key,
+          "state": "running",
+        })
+
     emit_err({
       "type": "result",
       "ok": True,
+      "jobId": job_id,
       "files": len(keys),
       "bytes": sent_bytes,
       "totalBytes": total_bytes,
     })
 
+    write_job(job_id, {
+      "type": "result",
+      "ok": True,
+      "kind": "prefix-targz",
+      "bucket": bucket,
+      "prefix": p,
+      "files": len(keys),
+      "bytes": sent_bytes,
+      "totalBytes": total_bytes,
+      "state": "done",
+    })
+
   except KeyboardInterrupt:
-    emit_err({"type": "result", "ok": False, "error": "Canceled"})
-    raise
-  except Exception as e:
-    emit_err({"type": "result", "ok": False, "error": str(e)})
+    emit_err({"type": "result", "ok": False, "jobId": job_id, "error": "Canceled"})
+
+    write_job(job_id, {
+      "type": "result",
+      "ok": False,
+      "kind": "prefix-targz",
+      "bucket": bucket,
+      "prefix": p,
+      "bytes": sent_bytes,
+      "totalBytes": total_bytes,
+      "error": "Canceled",
+      "state": "canceled",
+    })
     raise
 
+  except Exception as e:
+    emit_err({"type": "result", "ok": False, "jobId": job_id, "error": str(e)})
+
+    write_job(job_id, {
+      "type": "result",
+      "ok": False,
+      "kind": "prefix-targz",
+      "bucket": bucket,
+      "prefix": p,
+      "bytes": sent_bytes,
+      "totalBytes": total_bytes,
+      "error": str(e),
+      "state": "failed",
+    })
+    raise
+
+
+def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
+  job_id = get_job_id(argv)
+
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  # Optional: chunk size for streaming reads
+  chunk_raw = (get_flag_value(argv, "--chunk", "8388608") or "8388608").strip()
+  try:
+    chunk_size = max(64 * 1024, int(chunk_raw))
+  except ValueError:
+    chunk_size = 8 * 1024 * 1024
+
+  # Progress to STDERR only
+  def emit_err(obj: Dict[str, Any]) -> None:
+    try:
+      sys.stderr.write(json.dumps(obj) + "\n")
+      sys.stderr.flush()
+    except Exception:
+      # If client disconnected, stderr may be closed too
+      pass
+
+  canceled = {"yes": False}
+
+  def abort():
+    canceled["yes"] = True
+
+  install_cancel_handler(abort)
+
+  # Head for metadata/size (also confirms existence early)
+  head = client.head_object(Bucket=bucket, Key=key)
+  size = int(head.get("ContentLength") or 0)
+  lm = head.get("LastModified")
+
+  emit_err({
+    "type": "start",
+    "ok": True,
+    "jobId": job_id,
+    "bucket": bucket,
+    "key": key,
+    "size": size,
+    "lastModified": (lm.isoformat() if lm else None),
+    "chunkSize": chunk_size,
+  })
+
+  write_job(job_id, {
+    "type": "start",
+    "ok": True,
+    "kind": "object",
+    "bucket": bucket,
+    "key": key,
+    "size": size,
+    "lastModified": (lm.isoformat() if lm else None),
+    "chunkSize": chunk_size,
+    "state": "running",
+  })
+
+  out = sys.stdout.buffer
+  sent = 0
+
+  try:
+    obj = client.get_object(Bucket=bucket, Key=key)
+    body = obj["Body"]
+
+    try:
+      while True:
+        if canceled["yes"]:
+          raise KeyboardInterrupt("Canceled")
+
+        b = body.read(chunk_size)
+        if not b:
+          break
+
+        out.write(b)
+        sent += len(b)
+
+        emit_err({
+          "type": "progress",
+          "ok": True,
+          "jobId": job_id,
+          "bytes": sent,
+          "size": size,
+          "key": key,
+        })
+
+        write_job(job_id, {
+          "type": "progress",
+          "ok": True,
+          "kind": "object",
+          "bucket": bucket,
+          "key": key,
+          "bytes": sent,
+          "size": size,
+          "state": "running",
+        })
+
+    finally:
+      try:
+        body.close()
+      except Exception:
+        pass
+
+    emit_err({
+      "type": "result",
+      "ok": True,
+      "jobId": job_id,
+      "bytes": sent,
+      "size": size,
+      "key": key,
+    })
+
+    write_job(job_id, {
+      "type": "result",
+      "ok": True,
+      "kind": "object",
+      "bucket": bucket,
+      "key": key,
+      "bytes": sent,
+      "size": size,
+      "state": "done",
+    })
+
+  except BrokenPipeError:
+    # Browser canceled / channel closed mid-stream.
+    # Mark canceled (best effort), then exit cleanly.
+    try:
+      write_job(job_id, {
+        "type": "result",
+        "ok": False,
+        "kind": "object",
+        "bucket": bucket,
+        "key": key,
+        "bytes": sent,
+        "size": size,
+        "error": "BrokenPipe",
+        "state": "canceled",
+      })
+    except Exception:
+      pass
+    raise SystemExit(0)
+
+  except KeyboardInterrupt:
+    emit_err({"type": "result", "ok": False, "jobId": job_id, "error": "Canceled", "bytes": sent, "size": size, "key": key})
+
+    write_job(job_id, {
+      "type": "result",
+      "ok": False,
+      "kind": "object",
+      "bucket": bucket,
+      "key": key,
+      "bytes": sent,
+      "size": size,
+      "error": "Canceled",
+      "state": "canceled",
+    })
+    raise
+
+  except Exception as e:
+    emit_err({"type": "result", "ok": False, "jobId": job_id, "error": str(e), "bytes": sent, "size": size, "key": key})
+
+    write_job(job_id, {
+      "type": "result",
+      "ok": False,
+      "kind": "object",
+      "bucket": bucket,
+      "key": key,
+      "bytes": sent,
+      "size": size,
+      "error": str(e),
+      "state": "failed",
+    })
+    raise
+
+def cmd_download_job_status(job_id: str) -> None:
+  job_id = (job_id or "").strip()
+  if not job_id:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Missing jobId"}) + "\n")
+    return
+
+  path = os.path.join(JOB_DIR, f"{job_id}.json")
+  if not os.path.exists(path):
+    sys.stdout.write(json.dumps({"ok": False, "error": "Job not found"}) + "\n")
+    return
+
+  try:
+    with open(path, "r", encoding="utf-8") as f:
+      data = json.load(f)
+    # ensure ok present for UI wrapper
+    out = {"ok": True}
+    if isinstance(data, dict):
+      out.update(data)
+    else:
+      out["data"] = data
+    sys.stdout.write(json.dumps(out) + "\n")
+  except Exception as e:
+    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
 
 
 def main() -> None:
@@ -858,6 +1148,7 @@ def main() -> None:
     bucket = sys.argv[3]
     cmd_list_objects(conn_id, bucket, sys.argv[4:])
     return
+
   if cmd == "presign-get":
     if len(sys.argv) < 5:
       raise ValueError("Usage: s3browser-cli presign-get <connectionId> <bucket> <key> [--expires SEC]")
@@ -884,22 +1175,33 @@ def main() -> None:
       raise ValueError("Usage: s3browser-cli rename-object <connectionId> <bucket> <srcKey> <dstKey> [--stream] [--concurrency N]")
     cmd_rename_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
     return
+
   if cmd == "upload-stdin":
     if len(sys.argv) < 5:
       raise ValueError("Usage: s3browser-cli upload-stdin <connectionId> <bucket> <key> --size N [--content-type CT]")
     cmd_upload_stdin(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
     return
+
   if cmd == "download-prefix-targz":
     if len(sys.argv) < 5:
       raise ValueError("Usage: s3browser-cli download-prefix-targz <connectionId> <bucket> <prefix> [--strip-components N]")
     cmd_download_prefix_targz(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
     return
 
+  if cmd == "download-object":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli download-object <connectionId> <bucket> <key> [--chunk N]")
+    cmd_download_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+    return
+
+  if cmd == "download-job-status":
+    if len(sys.argv) < 3:
+      raise ValueError("Usage: s3browser-cli download-job-status <jobId>")
+    cmd_download_job_status(sys.argv[2])
+    return
+
 
   raise ValueError("Unknown command")
-
-
-
 
 if __name__ == "__main__":
   cmd0 = sys.argv[1] if len(sys.argv) > 1 else ""
