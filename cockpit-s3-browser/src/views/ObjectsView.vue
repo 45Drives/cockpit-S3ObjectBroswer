@@ -380,8 +380,9 @@
     </div>
     <ObjectContextMenu :open="menuOpen" :pos="menuPos" :canPaste="canPasteHere" @close="menuOpen = false"
         @action="onMenuAction" />
-    <ConfirmDeleteModal :open="deleteOpen" :kind="pendingDelete?.kind || 'file'" :name="pendingDelete?.name || ''"
-        :busy="false" :progressText="''" @cancel="cancelDelete" @confirm="confirmDeleteNow" />
+    <ConfirmDeleteModal :open="deleteOpen" :kind="pendingDeleteKind" :name="pendingDeleteName" :busy="deleteBusy"
+        :progressText="deleteBusy ? 'Deleting…' : ''" @cancel="cancelDelete" @confirm="confirmDeleteNow" />
+
 
 
 
@@ -391,7 +392,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
-    listObjects, presignGetObject, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus
+    listObjects, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus
     , copyPrefix, movePrefix, copyObject
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
@@ -401,6 +402,17 @@ import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu, { type MenuAction } from "../components/ObjectContextMenu.vue";
 import ConfirmDeleteModal from "../components/ConfirmDeleteModal.vue";
 import { useDeleteTasksStore } from "../stores/deleteTasks";
+import {
+    formatBytes, formatDate, normalizePrefix, guessFileTypeFromKey, fileExt,
+    isSystemFile, isTextFile, isApplicationFile, nameFromKey, nameFromPrefix,
+} from "../lib/helpers";
+import { DeleteKind, FileRow, FolderRow, Row, ViewMode } from "../types";
+import { useDownloads } from "../operations/useDownloads";
+import { useUploads } from "../operations/useUploads";
+import { useTransfers } from "../operations/useTransfers";
+import { useRename } from "../operations/useRename";
+import { useDeletes } from "../operations/useDeletes";
+
 
 const iconScroller = ref<any>(null);
 const gridItems = ref(1);
@@ -429,83 +441,28 @@ onBeforeUnmount(() => {
     ro?.disconnect();
     ro = null;
 });
-type FolderRow = { type: "folder"; prefix: string; name: string };
-type FileRow = {
-    type: "file";
-    key: string;
-    name: string;
-    size: number;
-    lastModified?: string | null;
-
-    etag?: string | null;
-    storageClass?: string | null;
-
-    ownerDisplayName?: string | null;
-    ownerId?: string | null;
-
-    fileType?: string | null; // derived from extension/mime guess
-};
-type Row = FolderRow | FileRow;
-type ViewMode = "table" | "icons";
-type DeleteKind = "file" | "folder";
-type DownloadState = "running" | "done" | "failed" | "canceled";
-
-type DownloadJob = {
-    id: string;           // jobId
-    kind: "object" | "prefix-targz";
-    name: string;         // filename or prefix
-    bytes?: number;
-    totalBytes?: number;
-    state: DownloadState;
-    error?: string;
-    updatedAt?: number;
-};
-
-let downloadPollTimer: number | null = null;
-
-function startDownloadPolling() {
-    if (downloadPollTimer != null) return;
-
-    downloadPollTimer = window.setInterval(async () => {
-        const running = downloadJobs.value.filter((j) => j.state === "running");
-        if (running.length === 0) {
-            stopDownloadPolling();
-            return;
-        }
-
-        for (const j of running) {
-            const res = await getDownloadJobStatus({ jobId: j.id });
-            if (res.isErr()) continue;
-
-            const s = res.value;
-
-            if (typeof s.state === "string") j.state = s.state as DownloadState;
-            if (typeof s.bytes === "number") j.bytes = s.bytes;
-            if (typeof s.totalBytes === "number") j.totalBytes = s.totalBytes;
-            if (typeof s.error === "string") j.error = s.error;
-            if (typeof s.updatedAt === "number") j.updatedAt = s.updatedAt;
-        }
-
-        downloadJobs.value = [...downloadJobs.value];
-    }, 500);
-}
-
-function stopDownloadPolling() {
-    if (downloadPollTimer == null) return;
-    clearInterval(downloadPollTimer);
-    downloadPollTimer = null;
-}
 
 
-const downloadJobs = ref<DownloadJob[]>([]);
-const downloadBusy = computed(() => downloadJobs.value.some(j => j.state === "running"));
 
 const delStore = useDeleteTasksStore();
 
 
 // confirm modal pending target (separate from tasks)
-const pendingDelete = ref<{ kind: DeleteKind; name: string; key?: string; prefix?: string } | null>(null);
+const pendingDeleteItems = ref<Row[]>([]);
+const pendingDeleteKind = computed<DeleteKind>(() => {
+    if (pendingDeleteItems.value.length === 1) {
+        return pendingDeleteItems.value[0].type === "folder" ? "folder" : "file";
+    }
+    // if multiple, modal can still show "file" or "folder" but better to show file
+    return "file";
+});
 
+const pendingDeleteName = computed(() => {
+    const items = pendingDeleteItems.value;
+    if (items.length === 0) return "";
+    if (items.length === 1) return items[0].type === "folder" ? `${items[0].name}/` : items[0].name;
+    return `${items.length} items`;
+});
 
 const colsStyle =
     "display:grid; grid-template-columns: 1.6fr 0.6fr 0.6fr 0.9fr 0.8fr 0.7fr; width:100%;";
@@ -528,8 +485,6 @@ const menuPos = ref({ x: 0, y: 0 });
 const menuRow = ref<Row | null>(null);
 const selectedIds = ref<Set<string>>(new Set());
 const anchorIndex = ref<number | null>(null);
-const renameProgress = ref<{ done: number; total: number; bytes: number; size: number } | null>(null);
-const renameCancel = ref<null | (() => void)>(null);
 const clip = useClipboardStore();
 
 const canPasteHere = computed(() =>
@@ -542,6 +497,96 @@ const continuationToken = ref<string | null>(null);
 const hasMore = ref(false);
 let runId = 0;
 const deleteOpen = ref(false);
+
+
+const downloads = useDownloads({
+    connectionId,
+    bucket,
+    downloadObject,
+    downloadPrefixTarGz,
+    getDownloadJobStatus,
+    setError: (m) => (error.value = m),
+});
+
+const downloadJobs = downloads.downloadJobs;
+const downloadBusy = downloads.downloadBusy;
+
+
+const uploads = useUploads({
+    connectionId,
+    bucket,
+    prefix,
+    uploadObjectFromStdinStreamed,
+    refresh,
+    setError: (m) => (error.value = m),
+});
+
+const uploadBusy = uploads.uploadBusy;
+const uploadItems = uploads.uploadItems;
+const uploadProgress = uploads.uploadProgress;
+const uploadPct = uploads.uploadPct;
+const overallPct = uploads.overallPct;
+const uploadCancel = uploads.uploadCancel;
+const uploadCancelAll = uploads.uploadCancelAll;
+
+const transfers = useTransfers({
+    connectionId,
+    bucket,
+    prefix,
+    clip,
+    copyObject,
+    copyPrefix,
+    movePrefix,
+    renameObjectStreamed,
+    refresh,
+    setError: (m) => (error.value = m),
+    setBusy: (b) => (busy.value = b),
+});
+
+const transferJobs = transfers.transferJobs;
+const transferBusy = transfers.transferBusy;
+
+const pasteItems = transfers.pasteItems;
+const pasteBusy = transfers.pasteBusy;
+const pasteTotal = transfers.pasteTotal;
+const pasteDone = transfers.pasteDone;
+const pastePct = transfers.pastePct;
+
+const renamer = useRename({
+    connectionId,
+    bucket,
+    renameObjectStreamed,
+    setError: (m) => (error.value = m),
+    setBusy: (b) => (busy.value = b),
+    onRenamed: (srcKey, dstKey) => updateRowAfterRename(srcKey, dstKey),
+});
+
+const renameProgress = renamer.renameProgress;
+const renameStatusText = renamer.renameStatusText;
+const renamePct = renamer.renamePct;
+const renameCancel = renamer.renameCancel;
+
+
+const deletes = useDeletes({
+    connectionId,
+    bucket,
+    delStore,
+    deletePrefixStreamed,
+    deleteObject,
+    refresh,
+});
+
+const deleteBusy = deletes.deleteBusy;
+const isDeletingRow = deletes.isDeletingRow;
+
+
+
+async function chooseUpload(kind: UploadPickKind) {
+    closeUploadMenu();
+    if (kind === "files") await uploads.pickFiles();
+    else await uploads.pickFolder();
+}
+
 
 onBeforeUnmount(() => {
     runId++;
@@ -614,32 +659,11 @@ function rowKey(r: Row) {
     return r.type === "folder" ? `d:${r.prefix}` : `f:${r.key}`;
 }
 
-function nameFromPrefix(p: string) {
-    const trimmed = p.endsWith("/") ? p.slice(0, -1) : p;
-    const parts = trimmed.split("/").filter(Boolean);
-    return parts[parts.length - 1] || trimmed;
-}
 
-function nameFromKey(k: string) {
-    const parts = (k || "").split("/");
-    return parts[parts.length - 1] || k;
-}
 
-function formatDate(iso?: string | null) {
-    if (!iso) return "—";
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "—";
-    return d.toLocaleString();
-}
 
-function formatBytes(n: number) {
-    if (!Number.isFinite(n)) return "—";
-    const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-    let v = n;
-    let i = 0;
-    while (v >= 1024 && i < units.length - 1) { v /= 1024; i += 1; }
-    const dp = i === 0 ? 0 : v < 10 ? 2 : v < 100 ? 1 : 0;
-    return `${v.toFixed(dp)} ${units[i]}`;
+function cancelRename() {
+    renamer.cancelRename();
 }
 
 function resetLists() {
@@ -662,6 +686,9 @@ const virtualRows = computed<(Row & { __key: string })[]>(() => {
 
 
 
+async function refresh() {
+    await fetchPage(true);
+}
 
 async function fetchPage(reset: boolean) {
     error.value = "";
@@ -731,54 +758,11 @@ async function fetchPage(reset: boolean) {
     }
 }
 
-
-
-async function refresh() {
-    await fetchPage(true);
-}
-
-
 // --- Icon logic + minimal inline SVG component ---
 
 type IconName = "folder" | "text" | "application" | "system";
 
-function fileExt(name: string) {
-    const base = (name || "").split("/").pop() || "";
-    const i = base.lastIndexOf(".");
-    if (i <= 0) return "";
-    return base.slice(i + 1).toLowerCase();
-}
 
-function isSystemFile(name: string, key: string) {
-    const base = (name || "").split("/").pop() || name || "";
-    if (base.startsWith(".")) return true;
-    if (base.toLowerCase() === "thumbs.db") return true;
-    if (base.toLowerCase() === "desktop.ini") return true;
-    if (base.endsWith("~")) return true;
-    if (key.includes("/.") || key.includes("\\.")) return true;
-    return false;
-}
-
-function isTextFile(ext: string) {
-    return new Set([
-        "txt", "md", "markdown", "log",
-        "json", "yaml", "yml", "xml", "csv",
-        "ini", "cfg", "conf",
-        "js", "ts", "tsx", "jsx",
-        "py", "go", "rs", "java", "c", "cpp", "h", "hpp",
-        "html", "css", "scss",
-        "sh", "bash", "zsh",
-    ]).has(ext);
-}
-
-function isApplicationFile(ext: string) {
-    return new Set([
-        "exe", "msi", "dmg", "pkg", "app",
-        "deb", "rpm", "apk",
-        "jar", "war",
-        "bin",
-    ]).has(ext);
-}
 
 function iconForRow(r: Row): IconName {
     if (r.type === "folder") return "folder";
@@ -811,23 +795,6 @@ watch(
 );
 
 
-function normalizePrefix(p: string): string {
-    let s = (p || "").trim();
-
-    // allow users to paste "/photos/2025/" or "photos/2025"
-    while (s.startsWith("/")) s = s.slice(1);
-
-    // collapse multiple slashes
-    s = s.replace(/\/+/g, "/");
-
-    // root
-    if (s === "" || s === "/") return "";
-
-    // ensure trailing slash so S3 "folder view" works with Delimiter="/"
-    if (!s.endsWith("/")) s += "/";
-
-    return s;
-}
 
 function goToPath() {
     const next = normalizePrefix(pathInput.value);
@@ -861,21 +828,7 @@ function goUp() {
         },
     });
 }
-function guessFileTypeFromKey(key: string): string {
-    const ext = fileExt(key);
-    if (!ext) return "File";
 
-    if (isTextFile(ext)) return "text";
-    if (isApplicationFile(ext)) return "application";
-
-    if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tiff"].includes(ext)) return "image";
-    if (["mp4", "mov", "mkv", "webm", "avi"].includes(ext)) return "video";
-    if (["mp3", "wav", "flac", "aac", "ogg"].includes(ext)) return "audio";
-    if (["zip", "tar", "gz", "bz2", "xz", "7z", "rar"].includes(ext)) return "archive";
-    if (["pdf"].includes(ext)) return "pdf";
-
-    return ext; // fallback: show extension
-}
 function openFile(r: FileRow) {
     // placeholder: later you can implement download / preview
     // for now do nothing or log
@@ -913,6 +866,14 @@ watch(
     { immediate: true }
 );
 
+function openMenuAtPoint(e: MouseEvent) {
+  e.preventDefault();
+  menuRow.value = null;
+
+  menuOpen.value = true;
+  menuPos.value = { x: e.clientX, y: e.clientY };
+}
+
 function openMenu(e: MouseEvent, r: Row, index: number) {
     if (isDeletingRow(r)) return;
     e.preventDefault();
@@ -937,7 +898,6 @@ async function onMenuAction(action: MenuAction) {
     const r = menuRow.value;
     if (action !== "paste" && !r) return;
 
-
     if (action === "copy") {
         const items = effectiveSelection();
         if (items.length === 0) return;
@@ -955,83 +915,7 @@ async function onMenuAction(action: MenuAction) {
     if (action === "download") {
         const items = effectiveSelection();
         if (items.length === 0) return;
-
-        const folders = items.filter((r): r is FolderRow => r.type === "folder");
-        const files = items.filter(isFileRow);
-
-        // Start polling as soon as we enqueue jobs
-        startDownloadPolling();
-
-        // Folders -> tar.gz
-        for (const d of folders) {
-            const jobId = newJobId();
-
-            downloadJobs.value.unshift({
-                id: jobId,
-                kind: "prefix-targz",
-                name: `${d.name}.tar.gz`,
-                state: "running",
-                bytes: 0,
-                totalBytes: 0,
-            });
-
-            const res = await downloadPrefixTarGz({
-                connectionId: connectionId.value,
-                bucket: bucket.value,
-                prefix: d.prefix,
-                jobId,
-                filename: `${d.name}.tar.gz`,
-            });
-
-            if (res.isErr()) {
-                const j = downloadJobs.value.find((x) => x.id === jobId);
-                if (j) {
-                    j.state = "failed";
-                    j.error = res.error.message;
-                    downloadJobs.value = [...downloadJobs.value];
-                }
-                error.value = res.error.message;
-                return;
-            }
-
-            await new Promise((r) => setTimeout(r, 250));
-        }
-
-        // Files -> streamed object
-        for (const f of files) {
-            const jobId = newJobId();
-
-            downloadJobs.value.unshift({
-                id: jobId,
-                kind: "object",
-                name: f.name,
-                state: "running",
-                bytes: 0,
-                totalBytes: f.size,
-            });
-
-            const res = await downloadObject({
-                connectionId: connectionId.value,
-                bucket: bucket.value,
-                key: f.key,
-                filename: f.name,
-                jobId,
-            });
-
-            if (res.isErr()) {
-                const j = downloadJobs.value.find((x) => x.id === jobId);
-                if (j) {
-                    j.state = "failed";
-                    j.error = res.error.message;
-                    downloadJobs.value = [...downloadJobs.value];
-                }
-                error.value = res.error.message;
-                return;
-            }
-
-            await new Promise((r) => setTimeout(r, 250));
-        }
-
+        await downloads.downloadSelection(items);
         return;
     }
 
@@ -1039,30 +923,14 @@ async function onMenuAction(action: MenuAction) {
         const items = effectiveSelection();
         if (items.length === 0) return;
 
-        for (const it of items) {
-            if (isDeletingRow(it)) continue;
+        // filter out items already deleting
+        const filtered = items.filter((it) => !isDeletingRow(it));
+        if (filtered.length === 0) return;
 
-            if (it.type === "folder") {
-                const task = delStore.createTask({
-                    connectionId: connectionId.value,
-                    bucket: bucket.value,
-                    kind: "folder",
-                    name: it.name,
-                    prefix: it.prefix,
-                });
-                void delStore.run(task, { deletePrefixStreamed, deleteObject });
-            } else {
-                const task = delStore.createTask({
-                    connectionId: connectionId.value,
-                    bucket: bucket.value,
-                    kind: "file",
-                    name: it.name,
-                    key: it.key,
-                });
-                void delStore.run(task, { deletePrefixStreamed, deleteObject });
-            }
-        }
-        await refresh();
+        pendingDeleteItems.value = filtered;
+        menuOpen.value = false;
+
+        deleteOpen.value = true;
         return;
     }
 
@@ -1084,270 +952,30 @@ async function onMenuAction(action: MenuAction) {
         if (!cleaned) return;
 
         const dstKey = (basePrefix ? basePrefix : "") + cleaned;
-
-        busy.value = true;
-        error.value = "";
-
-        const job = renameObjectStreamed({
-            connectionId: connectionId.value,
-            bucket: bucket.value,
-            srcKey: f.key,
-            dstKey,
-            concurrency: 6,
-            onEvent: (ev) => {
-                if (ev.type === "start") {
-                    renameProgress.value = {
-                        done: 0,
-                        total: Number(ev.totalParts ?? 0),
-                        bytes: 0,
-                        size: Number(ev.size ?? 0),
-                    };
-                } else if (ev.type === "progress") {
-                    if (!renameProgress.value) {
-                        renameProgress.value = { done: 0, total: 0, bytes: 0, size: 0 };
-                    }
-                    renameProgress.value.done = Number(ev.partsDone ?? renameProgress.value.done);
-                    renameProgress.value.total = Number(ev.totalParts ?? renameProgress.value.total);
-                    renameProgress.value.bytes = Number(ev.bytesCopied ?? renameProgress.value.bytes);
-                    renameProgress.value.size = Number(ev.size ?? renameProgress.value.size);
-                } else if (ev.type === "result") {
-                    // Let the result event clear UI state
-                    renameProgress.value = null;
-                    renameCancel.value = null;
-
-                    if (!ev.ok) {
-                        error.value = ev.error || "Rename canceled/failed";
-                    }
-                }
-            },
-        });
-
-        // expose cancel to UI
-        renameCancel.value = job.cancel;
-
-        try {
-            const res = await job.run;
-            if (res.isErr()) {
-                error.value = res.error.message;
-                return;
-            }
-
-            updateRowAfterRename(f.key, dstKey);
-        } finally {
-            busy.value = false;
-        }
-
+        await renamer.renameFile(f.key, dstKey);
         return;
     }
 
     if (action === "paste") {
-        if (!clip.canPaste(connectionId.value, bucket.value)) return;
-
-        const dstBasePrefix = normalizePrefixNoLead(prefix.value || "");
-        const kind = clip.kind; // "copy" | "cut"
-        const srcItems = [...clip.items];
-
-        error.value = "";
-        busy.value = true;
-
-        try {
-            // 1) Plan items so UI shows total immediately
-            const planned: PasteItem[] = [];
-            const usedNames = new Set<string>();
-
-            for (const it of srcItems) {
-                if (it.type === "file") {
-                    const originalName = basenameFromKey(it.key);
-                    const name = makeUniqueName(originalName, usedNames);
-                    const dstKey = dstBasePrefix ? dstBasePrefix + name : name;
-
-                    if (dstKey === it.key) continue;
-
-                    planned.push({
-                        id: uid(),
-                        itemType: "file",
-                        srcKey: it.key,
-                        dstKey,
-                        name,
-                        step: "queued",
-                    });
-                } else {
-                    const srcPrefix = normalizePrefixNoLead(it.prefix);
-                    const folderName = makeUniqueName(folderNameFromPrefix(it.prefix), usedNames);
-                    const dstPrefix = dstBasePrefix ? `${dstBasePrefix}${folderName}/` : `${folderName}/`;
-
-                    if (kind === "cut" && isPasteIntoSelfPrefix(srcPrefix, dstPrefix)) {
-                        error.value = `Cannot move "${folderName}" into itself.`;
-                        return;
-                    }
-                    if (srcPrefix === dstPrefix) continue;
-
-                    planned.push({
-                        id: uid(),
-                        itemType: "folder",
-                        srcKey: srcPrefix,
-                        dstKey: dstPrefix,
-                        name: folderName + "/",
-                        step: "queued",
-                    });
-                }
-            }
-
-            pasteItems.value = planned;
-
-            // 2) Execute planned items sequentially (simple + predictable UI)
-            for (const p of pasteItems.value) {
-                p.step = "copying";
-                pasteItems.value = [...pasteItems.value];
-
-                const jobId = uid();
-                transferJobs.value.push({
-                    id: jobId,
-                    kind: kind === "cut" ? "move" : "copy",
-                    itemType: p.itemType,
-                    name: p.name,
-                    src: p.srcKey,
-                    dst: p.dstKey,
-                    state: "running",
-                    startedAt: Date.now(),
-                });
-                const tIdx = transferJobs.value.findIndex(j => j.id === jobId);
-
-                try {
-                    if (p.itemType === "file") {
-                        if (kind === "cut") {
-                            const job = renameObjectStreamed({
-                                connectionId: connectionId.value,
-                                bucket: bucket.value,
-                                srcKey: p.srcKey,
-                                dstKey: p.dstKey,
-                                concurrency: 6,
-                                onEvent: (ev) => {
-                                    if (ev.type === "result") {
-                                        if (tIdx >= 0) {
-                                            transferJobs.value[tIdx].state = ev.ok ? "done" : "failed";
-                                            transferJobs.value[tIdx].error = ev.ok ? undefined : (ev.error || "Move failed");
-                                            transferJobs.value[tIdx].finishedAt = Date.now();
-                                        }
-                                    }
-                                },
-                            });
-
-                            const res = await job.run;
-                            if (res.isErr()) throw new Error(res.error.message);
-                        } else {
-                            const res = await copyObject({
-                                connectionId: connectionId.value,
-                                bucket: bucket.value,
-                                srcKey: p.srcKey,
-                                dstKey: p.dstKey,
-                                concurrency: 6,
-                            });
-                            if (res.isErr()) throw new Error(res.error.message);
-                        }
-                    } else {
-                        // folder/prefix
-                        const res = kind === "cut"
-                            ? await movePrefix({
-                                connectionId: connectionId.value,
-                                bucket: bucket.value,
-                                srcPrefix: p.srcKey,
-                                dstPrefix: p.dstKey,
-                                concurrency: 6,
-                            })
-                            : await copyPrefix({
-                                connectionId: connectionId.value,
-                                bucket: bucket.value,
-                                srcPrefix: p.srcKey,
-                                dstPrefix: p.dstKey,
-                                concurrency: 6,
-                            });
-
-                        if (res.isErr()) throw new Error(res.error.message);
-                    }
-
-                    // success
-                    p.step = "done";
-                    pasteItems.value = [...pasteItems.value];
-
-                    if (tIdx >= 0) {
-                        transferJobs.value[tIdx].state = "done";
-                        transferJobs.value[tIdx].finishedAt = Date.now();
-                    }
-                } catch (e: any) {
-                    const msg = e?.message || "Paste failed";
-                    p.step = "failed";
-                    p.error = msg;
-                    pasteItems.value = [...pasteItems.value];
-
-                    if (tIdx >= 0) {
-                        transferJobs.value[tIdx].state = "failed";
-                        transferJobs.value[tIdx].error = msg;
-                        transferJobs.value[tIdx].finishedAt = Date.now();
-                    }
-
-                    error.value = msg;
-                    return; // stop on first error (change to continue if you want)
-                }
-            }
-
-            // 3) Clear clipboard if it was a cut (move)
-            if (clip.kind === "cut") clip.clear();
-
-            await refresh();
-            return;
-        } finally {
-            busy.value = false;
-        }
+        await transfers.pasteHere();
+        return;
     }
-
 }
 
-async function confirmDeleteNow() {
-    const p = pendingDelete.value;
-    if (!p) return;
 
+function confirmDeleteNow() {
+    const items = pendingDeleteItems.value;
     deleteOpen.value = false;
-    pendingDelete.value = null;
+    pendingDeleteItems.value = [];
 
-    const task = delStore.createTask({
-        connectionId: connectionId.value,
-        bucket: bucket.value,
-        kind: p.kind,
-        name: p.name,
-        key: p.key,
-        prefix: p.prefix,
-    });
-
-    // run in background (don’t block page)
-    void delStore.run(task, { deletePrefixStreamed, deleteObject });
+    if (!items.length) return;
+    deletes.deleteNow(items);
 }
-
-function isDeletingRow(r: Row): boolean {
-    for (const t of delStore.list) {
-        if (!t.busy) continue;
-        if (t.connectionId !== connectionId.value) continue;
-        if (t.bucket !== bucket.value) continue;
-
-        if (t.kind === "file" && t.key && r.type === "file") {
-            if (r.key === t.key) return true;
-        }
-
-        if (t.kind === "folder" && t.prefix) {
-            const path = r.type === "folder" ? r.prefix : r.key;
-            if (path === t.prefix || path.startsWith(t.prefix)) return true;
-        }
-    }
-    return false;
-}
-
-
 
 function cancelDelete() {
     deleteOpen.value = false;
-    pendingDelete.value = null;
+    pendingDeleteItems.value = [];
 }
-
 
 function setSingleSelection(id: string, index: number) {
     selectedIds.value = new Set([id]);
@@ -1450,352 +1078,6 @@ function updateRowAfterRename(srcKey: string, dstKey: string) {
 }
 
 
-
-const renameStatusText = computed(() => {
-    if (!renameProgress.value) return "";
-    const p = renameProgress.value;
-    if (p.size > 0) {
-        const pct = Math.floor((p.bytes / p.size) * 100);
-        return `Renaming… ${pct}% (${formatBytes(p.bytes)} / ${formatBytes(p.size)})`;
-    }
-    if (p.total > 0) return `Renaming… ${p.done} / ${p.total} parts`;
-    return "Renaming…";
-});
-
-const renamePct = computed(() => {
-    if (!renameProgress.value) return null;
-    const p = renameProgress.value;
-    if (p.size <= 0) return null;
-    return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
-});
-
-function cancelRename() {
-    renameCancel.value?.();
-}
-
-
-const uploadBusy = ref(false);
-const uploadProgress = ref<{ bytes: number; size: number; filename: string } | null>(null);
-const uploadCancel = ref<null | (() => void)>(null);
-
-const uploadPct = computed(() => {
-    if (!uploadProgress.value) return null;
-    const p = uploadProgress.value;
-    if (p.size <= 0) return null;
-    return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
-});
-type UploadStatus = "queued" | "uploading" | "done" | "failed" | "canceled";
-
-type UploadItem = {
-    id: string;
-    file: File;
-    dstKey: string;
-    bytes: number;
-    status: UploadStatus;
-    canceled: boolean;
-    error?: string;
-    cancel?: () => void;
-};
-
-
-const uploadItems = ref<UploadItem[]>([]);
-const uploadCancelAll = ref<null | (() => void)>(null);
-
-
-async function pickAndUploadMultiple() {
-    if (!connectionId.value || !bucket.value) return;
-
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-
-    input.onchange = async () => {
-        const files = Array.from(input.files ?? []);
-        if (files.length === 0) return;
-
-        const base = prefix.value || "";
-
-        uploadItems.value = files.map((f) => ({
-            id: uid(),
-            file: f,
-            dstKey: base + f.name,
-            bytes: 0,
-            status: "queued",
-            canceled: false,
-        }));
-
-        const conc = chooseSafeConcurrency(files);
-        await uploadManyWithPool(conc);
-    };
-
-    input.click();
-}
-
-
-async function uploadSingleViaStdin(file: File, dstKey: string) {
-    uploadBusy.value = true;
-    error.value = "";
-    uploadProgress.value = { filename: file.name, bytes: 0, size: file.size };
-
-    const job = uploadObjectFromStdinStreamed({
-        connectionId: connectionId.value,
-        bucket: bucket.value,
-        key: dstKey,
-        size: file.size,
-        contentType: file.type || "application/octet-stream",
-        onEvent: (ev) => {
-            if (ev.type === "progress") {
-                uploadProgress.value = {
-                    filename: file.name,
-                    bytes: Number(ev.bytesRead ?? 0),
-                    size: file.size,
-                };
-            } else if (ev.type === "result") {
-                if (!ev.ok) error.value = ev.error || "Upload failed";
-            }
-        },
-    });
-
-    uploadCancel.value = job.cancel;
-
-    const chunkSize = 1024 * 1024; // 1 MiB
-    let offset = 0;
-
-    try {
-        while (offset < file.size) {
-            const end = Math.min(file.size, offset + chunkSize);
-
-            // Most compatible in embedded browsers
-            const ab = await file.slice(offset, end).arrayBuffer();
-            const chunk = new Uint8Array(ab);
-            job.writeChunk(chunk);
-
-            offset = end;
-        }
-
-        job.end();
-
-        const res = await job.run;
-        if (res.isErr()) {
-            error.value = res.error.message;
-            return;
-        }
-
-        await refresh();
-    } catch (e: any) {
-        error.value = e?.message || "Upload failed";
-        try {
-            job.cancel();
-        } catch { }
-    } finally {
-        uploadBusy.value = false;
-        uploadCancel.value = null;
-        uploadProgress.value = null;
-    }
-}
-
-function chooseSafeConcurrency(files: File[]) {
-    const sizes = files.map((f) => f.size || 0);
-    const total = sizes.reduce((a, b) => a + b, 0);
-    const max = sizes.reduce((a, b) => Math.max(a, b), 0);
-    const count = files.length;
-
-    const MiB = 1024 * 1024;
-
-    // If any file is big-ish, stay conservative.
-    if (max >= 512 * MiB) return 2;
-
-    // Many small files benefit from hiding per-file overhead.
-    if (count >= 6 && total <= 512 * MiB) return 3;
-
-    return 2;
-}
-
-function nextQueuedItem(): UploadItem | null {
-    return uploadItems.value.find((u) => u.status === "queued") || null;
-}
-
-function anyUploading(): UploadItem | null {
-    return uploadItems.value.find((u) => u.status === "uploading") || null;
-}
-
-const overallBytes = computed(() =>
-    uploadItems.value.reduce((s, u) => s + (u.file.size || 0), 0)
-);
-
-const overallSent = computed(() =>
-    uploadItems.value.reduce((s, u) => s + (u.bytes || 0), 0)
-);
-
-const overallPct = computed(() => {
-    const t = overallBytes.value;
-    if (!t) return null;
-    return Math.max(0, Math.min(100, Math.floor((overallSent.value / t) * 100)));
-});
-
-async function uploadManyWithPool(limit: number) {
-    uploadBusy.value = true;
-    error.value = "";
-    uploadProgress.value = null;
-    uploadCancel.value = null;
-
-    let canceledAll = false;
-
-    uploadCancelAll.value = () => {
-        canceledAll = true;
-
-        // cancel any active jobs
-        for (const u of uploadItems.value) {
-            if (u.status === "uploading") u.cancel?.();
-            if (u.status === "queued") {
-                u.canceled = true;
-                u.status = "canceled";
-            }
-        }
-
-
-        // keep old hook safe if your UI still calls uploadCancel
-        uploadCancel.value?.();
-    };
-
-    async function worker() {
-        while (true) {
-            if (canceledAll) return;
-
-            const item = nextQueuedItem();
-            if (!item) return;
-
-            item.status = "uploading";
-            item.error = undefined;
-
-            try {
-                await uploadOneItemViaStdin(item);
-                if (!item.canceled) item.status = "done";
-
-            } catch (e: any) {
-                if (!item.canceled) {
-                    item.status = "failed";
-                    item.error = e?.message || "Upload failed";
-                }
-
-            }
-        }
-    }
-
-    try {
-        const n = Math.max(1, Math.min(limit, uploadItems.value.length));
-        await Promise.all(Array.from({ length: n }, () => worker()));
-        await refresh();
-    } finally {
-        uploadBusy.value = false;
-        uploadCancelAll.value = null;
-        uploadCancel.value = null;
-        uploadProgress.value = null;
-    }
-}
-async function uploadOneItemViaStdin(item: UploadItem) {
-    const file = item.file;
-
-    // Keep your existing single progress card updated
-    uploadProgress.value = { filename: file.name, bytes: item.bytes, size: file.size };
-
-    const job = uploadObjectFromStdinStreamed({
-        connectionId: connectionId.value,
-        bucket: bucket.value,
-        key: item.dstKey,
-        size: file.size,
-        contentType: file.type || "application/octet-stream",
-        onEvent: (ev) => {
-            if (ev.type === "progress") {
-                const b = Number(ev.bytesRead ?? 0);
-                item.bytes = b;
-
-                // sync old single progress
-                uploadProgress.value = { filename: file.name, bytes: b, size: file.size };
-            } else if (ev.type === "result") {
-                if (!ev.ok) {
-                    item.status = "failed";
-                    item.error = ev.error || "Upload failed";
-                }
-            }
-        },
-    });
-
-    item.cancel = () => {
-        item.canceled = true;
-        item.status = "canceled";
-        try { job.cancel(); } catch { }
-    };
-
-    // Optional: keep old cancel button working for "current file"
-    uploadCancel.value = () => item.cancel?.();
-
-    const chunkSize = 1024 * 1024; // 1 MiB
-    let offset = 0;
-
-    try {
-        while (offset < file.size) {
-            if (item.canceled) throw new Error("Canceled");
-
-            const end = Math.min(file.size, offset + chunkSize);
-            const ab = await file.slice(offset, end).arrayBuffer();
-            job.writeChunk(new Uint8Array(ab));
-            offset = end;
-        }
-
-        job.end();
-
-        const res = await job.run;
-        if (res.isErr()) throw new Error(res.error.message);
-    } finally {
-        // If there are still other uploads running, they will overwrite uploadProgress shortly.
-        const still = anyUploading();
-        if (!still) uploadProgress.value = null;
-    }
-}
-async function pickAndUploadFolder() {
-    if (!connectionId.value || !bucket.value) return;
-
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-
-    // Chromium / Electron: directory selection
-    // TS doesn't know about these attrs, so set via setAttribute
-    input.setAttribute("webkitdirectory", "");
-    input.setAttribute("directory", "");
-
-    input.onchange = async () => {
-        const files = Array.from(input.files ?? []);
-        if (files.length === 0) return;
-
-        const base = prefix.value || "";
-
-        uploadItems.value = files.map((f) => {
-            const rel =
-                ((f as any).webkitRelativePath as string | undefined) || f.name;
-
-            // Normalize to S3-style
-            const relNorm = rel.replace(/\\/g, "/").replace(/^\/+/, "");
-
-            return {
-                id: uid(),
-                file: f,
-                // base prefix + folder structure from picker
-                dstKey: base + relNorm,
-                bytes: 0,
-                status: "queued",
-                canceled: false,
-            } satisfies UploadItem;
-        });
-
-        const conc = chooseSafeConcurrency(files);
-        await uploadManyWithPool(conc);
-    };
-
-    input.click();
-}
-
 type UploadPickKind = "files" | "folder";
 
 const uploadMenuOpen = ref(false);
@@ -1808,15 +1090,6 @@ function toggleUploadMenu() {
 
 function closeUploadMenu() {
     uploadMenuOpen.value = false;
-}
-
-async function chooseUpload(kind: UploadPickKind) {
-    closeUploadMenu();
-    if (kind === "files") {
-        await pickAndUploadMultiple();
-    } else {
-        await pickAndUploadFolder();
-    }
 }
 
 function onDocMouseDown(e: MouseEvent) {
@@ -1836,18 +1109,7 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
 
 
 
-function newJobId(): string {
-    const c: any = globalThis.crypto as any;
-    if (c && typeof c.randomUUID === "function") return c.randomUUID();
-    return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
 
-
-function joinKey(prefix: string, name: string): string {
-    const p = normalizePrefix(prefix);
-    if (!p) return name.replace(/^\/+/, "");
-    return p + name.replace(/^\/+/, "");
-}
 
 
 onMounted(() => {
@@ -1863,47 +1125,6 @@ onBeforeUnmount(() => {
 });
 
 
-type TransferKind = "copy" | "move";
-type TransferItemType = "file" | "folder";
-type TransferState = "running" | "done" | "failed" | "canceled";
-
-type TransferJob = {
-    id: string;
-    kind: TransferKind;
-    itemType: TransferItemType;
-    name: string;            // display name
-    src: string;             // src key or src prefix
-    dst: string;             // dst key or dst prefix
-    state: TransferState;
-    error?: string;
-    startedAt: number;
-    finishedAt?: number;
-};
-
-const transferJobs = ref<TransferJob[]>([]);
-const transferBusy = computed(() => transferJobs.value.some(j => j.state === "running"));
-
-function uid() {
-    return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-function normalizePrefixNoLead(p: string): string {
-    let s = (p || "").replace(/^\/+/, "");
-    if (s && !s.endsWith("/")) s += "/";
-    return s;
-}
-
-function basenameFromKey(k: string) {
-    const parts = (k || "").split("/");
-    return parts[parts.length - 1] || k;
-}
-
-function folderNameFromPrefix(p: string) {
-    const s = normalizePrefixNoLead(p);
-    const trimmed = s.endsWith("/") ? s.slice(0, -1) : s;
-    const parts = trimmed.split("/").filter(Boolean);
-    return parts[parts.length - 1] || trimmed || "folder";
-}
 
 function selectionToClipItems(items: Row[]) {
     return items.map((it) =>
@@ -1912,76 +1133,4 @@ function selectionToClipItems(items: Row[]) {
             : ({ type: "file", key: it.key, name: it.name } as const)
     );
 }
-
-/**
- * Collision handling (UI-only):
- * - S3 overwrites by default. If you want "no overwrite", you must check destination existence server-side.
- * - This just avoids collisions among the items being pasted in the same operation.
- */
-function makeUniqueName(base: string, used: Set<string>) {
-    if (!used.has(base)) {
-        used.add(base);
-        return base;
-    }
-    const dot = base.lastIndexOf(".");
-    const stem = dot > 0 ? base.slice(0, dot) : base;
-    const ext = dot > 0 ? base.slice(dot) : "";
-    let i = 1;
-    while (true) {
-        const cand = `${stem} (${i})${ext}`;
-        if (!used.has(cand)) {
-            used.add(cand);
-            return cand;
-        }
-        i += 1;
-    }
-}
-
-function isPasteIntoSelfPrefix(srcPrefix: string, dstPrefix: string) {
-    const s = normalizePrefixNoLead(srcPrefix);
-    const d = normalizePrefixNoLead(dstPrefix);
-    // moving/copying a folder into itself or its subfolder should be blocked
-    return d === s || d.startsWith(s);
-}
-function openMenuAtPoint(e: MouseEvent) {
-    e.preventDefault();
-
-    // do not change selection
-    menuOpen.value = true;
-    menuPos.value = { x: e.clientX, y: e.clientY };
-    menuRow.value = null;
-    anchorIndex.value = null;
-}
-type PasteStep = "queued" | "copying" | "done" | "failed" | "canceled";
-
-type PasteItem = {
-    id: string;
-    itemType: "file" | "folder";
-    srcKey: string; // file key OR prefix
-    dstKey: string; // file key OR prefix
-    name: string;
-    step: PasteStep;
-    error?: string;
-};
-
-const pasteItems = ref<PasteItem[]>([]);
-const pasteBusy = computed(() => pasteItems.value.some(i => i.step === "queued" || i.step === "copying"));
-
-const pasteTotal = computed(() => pasteItems.value.length);
-const pasteDone = computed(() => pasteItems.value.filter(i => i.step === "done").length);
-
-const pastePct = computed(() => {
-    const t = pasteTotal.value;
-    if (!t) return null;
-    return Math.floor((pasteDone.value / t) * 100);
-});
-watch(pasteBusy, (b) => {
-    if (!b && pasteItems.value.length && pasteItems.value.every(p => p.step === "done")) {
-        setTimeout(() => {
-            if (!pasteBusy.value) pasteItems.value = [];
-        }, 2000);
-    }
-});
-
-
 </script>

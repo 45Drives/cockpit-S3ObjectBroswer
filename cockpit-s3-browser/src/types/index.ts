@@ -55,10 +55,7 @@ export type EndpointConfig = {
     isTruncated: boolean;
     nextContinuationToken?: string | null;
   };
-  
- 
-
-  
+    
   export type S3ObjectItem = {
     key: string;
     size: number;
@@ -107,3 +104,77 @@ export type EndpointConfig = {
     items: ClipItem[];
     createdAt: number;
   };
+
+  export type FolderRow = { type: "folder"; prefix: string; name: string };
+  export type FileRow = {
+    type: "file";
+    key: string;
+    name: string;
+    size: number;
+    lastModified?: string | null;
+
+    etag?: string | null;
+    storageClass?: string | null;
+
+    ownerDisplayName?: string | null;
+    ownerId?: string | null;
+
+    fileType?: string | null; // derived from extension/mime guess
+};
+export type Row = FolderRow | FileRow;
+export type ViewMode = "table" | "icons";
+export type DeleteKind = "file" | "folder";
+export type DownloadState = "running" | "done" | "failed" | "cancelexport ed";
+
+export type DownloadJob = {
+    id: string;           // jobId
+    kind: "object" | "prefix-targz";
+    name: string;         // filename or prefix
+    bytes?: number;
+    totalBytes?: number;
+    state: DownloadState;
+    error?: string;
+    updatedAt?: number;
+};
+
+
+export type PasteStep = "queued" | "copying" | "done" | "failed" | "canceled";
+
+export type PasteItem = {
+    id: string;
+    itemType: "file" | "folder";
+    srcKey: string; // file key OR prefix
+    dstKey: string; // file key OR prefix
+    name: string;
+    step: PasteStep;
+    error?: string;
+};
+
+
+export type UploadStatus = "queued" | "uploading" | "done" | "failed" | "canceled";
+
+export type UploadItem = {
+    id: string;
+    file: File;
+    dstKey: string;
+    bytes: number;
+    status: UploadStatus;
+    canceled: boolean;
+    error?: string;
+    cancel?: () => void;
+};
+
+export type TransferJobState = "running" | "done" | "failed";
+
+export type TransferJob = {
+  id: string;
+  kind: "copy" | "move";
+  itemType: "file" | "folder";
+  name: string;
+  src: string; // srcKey or srcPrefix
+  dst: string; // dstKey or dstPrefix
+  state: TransferJobState;
+  error?: string;
+  startedAt: number;
+  finishedAt?: number;
+};
