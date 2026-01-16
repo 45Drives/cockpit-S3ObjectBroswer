@@ -16,6 +16,7 @@ type Deps = {
   deleteObject: typeof deleteObjectFn;
 
   refresh?: () => Promise<void> | void;
+  onDeleted?: (item: { type: "file"; key: string } | { type: "folder"; prefix: string }) => void;
 };
 
 export function useDeletes(deps: Deps) {
@@ -42,10 +43,10 @@ export function useDeletes(deps: Deps) {
   function deleteNow(items: Row[]) {
     if (!deps.connectionId.value || !deps.bucket.value) return;
     if (!items.length) return;
-
+  
     for (const it of items) {
       if (isDeletingRow(it)) continue;
-
+  
       if (it.type === "folder") {
         const task = deps.delStore.createTask({
           connectionId: deps.connectionId.value,
@@ -54,10 +55,18 @@ export function useDeletes(deps: Deps) {
           name: it.name,
           prefix: it.prefix,
         });
-        void deps.delStore.run(task, {
-          deletePrefixStreamed: deps.deletePrefixStreamed,
-          deleteObject: deps.deleteObject,
-        });
+  
+        void (async () => {
+          const res = await deps.delStore.run(task, {
+            deletePrefixStreamed: deps.deletePrefixStreamed,
+            deleteObject: deps.deleteObject,
+          });
+  
+          // If your run() returns boolean success, use that. Otherwise treat "no throw" as success.
+          if ((res as any) !== false) {
+            deps.onDeleted?.({ type: "folder", prefix: it.prefix });
+          }
+        })();
       } else {
         const task = deps.delStore.createTask({
           connectionId: deps.connectionId.value,
@@ -66,15 +75,23 @@ export function useDeletes(deps: Deps) {
           name: it.name,
           key: it.key,
         });
-        void deps.delStore.run(task, {
-          deletePrefixStreamed: deps.deletePrefixStreamed,
-          deleteObject: deps.deleteObject,
-        });
+  
+        void (async () => {
+          const res = await deps.delStore.run(task, {
+            deletePrefixStreamed: deps.deletePrefixStreamed,
+            deleteObject: deps.deleteObject,
+          });
+  
+          if ((res as any) !== false) {
+            deps.onDeleted?.({ type: "file", key: it.key });
+          }
+        })();
       }
     }
-
-    void Promise.resolve(deps.refresh?.());
+  
+    // No refresh needed anymore
   }
+  
 
   return {
     deleteBusy,

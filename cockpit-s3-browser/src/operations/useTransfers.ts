@@ -9,7 +9,11 @@ import type {
   renameObjectStreamed as renameObjectStreamedFn,
 } from "../lib/s3Objects";
 import { uid } from "../lib/helpers";
-import { basenameFromKey, folderNameFromPrefix, normalizePrefixNoLead } from "../lib/helpers";
+import {
+  basenameFromKey,
+  folderNameFromPrefix,
+  normalizePrefixNoLead,
+} from "../lib/helpers";
 
 type Deps = {
   connectionId: { value: string };
@@ -25,20 +29,30 @@ type Deps = {
 
   refresh?: () => Promise<void> | void;
   setError?: (msg: string) => void;
-  setBusy?: (busy: boolean) => void; // optional, if you want to toggle page "busy"
+  setBusy?: (busy: boolean) => void;
+  onCreated?: (
+    item: { type: "file"; key: string } | { type: "folder"; prefix: string }
+  ) => void;
+  onDeleted?: (
+    item: { type: "file"; key: string } | { type: "folder"; prefix: string }
+  ) => void;
 };
 
 export function useTransfers(deps: Deps) {
   const transferJobs = ref<TransferJob[]>([]);
-  const transferBusy = computed(() => transferJobs.value.some((j) => j.state === "running"));
+  const transferBusy = computed(() =>
+    transferJobs.value.some((j) => j.state === "running")
+  );
 
   const pasteItems = ref<PasteItem[]>([]);
   const pasteBusy = computed(() =>
-    pasteItems.value.some((i) => i.step === "queued" || i.step === "copying"),
+    pasteItems.value.some((i) => i.step === "queued" || i.step === "copying")
   );
 
   const pasteTotal = computed(() => pasteItems.value.length);
-  const pasteDone = computed(() => pasteItems.value.filter((i) => i.step === "done").length);
+  const pasteDone = computed(
+    () => pasteItems.value.filter((i) => i.step === "done").length
+  );
 
   const pastePct = computed(() => {
     const t = pasteTotal.value;
@@ -47,7 +61,11 @@ export function useTransfers(deps: Deps) {
   });
 
   watch(pasteBusy, (b) => {
-    if (!b && pasteItems.value.length && pasteItems.value.every((p) => p.step === "done")) {
+    if (
+      !b &&
+      pasteItems.value.length &&
+      pasteItems.value.every((p) => p.step === "done")
+    ) {
       setTimeout(() => {
         if (!pasteBusy.value) pasteItems.value = [];
       }, 2000);
@@ -80,8 +98,10 @@ export function useTransfers(deps: Deps) {
   }
 
   async function pasteHere() {
-    if (!deps.clip.canPaste(deps.connectionId.value, deps.bucket.value)) return;
+    if (!deps.connectionId.value) return;
+    if (!deps.clip.canPaste(deps.connectionId.value)) return;
 
+    const dstBucket = deps.bucket.value;
     const dstBasePrefix = normalizePrefixNoLead(deps.prefix.value || "");
     const kind = deps.clip.kind; // "copy" | "cut"
     const srcItems = [...deps.clip.items];
@@ -100,11 +120,13 @@ export function useTransfers(deps: Deps) {
           const name = makeUniqueName(originalName, usedNames);
           const dstKey = dstBasePrefix ? dstBasePrefix + name : name;
 
-          if (dstKey === it.key) continue;
+          // same bucket + same key => no-op
+          if (it.bucket === dstBucket && dstKey === it.key) continue;
 
           planned.push({
             id: uid(),
             itemType: "file",
+            srcBucket: it.bucket,
             srcKey: it.key,
             dstKey,
             name,
@@ -112,20 +134,33 @@ export function useTransfers(deps: Deps) {
           });
         } else {
           const srcPrefix = normalizePrefixNoLead(it.prefix);
-          const folderName = makeUniqueName(folderNameFromPrefix(it.prefix), usedNames);
-          const dstPrefix = dstBasePrefix ? `${dstBasePrefix}${folderName}/` : `${folderName}/`;
+          const folderName = makeUniqueName(
+            folderNameFromPrefix(it.prefix),
+            usedNames
+          );
+          const dstPrefix = dstBasePrefix
+            ? `${dstBasePrefix}${folderName}/`
+            : `${folderName}/`;
 
-          if (kind === "cut" && isPasteIntoSelfPrefix(srcPrefix, dstPrefix)) {
+          // moving folder into itself only matters if same bucket
+          if (
+            kind === "cut" &&
+            it.bucket === dstBucket &&
+            isPasteIntoSelfPrefix(srcPrefix, dstPrefix)
+          ) {
             deps.setError?.(`Cannot move "${folderName}" into itself.`);
             return;
           }
-          if (srcPrefix === dstPrefix) continue;
+
+          // same bucket + same prefix => no-op
+          if (it.bucket === dstBucket && srcPrefix === dstPrefix) continue;
 
           planned.push({
             id: uid(),
             itemType: "folder",
-            srcKey: srcPrefix,
-            dstKey: dstPrefix,
+            srcBucket: it.bucket,
+            srcKey: srcPrefix, // normalized prefix
+            dstKey: dstPrefix, // normalized prefix
             name: folderName + "/",
             step: "queued",
           });
@@ -145,8 +180,8 @@ export function useTransfers(deps: Deps) {
           kind: kind === "cut" ? "move" : "copy",
           itemType: p.itemType,
           name: p.name,
-          src: p.srcKey,
-          dst: p.dstKey,
+          src: `${p.srcBucket}:${p.srcKey}`,
+          dst: `${dstBucket}:${p.dstKey}`,
           state: "running",
           startedAt: Date.now(),
         });
@@ -154,18 +189,30 @@ export function useTransfers(deps: Deps) {
         const tIdx = transferJobs.value.findIndex((j) => j.id === jobId);
 
         try {
+          const sameBucket = p.srcBucket === dstBucket;
+
+          // block cross-bucket move for now (copy+delete later if you want)
+          if (kind === "cut" && !sameBucket) {
+            throw new Error(
+              "Move across buckets is not supported. Use Copy instead."
+            );
+          }
+
           if (p.itemType === "file") {
             if (kind === "cut") {
+              // same bucket rename/move
               const job = deps.renameObjectStreamed({
                 connectionId: deps.connectionId.value,
-                bucket: deps.bucket.value,
+                bucket: dstBucket, // same as src bucket for cut
                 srcKey: p.srcKey,
                 dstKey: p.dstKey,
                 concurrency: 6,
                 onEvent: (ev) => {
                   if (ev.type === "result" && tIdx >= 0) {
                     transferJobs.value[tIdx].state = ev.ok ? "done" : "failed";
-                    transferJobs.value[tIdx].error = ev.ok ? undefined : ev.error || "Move failed";
+                    transferJobs.value[tIdx].error = ev.ok
+                      ? undefined
+                      : ev.error || "Move failed";
                     transferJobs.value[tIdx].finishedAt = Date.now();
                   }
                 },
@@ -176,35 +223,54 @@ export function useTransfers(deps: Deps) {
             } else {
               const res = await deps.copyObject({
                 connectionId: deps.connectionId.value,
-                bucket: deps.bucket.value,
+                srcBucket: p.srcBucket,
                 srcKey: p.srcKey,
+                dstBucket,
                 dstKey: p.dstKey,
                 concurrency: 6,
               });
               if (res.isErr()) throw new Error(res.error.message);
             }
           } else {
-            const res =
-              kind === "cut"
-                ? await deps.movePrefix({
-                    connectionId: deps.connectionId.value,
-                    bucket: deps.bucket.value,
-                    srcPrefix: p.srcKey,
-                    dstPrefix: p.dstKey,
-                    concurrency: 6,
-                  })
-                : await deps.copyPrefix({
-                    connectionId: deps.connectionId.value,
-                    bucket: deps.bucket.value,
-                    srcPrefix: p.srcKey,
-                    dstPrefix: p.dstKey,
-                    concurrency: 6,
-                  });
-
-            if (res.isErr()) throw new Error(res.error.message);
+            // folder
+            if (kind === "cut") {
+              const res = await deps.movePrefix({
+                connectionId: deps.connectionId.value,
+                srcBucket: p.srcBucket,
+                srcPrefix: p.srcKey,
+                dstBucket,
+                dstPrefix: p.dstKey,
+                concurrency: 6,
+              });
+              if (res.isErr()) throw new Error(res.error.message);
+            } else {
+              const res = await deps.copyPrefix({
+                connectionId: deps.connectionId.value,
+                srcBucket: p.srcBucket,
+                srcPrefix: p.srcKey,
+                dstBucket,
+                dstPrefix: p.dstKey,
+                concurrency: 6,
+              });
+              if (res.isErr()) throw new Error(res.error.message);
+            }
           }
 
+          // success
           p.step = "done";
+
+          // created at destination (only update UI if destination is current view)
+          if (p.itemType === "file")
+            deps.onCreated?.({ type: "file", key: p.dstKey });
+          else deps.onCreated?.({ type: "folder", prefix: p.dstKey });
+
+          // if cut in same bucket, remove source from current list too
+          if (kind === "cut" && sameBucket) {
+            if (p.itemType === "file")
+              deps.onDeleted?.({ type: "file", key: p.srcKey });
+            else deps.onDeleted?.({ type: "folder", prefix: p.srcKey });
+          }
+
           pasteItems.value = [...pasteItems.value];
 
           if (tIdx >= 0) {
@@ -232,7 +298,7 @@ export function useTransfers(deps: Deps) {
       // 3) Clear clipboard if cut
       if (deps.clip.kind === "cut") deps.clip.clear();
 
-      await deps.refresh?.();
+      // no refresh; UI updates happen via onCreated/onDeleted
     } finally {
       deps.setBusy?.(false);
     }

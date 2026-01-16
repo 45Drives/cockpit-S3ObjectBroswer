@@ -13,6 +13,8 @@ type Deps = {
 
   refresh?: () => Promise<void> | void;
   setError?: (msg: string) => void;
+  onUploaded?: (key: string) => void;
+
 };
 
 export function useUploads(deps: Deps) {
@@ -163,7 +165,11 @@ export function useUploads(deps: Deps) {
 
         try {
           await uploadOneItemViaStdin(item);
-          if (!item.canceled) item.status = "done";
+          if (!item.canceled) {
+            item.status = "done";
+            deps.onUploaded?.(item.dstKey);
+          }
+
         } catch (e: any) {
           if (!item.canceled) {
             item.status = "failed";
@@ -176,7 +182,7 @@ export function useUploads(deps: Deps) {
     try {
       const n = Math.max(1, Math.min(limit, uploadItems.value.length));
       await Promise.all(Array.from({ length: n }, () => worker()));
-      await deps.refresh?.();
+      
     } finally {
       uploadBusy.value = false;
       uploadCancelAll.value = null;

@@ -223,7 +223,6 @@
                             <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Size</div>
                             <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Last modified
                             </div>
-                            <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Owner</div>
                             <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Storage class
                             </div>
                         </div>
@@ -279,12 +278,6 @@
 
                                     <div class="px-3 py-2 text-default min-w-0 truncate">
                                         <span v-if="r.type === 'file'">{{ formatDate(r.lastModified) }}</span>
-                                        <span v-else>—</span>
-                                    </div>
-
-                                    <div class="px-3 py-2 text-default min-w-0 truncate">
-                                        <span v-if="r.type === 'file'">{{ r.ownerDisplayName || r.ownerId || "—"
-                                        }}</span>
                                         <span v-else>—</span>
                                     </div>
 
@@ -393,7 +386,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import {
     listObjects, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus
-    , copyPrefix, movePrefix, copyObject
+    , copyPrefix, movePrefix, copyObject,
+    statObject
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
@@ -488,7 +482,7 @@ const anchorIndex = ref<number | null>(null);
 const clip = useClipboardStore();
 
 const canPasteHere = computed(() =>
-    clip.canPaste(connectionId.value, bucket.value)
+    clip.canPaste(connectionId.value)
 );
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
@@ -519,6 +513,8 @@ const uploads = useUploads({
     uploadObjectFromStdinStreamed,
     refresh,
     setError: (m) => (error.value = m),
+    onUploaded: (key) => upsertFileRowByKey(key),
+
 });
 
 const uploadBusy = uploads.uploadBusy;
@@ -530,18 +526,27 @@ const uploadCancel = uploads.uploadCancel;
 const uploadCancelAll = uploads.uploadCancelAll;
 
 const transfers = useTransfers({
-    connectionId,
-    bucket,
-    prefix,
-    clip,
-    copyObject,
-    copyPrefix,
-    movePrefix,
-    renameObjectStreamed,
-    refresh,
-    setError: (m) => (error.value = m),
-    setBusy: (b) => (busy.value = b),
+  connectionId,
+  bucket,
+  prefix,
+  clip,
+  copyObject,
+  copyPrefix,
+  movePrefix,
+  renameObjectStreamed,
+  setError: (m) => (error.value = m),
+  setBusy: (b) => (busy.value = b),
+
+  onCreated: (it) => {
+    if (it.type === "file") upsertFileRowByKey(it.key);
+    else upsertFolderRowByPrefix(it.prefix);
+  },
+  onDeleted: (it) => {
+    if (it.type === "file") removeFileRowByKey(it.key);
+    else removeFolderRowByPrefix(it.prefix);
+  },
 });
+
 
 const transferJobs = transfers.transferJobs;
 const transferBusy = transfers.transferBusy;
@@ -566,15 +571,20 @@ const renameStatusText = renamer.renameStatusText;
 const renamePct = renamer.renamePct;
 const renameCancel = renamer.renameCancel;
 
-
 const deletes = useDeletes({
-    connectionId,
-    bucket,
-    delStore,
-    deletePrefixStreamed,
-    deleteObject,
-    refresh,
+  connectionId,
+  bucket,
+  delStore,
+  deletePrefixStreamed,
+  deleteObject,
+  refresh,
+
+  onDeleted: (it) => {
+    if (it.type === "file") removeFileRowByKey(it.key);
+    else removeFolderRowByPrefix(it.prefix);
+  },
 });
+
 
 const deleteBusy = deletes.deleteBusy;
 const isDeletingRow = deletes.isDeletingRow;
@@ -741,8 +751,6 @@ async function fetchPage(reset: boolean) {
                 name: nameFromKey(o.key),
                 size: o.size,
                 lastModified: o.lastModified ?? null,
-                ownerDisplayName: o.owner?.displayName ?? null,
-                ownerId: o.owner?.id ?? null,
                 storageClass: o.storageClass ?? null,
                 fileType: guessFileTypeFromKey(o.key),
             };
@@ -1063,18 +1071,8 @@ function isFileRow(r: Row): r is FileRow {
 
 
 function updateRowAfterRename(srcKey: string, dstKey: string) {
-    const i = rows.value.findIndex((r) => r.type === "file" && r.key === srcKey);
-    if (i < 0) return;
-
-    const old = rows.value[i] as FileRow;
-
-    const newName = nameFromKey(dstKey);
-    rows.value[i] = {
-        ...old,
-        key: dstKey,
-        name: newName,
-        fileType: guessFileTypeFromKey(dstKey),
-    };
+  removeFileRowByKey(srcKey);
+  upsertFileRowByKey(dstKey);
 }
 
 
@@ -1107,11 +1105,6 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
     e.returnValue = "";
 }
 
-
-
-
-
-
 onMounted(() => {
     document.addEventListener("mousedown", onDocMouseDown);
     window.addEventListener("beforeunload", onBeforeUnload);
@@ -1127,10 +1120,100 @@ onBeforeUnmount(() => {
 
 
 function selectionToClipItems(items: Row[]) {
-    return items.map((it) =>
-        it.type === "folder"
-            ? ({ type: "folder", prefix: it.prefix, name: it.name } as const)
-            : ({ type: "file", key: it.key, name: it.name } as const)
-    );
+  return items.map((it) =>
+    it.type === "folder"
+      ? ({ type: "folder", prefix: it.prefix, name: it.name, bucket: bucket.value } as const)
+      : ({ type: "file", key: it.key, name: it.name, bucket: bucket.value } as const)
+  );
 }
+
+
+function stripBasePrefix(full: string, base: string) {
+  const b = base || "";
+  return b && full.startsWith(b) ? full.slice(b.length) : full;
+}
+
+// "direct child" means: under current prefix, and the remainder has no extra "/"
+function isDirectChildKey(key: string, basePrefix: string) {
+  const rest = stripBasePrefix(key, basePrefix);
+  if (rest === key && basePrefix) return false; // not under prefix
+  if (!rest) return false;
+  return !rest.includes("/");
+}
+
+function isDirectChildFolderPrefix(folderPrefix: string, basePrefix: string) {
+  const rest = stripBasePrefix(folderPrefix, basePrefix);
+  if (rest === folderPrefix && basePrefix) return false;
+  if (!rest) return false;
+  if (!rest.endsWith("/")) return false;
+  const inner = rest.slice(0, -1);
+  return inner.length > 0 && !inner.includes("/");
+}
+
+async function upsertFileRowByKey(key: string) {
+  if (!isDirectChildKey(key, prefix.value || "")) return;
+
+  const i = rows.value.findIndex((r) => r.type === "file" && r.key === key);
+
+  // optimistic row first (instant UI)
+  const base: FileRow = {
+    type: "file",
+    key,
+    name: nameFromKey(key),
+    size: 0,
+    lastModified: null,
+    storageClass: null,
+    fileType: guessFileTypeFromKey(key),
+  };
+
+  if (i >= 0) rows.value[i] = { ...(rows.value[i] as FileRow), ...base };
+  else rows.value.push(base);
+
+  rows.value = [...rows.value];
+
+  // fetch real metadata
+  const meta = await statObject({
+    connectionId: connectionId.value,
+    bucket: bucket.value,
+    key,
+  });
+
+  if (meta.isErr()) return;
+
+  const lmIso = meta.value.lastModified; // iso string | null
+
+  const patch: Partial<FileRow> = {
+    size: meta.value.size,
+    lastModified: lmIso ? new Date(lmIso).toString() : null,
+    storageClass: meta.value.storageClass,
+  };
+
+  const j = rows.value.findIndex((r) => r.type === "file" && r.key === key);
+  if (j >= 0) {
+    rows.value[j] = { ...(rows.value[j] as FileRow), ...patch };
+    rows.value = [...rows.value];
+  }
+}
+
+
+function upsertFolderRowByPrefix(pfx: string) {
+  if (!isDirectChildFolderPrefix(pfx, prefix.value || "")) return;
+
+  const i = rows.value.findIndex((r) => r.type === "folder" && r.prefix === pfx);
+  const next: FolderRow = { type: "folder", prefix: pfx, name: nameFromPrefix(pfx) };
+
+  if (i >= 0) rows.value[i] = next;
+  else rows.value.push(next);
+}
+
+function removeFileRowByKey(key: string) {
+  const i = rows.value.findIndex((r) => r.type === "file" && r.key === key);
+  if (i >= 0) rows.value.splice(i, 1);
+}
+
+function removeFolderRowByPrefix(pfx: string) {
+  const i = rows.value.findIndex((r) => r.type === "folder" && r.prefix === pfx);
+  if (i >= 0) rows.value.splice(i, 1);
+}
+
 </script>

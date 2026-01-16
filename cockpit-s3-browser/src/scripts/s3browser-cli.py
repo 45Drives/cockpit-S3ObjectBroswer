@@ -193,11 +193,9 @@ def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:
 
   client = make_client(cfg)
 
-  # Always request owner info (when supported)
   req: Dict[str, Any] = {
     "Bucket": bucket,
     "MaxKeys": max_keys,
-    "FetchOwner": True,
   }
   if prefix:
     req["Prefix"] = prefix
@@ -224,9 +222,7 @@ def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:
     et = o.get("ETag")
     sc = o.get("StorageClass")
 
-    owner = o.get("Owner") or {}
-    owner_id = owner.get("ID")
-    owner_dn = owner.get("DisplayName")
+
 
     contents.append({
       "key": key,
@@ -234,10 +230,6 @@ def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:
       "lastModified": (lm.isoformat() if lm else None),
       "etag": (str(et).strip('"') if et else None),
       "storageClass": (str(sc) if sc else None),
-      "owner": {
-        "id": (str(owner_id) if owner_id else None),
-        "displayName": (str(owner_dn) if owner_dn else None),
-      } if (owner_id or owner_dn) else None,
     })
 
   out = {
@@ -294,21 +286,22 @@ def cmd_delete_object(conn_id: str, bucket: str, key: str) -> None:
 
 def multipart_copy_parallel(
   client: Any,
-  bucket: str,
+  src_bucket: str,
   src_key: str,
+  dst_bucket: str,
   dst_key: str,
   concurrency: int,
   emit: Optional[Any] = None,
 ) -> None:
-  head = client.head_object(Bucket=bucket, Key=src_key)
+  head = client.head_object(Bucket=src_bucket, Key=src_key)
   size = int(head.get("ContentLength") or 0)
 
   part_size = choose_part_size(size)
   total_parts = int(math.ceil(size / part_size)) if size > 0 else 1
 
-  # Create multipart upload and preserve common headers/metadata
+  # Create multipart upload on DESTINATION bucket
   create_args: Dict[str, Any] = {
-    "Bucket": bucket,
+    "Bucket": dst_bucket,
     "Key": dst_key,
     "ContentType": head.get("ContentType") or "application/octet-stream",
   }
@@ -325,9 +318,10 @@ def multipart_copy_parallel(
 
   mpu = client.create_multipart_upload(**create_args)
   upload_id = mpu["UploadId"]
+
   def abort():
     try:
-      client.abort_multipart_upload(Bucket=bucket, Key=dst_key, UploadId=upload_id)
+      client.abort_multipart_upload(Bucket=dst_bucket, Key=dst_key, UploadId=upload_id)
     except Exception:
       pass
 
@@ -338,6 +332,8 @@ def multipart_copy_parallel(
       "type": "start",
       "ok": True,
       "multipart": True,
+      "srcBucket": src_bucket,
+      "dstBucket": dst_bucket,
       "src": src_key,
       "dst": dst_key,
       "size": size,
@@ -356,11 +352,11 @@ def multipart_copy_parallel(
     byte_range = f"bytes={start}-{end}" if size > 0 else "bytes=0-0"
 
     resp = client.upload_part_copy(
-      Bucket=bucket,
+      Bucket=dst_bucket,
       Key=dst_key,
       PartNumber=part_num,
       UploadId=upload_id,
-      CopySource=s3_copy_source(bucket, src_key),
+      CopySource={"Bucket": src_bucket, "Key": src_key},
       CopySourceRange=byte_range,
     )
 
@@ -385,34 +381,40 @@ def multipart_copy_parallel(
     return {"ETag": etag, "PartNumber": part_num}
 
   try:
-    # Submit all parts with limited concurrency
     parts: List[Dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
       futures = [ex.submit(copy_one_part, i) for i in range(1, total_parts + 1)]
       for fut in as_completed(futures):
         parts.append(fut.result())
 
-    # Must complete with parts in ascending PartNumber
     parts.sort(key=lambda p: int(p["PartNumber"]))
 
     client.complete_multipart_upload(
-      Bucket=bucket,
+      Bucket=dst_bucket,
       Key=dst_key,
       UploadId=upload_id,
       MultipartUpload={"Parts": parts},
     )
 
-  except KeyboardInterrupt:
-  # Cancel path: abort and report "Canceled"
-    try:
-      client.abort_multipart_upload(Bucket=bucket, Key=dst_key, UploadId=upload_id)
-    except Exception:
-      pass
+    if emit:
+      emit({
+        "type": "result",
+        "ok": True,
+        "srcBucket": src_bucket,
+        "dstBucket": dst_bucket,
+        "src": src_key,
+        "dst": dst_key,
+        "size": size,
+      })
 
+  except KeyboardInterrupt:
+    abort()
     if emit:
       emit({
         "type": "result",
         "ok": False,
+        "srcBucket": src_bucket,
+        "dstBucket": dst_bucket,
         "src": src_key,
         "dst": dst_key,
         "error": "Canceled",
@@ -420,20 +422,19 @@ def multipart_copy_parallel(
     raise
 
   except Exception as e:
-    try:
-      client.abort_multipart_upload(Bucket=bucket, Key=dst_key, UploadId=upload_id)
-    except Exception:
-      pass
-
+    abort()
     if emit:
       emit({
         "type": "result",
         "ok": False,
+        "srcBucket": src_bucket,
+        "dstBucket": dst_bucket,
         "src": src_key,
         "dst": dst_key,
         "error": str(e),
       })
     raise
+
 
 
 # s3browser-cli.py (full cmd_delete_prefix function with streaming progress)
@@ -601,14 +602,14 @@ def read_exact(stream, n: int) -> bytes:
 
 
 
-def cmd_copy_object(conn_id: str, bucket: str, src_key: str, dst_key: str, argv: List[str]) -> None:
+def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str, dst_key: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
 
   if not src_key or not dst_key:
     raise ValueError("Missing src or dst key")
-  if src_key == dst_key:
+  if src_bucket == dst_bucket and src_key == dst_key:
     sys.stdout.write(json.dumps({"ok": True, "src": src_key, "dst": dst_key}) + "\n")
     return
 
@@ -622,19 +623,20 @@ def cmd_copy_object(conn_id: str, bucket: str, src_key: str, dst_key: str, argv:
   if concurrency > 32:
     concurrency = 32
 
-  head = client.head_object(Bucket=bucket, Key=src_key)
+  head = client.head_object(Bucket=src_bucket, Key=src_key)
+
   size = int(head.get("ContentLength") or 0)
 
   MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
 
   try:
     if size >= MULTIPART_THRESHOLD:
-      multipart_copy_parallel(client, bucket, src_key, dst_key, concurrency, emit=None)
+      multipart_copy_parallel(client, src_bucket, src_key, dst_bucket, dst_key, concurrency, emit=None)
     else:
       client.copy_object(
-        Bucket=bucket,
+        Bucket=dst_bucket,
         Key=dst_key,
-        CopySource={"Bucket": bucket, "Key": src_key},
+        CopySource={"Bucket": src_bucket, "Key": src_key},
         MetadataDirective="COPY",
       )
 
@@ -645,7 +647,9 @@ def cmd_copy_object(conn_id: str, bucket: str, src_key: str, dst_key: str, argv:
     raise
 
 
-def cmd_copy_prefix(conn_id: str, bucket: str, src_prefix: str, dst_prefix: str, argv: List[str]) -> None:
+def cmd_copy_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: str, dst_prefix: str, argv: List[str]) -> None:
+
+
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
@@ -672,7 +676,7 @@ def cmd_copy_prefix(conn_id: str, bucket: str, src_prefix: str, dst_prefix: str,
   # Collect keys first (so we can show totals if you later stream)
   keys: List[Dict[str, Any]] = []
   total_bytes = 0
-  for key, size, lm in iter_keys_under_prefix(client, bucket, src_p):
+  for key, size, lm in iter_keys_under_prefix(client, src_bucket, src_p):
     rel = key[len(src_p):] if key.startswith(src_p) else key
     dst_key = dst_p + rel
     keys.append({"src": key, "dst": dst_key, "size": int(size or 0)})
@@ -698,11 +702,12 @@ def cmd_copy_prefix(conn_id: str, bucket: str, src_prefix: str, dst_prefix: str,
 
     # Simple copy; overwrite if exists (S3 semantics)
     client.copy_object(
-      Bucket=bucket,
-      Key=dst_key,
-      CopySource={"Bucket": bucket, "Key": src_key},
-      MetadataDirective="COPY",
+    Bucket=dst_bucket,
+    Key=dst_key,
+    CopySource={"Bucket": src_bucket, "Key": src_key},
+    MetadataDirective="COPY",
     )
+
     return it
 
   done_files = 0
@@ -749,7 +754,7 @@ def cmd_copy_prefix(conn_id: str, bucket: str, src_prefix: str, dst_prefix: str,
     }) + "\n")
     raise
 
-def cmd_move_prefix(conn_id: str, bucket: str, src_prefix: str, dst_prefix: str, argv: List[str]) -> None:
+def cmd_move_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: str, dst_prefix: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
@@ -800,14 +805,14 @@ def cmd_move_prefix(conn_id: str, bucket: str, src_prefix: str, dst_prefix: str,
     dst_key = it["dst"]
 
     client.copy_object(
-      Bucket=bucket,
+      Bucket=dst_bucket,
       Key=dst_key,
-      CopySource={"Bucket": bucket, "Key": src_key},
+      CopySource={"Bucket": src_bucket, "Key": src_key},
       MetadataDirective="COPY",
     )
 
     # Only delete after successful copy
-    client.delete_object(Bucket=bucket, Key=src_key)
+    client.delete_object(Bucket=src_bucket, Key=src_key)
 
     return it
 
@@ -863,6 +868,22 @@ def choose_upload_part_size(size: int, min_part: int = 8 * 1024 * 1024) -> int:
   return max(min_part, by_max_parts)
 
 
+def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  head = client.head_object(Bucket=bucket, Key=key)
+  lm = head.get("LastModified")
+
+  sys.stdout.write(json.dumps({
+    "ok": True,
+    "key": key,
+    "size": int(head.get("ContentLength") or 0),
+    "lastModified": (lm.isoformat() if lm else None),
+    "etag": str(head.get("ETag") or "").strip('"') or None,
+    "storageClass": head.get("StorageClass"),
+  }) + "\n")
 
 
 
@@ -1479,21 +1500,27 @@ def main() -> None:
     return
   
   if cmd == "copy-object":
-    if len(sys.argv) < 6:
-      raise ValueError("Usage: s3browser-cli copy-object <connectionId> <bucket> <srcKey> <dstKey> [--concurrency N]")
-    cmd_copy_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+    if len(sys.argv) < 7:
+      raise ValueError("Usage: s3browser-cli copy-object <connectionId> <srcBucket> <srcKey> <dstBucket> <dstKey> [--concurrency N]")
+    cmd_copy_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
     return
 
   if cmd == "copy-prefix":
-    if len(sys.argv) < 6:
-      raise ValueError("Usage: s3browser-cli copy-prefix <connectionId> <bucket> <srcPrefix> <dstPrefix> [--concurrency N]")
-    cmd_copy_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+    if len(sys.argv) < 7:
+      raise ValueError("Usage: s3browser-cli copy-prefix <connectionId> <srcBucket> <srcPrefix> <dstBucket> <dstPrefix> [--concurrency N]")
+    cmd_copy_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
     return
 
+
   if cmd == "move-prefix":
-    if len(sys.argv) < 6:
-      raise ValueError("Usage: s3browser-cli move-prefix <connectionId> <bucket> <srcPrefix> <dstPrefix> [--concurrency N]")
-    cmd_move_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+    if len(sys.argv) < 7:
+      raise ValueError("Usage: s3browser-cli move-prefix <connectionId> <srcBucket> <srcPrefix> <dstBucket> <dstPrefix> [--concurrency N]")
+    cmd_move_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
+    return
+  if cmd == "stat-object":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli stat-object <connectionId> <bucket> <key>")
+    cmd_stat_object(sys.argv[2], sys.argv[3], sys.argv[4])
     return
 
 

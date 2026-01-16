@@ -28,11 +28,6 @@ export type EndpointConfig = {
     name: string;   // e.g. "2024"
   };
 
-  export type S3Owner = {
-    id?: string | null;
-    displayName?: string | null;
-  };
-
   export type ObjectFile = {
     type: "file";
     key: string;
@@ -41,9 +36,7 @@ export type EndpointConfig = {
   
     etag?: string | null;
     storageClass?: string | null;
-  
-    owner?: S3Owner | null;
-  };
+    };
   
   
   export type ObjectRow = ObjectFolder | ObjectFile;
@@ -63,9 +56,7 @@ export type EndpointConfig = {
   
     etag?: string | null;
     storageClass?: string | null;
-  
-    owner?: S3Owner | null;
-    };
+      };
     
   
   export type ListObjectsResponse = {
@@ -94,8 +85,9 @@ export type EndpointConfig = {
   export type ClipKind = "copy" | "cut";
 
   export type ClipItem =
-    | { type: "file"; key: string; name: string }
-    | { type: "folder"; prefix: string; name: string };
+  | { type: "file"; name: string; key: string; bucket: string }
+  | { type: "folder"; name: string; prefix: string; bucket: string };
+
   
   export type ClipboardState = {
     kind: ClipKind | null;
@@ -115,10 +107,6 @@ export type EndpointConfig = {
 
     etag?: string | null;
     storageClass?: string | null;
-
-    ownerDisplayName?: string | null;
-    ownerId?: string | null;
-
     fileType?: string | null; // derived from extension/mime guess
 };
 export type Row = FolderRow | FileRow;
@@ -141,14 +129,16 @@ export type DownloadJob = {
 export type PasteStep = "queued" | "copying" | "done" | "failed" | "canceled";
 
 export type PasteItem = {
-    id: string;
-    itemType: "file" | "folder";
-    srcKey: string; // file key OR prefix
-    dstKey: string; // file key OR prefix
-    name: string;
-    step: PasteStep;
-    error?: string;
+  id: string;
+  itemType: "file" | "folder";
+  srcBucket: string;
+  srcKey: string; // key or prefix
+  dstKey: string; // key or prefix
+  name: string;
+  step: "queued" | "copying" | "done" | "failed" | "canceled";
+  error?: string;
 };
+
 
 
 export type UploadStatus = "queued" | "uploading" | "done" | "failed" | "canceled";
@@ -171,10 +161,11 @@ export type TransferJob = {
   kind: "copy" | "move";
   itemType: "file" | "folder";
   name: string;
-  src: string; // srcKey or srcPrefix
-  dst: string; // dstKey or dstPrefix
-  state: TransferJobState;
+  src: string;
+  dst: string;
+  state: "running" | "done" | "failed";
   error?: string;
   startedAt: number;
   finishedAt?: number;
 };
+

@@ -448,34 +448,41 @@ export function getDownloadJobStatus(params: {
 
 export function copyObject(params: {
   connectionId: string;
-  bucket: string;
+  srcBucket: string;
   srcKey: string;
+  dstBucket: string;
   dstKey: string;
   concurrency?: number;
 }): ResultAsync<void, ProcessError | SyntaxError> {
-  const args: string[] = ["copy-object", params.connectionId, params.bucket, params.srcKey, params.dstKey];
+  const args: string[] =["copy-object", params.connectionId, params.srcBucket, params.srcKey, params.dstBucket, params.dstKey, "--concurrency", "6"]
+
   if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
 
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<{ ok: boolean; error?: string }>(s))
-    .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Copy failed"));
-      return okAsync(undefined);
-    });
+    .andThen((res) => (res.ok ? okAsync(undefined) : errAsync(new SyntaxError(res.error || "Copy failed"))));
 }
+
 
 export function copyPrefix(params: {
   connectionId: string;
-  bucket: string;
+  srcBucket: string;
   srcPrefix: string;
+  dstBucket: string;
   dstPrefix: string;
   concurrency?: number;
 }): ResultAsync<void, ProcessError | SyntaxError> {
-  const args: string[] = ["copy-prefix", params.connectionId, params.bucket, params.srcPrefix, params.dstPrefix];
+  const args: string[] = [
+    "copy-prefix",
+    params.connectionId,
+    params.srcBucket,
+    params.srcPrefix,
+    params.dstBucket,
+    params.dstPrefix,
+  ];
   if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
-
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())
@@ -488,14 +495,15 @@ export function copyPrefix(params: {
 
 export function movePrefix(params: {
   connectionId: string;
-  bucket: string;
+  srcBucket: string;
   srcPrefix: string;
+  dstBucket: string
   dstPrefix: string;
   concurrency?: number;
 }): ResultAsync<void, ProcessError | SyntaxError> {
-  const args: string[] = ["move-prefix", params.connectionId, params.bucket, params.srcPrefix, params.dstPrefix];
+  const args: string[] = ["move-prefix", params.connectionId, params.srcBucket, params.srcPrefix, params.dstBucket, params.dstPrefix, "--concurrency", "6"]
+  ;
   if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
-
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())
@@ -506,3 +514,38 @@ export function movePrefix(params: {
     });
 }
 
+export function statObject(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+}): ResultAsync<
+  { key: string; size: number; lastModified: string | null; storageClass: string | null; etag: string | null },
+  ProcessError | SyntaxError
+> {
+  const args: string[] = ["stat-object", params.connectionId, params.bucket, params.key];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) =>
+      safeJsonParse<{
+        ok: boolean;
+        key?: string;
+        size?: number;
+        lastModified?: string | null;
+        storageClass?: string | null;
+        etag?: string | null;
+        error?: string;
+      }>(s),
+    )
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Stat failed"));
+      return okAsync({
+        key: String(res.key || params.key),
+        size: Number(res.size ?? 0),
+        lastModified: (res.lastModified ?? null) as string | null,
+        storageClass: (res.storageClass ?? null) as string | null,
+        etag: (res.etag ?? null) as string | null,
+      });
+    });
+}

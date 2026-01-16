@@ -10,9 +10,9 @@ export const useClipboardStore = defineStore("clipboard", {
       return state.items.length > 0 && !!state.kind;
     },
 
-    canPaste: (state) => (connectionId: string, bucket: string) => {
+    canPaste: (state) => (connectionId: string) => {
       if (!state.kind || state.items.length === 0) return false;
-      return state.connectionId === connectionId && state.bucket === bucket;
+      return state.connectionId === connectionId ;
     },
   },
 
