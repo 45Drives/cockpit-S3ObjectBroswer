@@ -4,7 +4,7 @@ import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 
 // @ts-ignore
 // import s3browser_cli_script from "../scripts/s3browser-cli.py?raw";
-import { ListObjectsCliResult, ListObjectsResponse, PresignGetCliResult } from "../types";
+import { GetObjectVersionsCliResult, ListObjectsCliResult, ListObjectsResponse, ObjectVersionItem, PresignGetCliResult, TagKV, TagMap } from "../types";
 
 function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
   try {
@@ -519,7 +519,18 @@ export function statObject(params: {
   bucket: string;
   key: string;
 }): ResultAsync<
-  { key: string; size: number; lastModified: string | null; storageClass: string | null; etag: string | null },
+  {
+    key: string;
+    size: number;
+    lastModified: string | null;
+    storageClass: string | null;
+    etag: string | null;
+
+    // new
+    contentType: string | null;
+    taggingCount: number | null;
+    metadata: Record<string, string>;
+  },
   ProcessError | SyntaxError
 > {
   const args: string[] = ["stat-object", params.connectionId, params.bucket, params.key];
@@ -535,17 +546,280 @@ export function statObject(params: {
         lastModified?: string | null;
         storageClass?: string | null;
         etag?: string | null;
+
+        // new
+        contentType?: string | null;
+        taggingCount?: number | null;
+        metadata?: Record<string, string> | null;
+
         error?: string;
       }>(s),
     )
     .andThen((res) => {
       if (!res.ok) return errAsync(new SyntaxError(res.error || "Stat failed"));
+
+      const md = res.metadata;
+      const metadata: Record<string, string> =
+        md && typeof md === "object" && !Array.isArray(md) ? (md as Record<string, string>) : {};
+
+      const tcRaw = res.taggingCount;
+      const taggingCount =
+        typeof tcRaw === "number" && Number.isFinite(tcRaw) ? tcRaw : tcRaw == null ? null : Number(tcRaw);
+
       return okAsync({
         key: String(res.key || params.key),
         size: Number(res.size ?? 0),
         lastModified: (res.lastModified ?? null) as string | null,
         storageClass: (res.storageClass ?? null) as string | null,
         etag: (res.etag ?? null) as string | null,
+
+        contentType: (res.contentType ?? null) as string | null,
+        taggingCount: Number.isFinite(taggingCount as number) ? (taggingCount as number) : null,
+        metadata,
       });
     });
+}
+
+export function getObjectTags(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+}): ResultAsync<{ tags: TagKV[] }, ProcessError | SyntaxError> {
+  const args: string[] = ["get-object-tags", params.connectionId, params.bucket, params.key];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<any>(s))
+    .andThen((res) => {
+      if (!res || res.ok === false) {
+        return okAsync({ tags: [] });
+      }
+
+      const raw = Array.isArray(res.tags) ? res.tags : [];
+
+      const tags: TagKV[] = raw
+        .map((t: any) => ({
+          key: String(t?.key ?? t?.Key ?? "").trim(),
+          value: String(t?.value ?? t?.Value ?? ""),
+        }))
+        .filter((t) => !!t.key);
+
+      return okAsync({ tags });
+    });
+}
+
+export function putObjectTags(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  tags: TagMap;
+}): ResultAsync<{ bucket: string; key: string; tags: TagKV[] }, ProcessError | SyntaxError> {
+  const args: string[] = [
+    "put-object-tags",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    "--tags-json",
+    JSON.stringify(params.tags ?? {}),
+  ];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<any>(s))
+    .andThen((res) => {
+      if (!res || res.ok === false) {
+        return errAsync(new SyntaxError(res?.error || "Failed to apply tags"));
+      }
+
+      const raw = Array.isArray(res.tags) ? res.tags : [];
+      const tags: TagKV[] = raw
+        .map((t: any) => ({
+          key: String(t?.key ?? t?.Key ?? "").trim(),
+          value: String(t?.value ?? t?.Value ?? ""),
+        }))
+        .filter((t) => !!t.key);
+
+      return okAsync({
+        bucket: String(res.bucket ?? params.bucket),
+        key: String(res.key ?? params.key),
+        tags,
+      });
+    });
+}
+
+function lastNonEmptyLine(s: string): string {
+  const lines = String(s ?? "")
+    .split("\n")
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return lines[lines.length - 1] ?? "";
+}
+
+
+export function changeStorageClass(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  storageClass: string;
+  concurrency?: number;
+  force?: boolean;
+}): ResultAsync<{ storageClass: string | null }, ProcessError | SyntaxError> {
+  const args: string[] = [
+    "change-storage-class",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    "--storage-class",
+    params.storageClass,
+  ];
+
+  if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
+  if (params.force) args.push("--force", "1");
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => lastNonEmptyLine(p.getStdout()))
+    .andThen((s) =>
+      safeJsonParse<{
+        ok: boolean;
+        storageClass?: string | null;
+        requestedStorageClass?: string;
+        error?: string;
+      }>(s),
+    )
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to change storage class"));
+      return okAsync({ storageClass: (res.storageClass ?? null) as string | null });
+    });
+}
+
+export function cancelDownloadJob(params: {
+  jobId: string;
+}): ResultAsync<void, ProcessError | SyntaxError> {
+  const args: string[] = ["cancel-download-job", params.jobId];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((proc) => proc.getStdout().trim())
+    .andThen((stdout) => safeJsonParse<{ ok: boolean; error?: string }>(stdout))
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to cancel download job"));
+      return okAsync(undefined);
+    });
+}
+
+
+export function getObjectVersions(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  maxKeys?: number;
+}): ResultAsync<{ versions: ObjectVersionItem[] }, ProcessError | SyntaxError> {
+  const args: string[] = [
+    "list-object-versions",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    "--max-keys",
+    String(params.maxKeys ?? 200),
+  ];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<GetObjectVersionsCliResult>(s))
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to list object versions"));
+
+      const raw = Array.isArray(res.versions) ? res.versions : [];
+
+      const versions: ObjectVersionItem[] = raw.map((v) => ({
+        key: String(v.key ?? params.key),
+        versionId: v.versionId != null ? String(v.versionId) : null,
+        isLatest: Boolean(v.isLatest),
+        lastModified: (v.lastModified ?? null) as string | null,
+        size: Number(v.size ?? 0),
+        etag: v.etag != null ? String(v.etag) : null,
+      }));
+
+      return okAsync({ versions });
+    });
+}
+
+
+export function deleteObjectVersion(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  versionId: string;
+}): ResultAsync<{ bucket: string; key: string; versionId: string }, ProcessError | SyntaxError> {
+  const args: string[] = ["delete-object-version", params.connectionId, params.bucket, params.key, params.versionId];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<{ ok: boolean; bucket?: string; key?: string; versionId?: string; error?: string }>(s))
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to delete version"));
+      return okAsync({
+        bucket: String(res.bucket ?? params.bucket),
+        key: String(res.key ?? params.key),
+        versionId: String(res.versionId ?? params.versionId),
+      });
+    });
+}
+
+export function rollbackObjectVersion(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  versionId: string;
+}): ResultAsync<{ bucket: string; key: string; fromVersionId: string }, ProcessError | SyntaxError> {
+  const args: string[] = ["rollback-object-version", params.connectionId, params.bucket, params.key, params.versionId];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) =>
+      safeJsonParse<{ ok: boolean; bucket?: string; key?: string; fromVersionId?: string; error?: string }>(s),
+    )
+    .andThen((res) => {
+      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to rollback version"));
+      return okAsync({
+        bucket: String(res.bucket ?? params.bucket),
+        key: String(res.key ?? params.key),
+        fromVersionId: String(res.fromVersionId ?? params.versionId),
+      });
+    });
+}
+
+
+
+export function downloadObjectVersion(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  versionId: string;
+  filename?: string;
+  jobId: string;
+}): ResultAsync<void, ProcessError> {
+  const base = params.filename || (params.key.split("/").pop() || "download");
+  const safeVid = (params.versionId || "").slice(0, 8) || "version";
+  const filename = `${base}.v-${safeVid}`;
+
+  const args: string[] = [
+    "download-object-version",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    params.versionId,
+    "--job-id",
+    params.jobId,
+  ];
+
+  return okAsync(undefined).map(() => {
+    server.downloadCommandOutput(pyCmd(args, "try"), filename);
+  });
 }

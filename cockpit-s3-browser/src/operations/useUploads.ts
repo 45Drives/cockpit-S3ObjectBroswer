@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref } from "vue";
 import type { UploadItem } from "../types";
 import type { uploadObjectFromStdinStreamed as uploadObjectFromStdinStreamedFn } from "../lib/s3Objects";
 import { uid } from "../lib/helpers";
+import { useTaskCenterStore } from "../stores/taskCenter";
 
 type Deps = {
   connectionId: { value: string };
@@ -14,10 +15,11 @@ type Deps = {
   refresh?: () => Promise<void> | void;
   setError?: (msg: string) => void;
   onUploaded?: (key: string) => void;
-
 };
 
 export function useUploads(deps: Deps) {
+  const taskCenter = useTaskCenterStore();
+
   const uploadBusy = ref(false);
   const uploadProgress = ref<{ bytes: number; size: number; filename: string } | null>(null);
   const uploadCancel = ref<null | (() => void)>(null);
@@ -66,6 +68,67 @@ export function useUploads(deps: Deps) {
     return uploadItems.value.find((u) => u.status === "uploading") || null;
   }
 
+  function isActiveStatus(s: UploadItem["status"]) {
+    return s === "queued" || s === "uploading";
+  }
+
+  function taskStateForStatus(s: UploadItem["status"]) {
+    switch (s) {
+      case "queued":
+      case "uploading":
+        return "running" as const;
+      case "done":
+        return "done" as const;
+      case "failed":
+        return "failed" as const;
+      case "canceled":
+        return "canceled" as const;
+      default:
+        return "running" as const;
+    }
+  }
+
+  function progressTextForItem(u: UploadItem) {
+    if (u.status === "uploading") {
+      const total = u.file.size || 0;
+      return total > 0 ? `${u.bytes} / ${total} bytes` : `${u.bytes} bytes`;
+    }
+    if (u.status === "queued") return "Queued";
+    return undefined;
+  }
+
+  function upsertTaskForItem(u: UploadItem) {
+    const total = u.file.size || 0;
+    const cur = typeof u.bytes === "number" ? u.bytes : 0;
+  
+    taskCenter.upsert({
+      id: u.id,
+      kind: "upload",
+      name: u.file.name,
+      state: taskStateForStatus(u.status),
+  
+      progressText: progressTextForItem(u),
+  
+      progressCurrent: total > 0 ? cur : null,
+      progressTotal: total > 0 ? total : null,
+      progressPct:
+        total > 0
+          ? Math.max(0, Math.min(100, Math.round((cur * 100) / total)))
+          : null,
+  
+      error: u.error,
+      actions: {
+        cancel: () => cancelById(u.id),
+        dismiss: () => dismiss(u.id),
+      },
+    });
+  }
+  
+
+  function removeTask(id: string) {
+    taskCenter.remove(id);
+  }
+
   async function pickFiles() {
     if (!deps.connectionId.value || !deps.bucket.value) return;
 
@@ -87,6 +150,8 @@ export function useUploads(deps: Deps) {
         status: "queued",
         canceled: false,
       }));
+
+      for (const u of uploadItems.value) upsertTaskForItem(u);
 
       const conc = chooseSafeConcurrency(files);
       await uploadManyWithPool(conc);
@@ -124,6 +189,8 @@ export function useUploads(deps: Deps) {
         } satisfies UploadItem;
       });
 
+      for (const u of uploadItems.value) upsertTaskForItem(u);
+
       const conc = chooseSafeConcurrency(files);
       await uploadManyWithPool(conc);
     };
@@ -143,14 +210,22 @@ export function useUploads(deps: Deps) {
       canceledAll = true;
 
       for (const u of uploadItems.value) {
-        if (u.status === "uploading") u.cancel?.();
+        if (u.status === "uploading") {
+          try {
+            u.cancel?.();
+          } catch {}
+        }
+
         if (u.status === "queued") {
           u.canceled = true;
           u.status = "canceled";
+          upsertTaskForItem(u);
         }
       }
 
-      uploadCancel.value?.();
+      try {
+        uploadCancel.value?.();
+      } catch {}
     };
 
     async function worker() {
@@ -162,18 +237,27 @@ export function useUploads(deps: Deps) {
 
         item.status = "uploading";
         item.error = undefined;
+        upsertTaskForItem(item);
 
         try {
           await uploadOneItemViaStdin(item);
+
           if (!item.canceled) {
             item.status = "done";
+            upsertTaskForItem(item);
             deps.onUploaded?.(item.dstKey);
+          } else {
+            item.status = "canceled";
+            upsertTaskForItem(item);
           }
-
         } catch (e: any) {
           if (!item.canceled) {
             item.status = "failed";
             item.error = e?.message || "Upload failed";
+            upsertTaskForItem(item);
+          } else {
+            item.status = "canceled";
+            upsertTaskForItem(item);
           }
         }
       }
@@ -182,7 +266,6 @@ export function useUploads(deps: Deps) {
     try {
       const n = Math.max(1, Math.min(limit, uploadItems.value.length));
       await Promise.all(Array.from({ length: n }, () => worker()));
-      
     } finally {
       uploadBusy.value = false;
       uploadCancelAll.value = null;
@@ -207,10 +290,12 @@ export function useUploads(deps: Deps) {
           const b = Number(ev.bytesRead ?? 0);
           item.bytes = b;
           uploadProgress.value = { filename: file.name, bytes: b, size: file.size };
+          upsertTaskForItem(item);
         } else if (ev.type === "result") {
           if (!ev.ok) {
             item.status = "failed";
             item.error = ev.error || "Upload failed";
+            upsertTaskForItem(item);
           }
         }
       },
@@ -219,6 +304,7 @@ export function useUploads(deps: Deps) {
     item.cancel = () => {
       item.canceled = true;
       item.status = "canceled";
+      upsertTaskForItem(item);
       try {
         job.cancel();
       } catch {}
@@ -253,8 +339,50 @@ export function useUploads(deps: Deps) {
     uploadCancelAll.value?.();
   }
 
+  function cancelById(id: string) {
+    const it = uploadItems.value.find((x) => x.id === id);
+    if (!it) return;
+
+    // queued: mark canceled immediately
+    if (it.status === "queued") {
+      it.canceled = true;
+      it.status = "canceled";
+      upsertTaskForItem(it);
+      return;
+    }
+
+    // uploading: invoke per-item cancel handler
+    if (it.status === "uploading") {
+      try {
+        it.cancel?.();
+      } catch {}
+      upsertTaskForItem(it);
+      return;
+    }
+
+    // done/failed/canceled: nothing
+  }
+
+  function dismiss(id: string) {
+    const it = uploadItems.value.find((x) => x.id === id);
+    if (!it) return;
+
+    // don’t allow dismiss while active
+    if (isActiveStatus(it.status)) return;
+
+    uploadItems.value = uploadItems.value.filter((x) => x.id !== id);
+    removeTask(id);
+  }
+
+  function clearFinished() {
+    const keep = uploadItems.value.filter((x) => isActiveStatus(x.status));
+    const removed = uploadItems.value.filter((x) => !isActiveStatus(x.status));
+
+    uploadItems.value = keep;
+    for (const u of removed) removeTask(u.id);
+  }
+
   onBeforeUnmount(() => {
-    // avoid a dangling "Cancel" callback if user navigates away
     try {
       cancelAll();
     } catch {}
@@ -276,5 +404,8 @@ export function useUploads(deps: Deps) {
     pickFiles,
     pickFolder,
     cancelAll,
+    cancelById,
+    dismiss,
+    clearFinished,
   };
 }

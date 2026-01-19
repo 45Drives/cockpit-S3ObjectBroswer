@@ -112,7 +112,7 @@ export type EndpointConfig = {
 export type Row = FolderRow | FileRow;
 export type ViewMode = "table" | "icons";
 export type DeleteKind = "file" | "folder";
-export type DownloadState = "running" | "done" | "failed" | "cancelexport ed";
+export type DownloadState = "running" | "done" | "failed" | "canceled" | "canceling";
 
 export type DownloadJob = {
     id: string;           // jobId
@@ -154,7 +154,7 @@ export type UploadItem = {
     cancel?: () => void;
 };
 
-export type TransferJobState = "running" | "done" | "failed";
+export type TransferJobState = "running" | "done" | "failed" | "canceling";
 
 export type TransferJob = {
   id: string;
@@ -163,9 +163,54 @@ export type TransferJob = {
   name: string;
   src: string;
   dst: string;
-  state: "running" | "done" | "failed";
+  state: "running" | "done" | "failed" | "canceling";
   error?: string;
   startedAt: number;
   finishedAt?: number;
 };
 
+export type TagKV = { key: string; value: string };
+export type TagMap = Record<string, string>;
+
+export type TaskKind = "delete" | "download" | "upload" | "copy" | "move" | "rename";
+
+export type TaskState = "running" | "canceling" | "done" | "failed" | "canceled";
+
+export type TaskActions = {
+  cancel?: () => void;
+  dismiss?: () => void;
+};
+
+export type UiTask = {
+  id: string;
+  kind: TaskKind;
+  name: string;
+  state: TaskState;
+  progressText?: string;
+  progressPct?: number | null; // 0..100, null/undefined = no bar
+  error?: string;
+  actions?: TaskActions;
+};
+
+
+export type ObjectVersionItem = {
+  key: string;
+  versionId: string | null;
+  isLatest: boolean;
+  lastModified: string | null;
+  size: number;
+  etag: string | null;
+};
+
+export type GetObjectVersionsCliResult = {
+  ok: boolean;
+  versions?: Array<{
+    key?: string;
+    versionId?: string | null;
+    isLatest?: boolean;
+    lastModified?: string | null;
+    size?: number;
+    etag?: string | null;
+  }>;
+  error?: string;
+};

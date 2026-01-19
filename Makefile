@@ -23,7 +23,7 @@ REMOTE_TEST_USER=root
 RESTART_COCKPIT?=0
 
 # When set to 1, JS is not minified
-DEBUG?=0
+DEBUG?=1
 
 # Run yarn upgrade or npm update for each project before build
 AUTO_UPGRADE_DEPS?=0

@@ -2,6 +2,7 @@
     <div class="w-full px-6 py-6">
         <div class="mx-auto w-full max-w-6xl">
             <div class="rounded-md border border-default bg-accent shadow-sm">
+                <!-- header -->
                 <div class="border-b border-default px-4 py-3 flex items-center justify-between gap-3">
                     <div class="min-w-0">
                         <div class="text-base font-semibold text-default truncate">{{ bucket || "—" }}</div>
@@ -20,6 +21,7 @@
                             :disabled="busy" @click="refresh">
                             <ArrowPathIcon class="h-4 w-4"></ArrowPathIcon>
                         </button>
+
                         <div class="relative" ref="uploadMenuRef">
                             <button type="button"
                                 class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
@@ -40,15 +42,16 @@
                                 </button>
                             </div>
                         </div>
-
-
                     </div>
                 </div>
 
+                <!-- body -->
                 <div class="p-4">
+                    <!-- status blocks (same as before) -->
                     <div v-if="error" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
                         {{ error }}
                     </div>
+
                     <div v-if="downloadBusy" class="mb-3 rounded-md border border-yellow-300 bg-default p-3 text-sm">
                         <div class="font-semibold">Download in progress</div>
                         <div class="opacity-80">Do not close or refresh this tab.</div>
@@ -61,41 +64,12 @@
                                     ({{ formatBytes(j.bytes) }} / {{ formatBytes(j.totalBytes) }})
                                 </span>
                                 <span v-if="j.error" class="text-red-700"> — {{ j.error }}</span>
+                                <button v-if="j.state === 'running' || j.state === 'canceling'" type="button"
+                                    class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold"
+                                    :disabled="j.state === 'canceling'" @click="downloads.cancelJob(j.id)">
+                                    {{ j.state === 'canceling' ? "Canceling…" : "Cancel" }}
+                                </button>
                             </div>
-                        </div>
-                    </div>
-                    <div v-if="pasteItems.length" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
-                        <div class="flex items-center justify-between gap-3">
-                            <div class="font-semibold">
-                                Pasting: {{ pasteDone }} / {{ pasteTotal }}
-                            </div>
-                            <div v-if="pastePct != null" class="text-xs opacity-80">{{ pastePct }}%</div>
-                        </div>
-
-                        <div v-if="pastePct != null" class="mt-2">
-                            <div class="h-2 w-full rounded bg-well overflow-hidden">
-                                <div class="h-2 bg-default" :style="{ width: pastePct + '%' }"></div>
-                            </div>
-                        </div>
-
-                        <div class="mt-2 max-h-44 overflow-auto space-y-1 text-xs">
-                            <div v-for="p in pasteItems" :key="p.id" class="flex items-center justify-between gap-2">
-                                <div class="min-w-0 truncate" :title="p.dstKey">{{ p.name }}</div>
-                                <div class="shrink-0 opacity-80">
-                                    <span v-if="p.step === 'queued'">Queued</span>
-                                    <span v-else-if="p.step === 'copying'">Copying…</span>
-                                    <span v-else-if="p.step === 'done'">Done</span>
-                                    <span v-else-if="p.step === 'canceled'">Canceled</span>
-                                    <span v-else>Failed</span>
-                                </div>
-                            </div>
-
-                            <template v-for="p in pasteItems" :key="p.id + ':err'">
-                                <div v-if="p.step === 'failed' && p.error" class="text-red-700">
-                                    {{ p.name }}: {{ p.error }}
-                                </div>
-                            </template>
-
                         </div>
                     </div>
 
@@ -103,53 +77,6 @@
                         <div class="flex items-center justify-between gap-3">
                             <div class="font-semibold">Upload queue: {{ uploadItems.length }}</div>
                             <div v-if="overallPct != null" class="text-xs opacity-80">Overall: {{ overallPct }}%</div>
-                        </div>
-
-                        <div class="mt-2 max-h-44 overflow-auto space-y-1">
-                            <div v-for="u in uploadItems" :key="u.id" class="flex items-center justify-between gap-2">
-                                <div class="min-w-0 truncate" :title="u.file.name">{{ u.file.name }}</div>
-
-                                <div class="shrink-0 text-xs opacity-80">
-                                    <span v-if="u.status === 'uploading'">
-                                        {{ formatBytes(u.bytes) }} / {{ formatBytes(u.file.size) }}
-                                    </span>
-                                    <span v-else-if="u.status === 'queued'">Queued</span>
-                                    <span v-else-if="u.status === 'done'">Done</span>
-                                    <span v-else-if="u.status === 'canceled'">Canceled</span>
-                                    <span v-else>Failed</span>
-                                </div>
-                            </div>
-                            <template v-for="u in uploadItems" :key="u.id + ':err'">
-                                <div v-if="u.status === 'failed' && u.error" class="text-xs text-red-700">
-                                    {{ u.file.name }}: {{ u.error }}
-                                </div>
-                            </template>
-
-
-
-                        </div>
-                    </div>
-
-                    <div v-if="uploadProgress" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
-                        <div class="flex items-center justify-between gap-3">
-                            <div class="font-semibold">Uploading: {{ uploadProgress.filename }}</div>
-
-                            <button type="button"
-                                class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold"
-                                :disabled="!(uploadCancelAll || uploadCancel)" @click="(uploadCancelAll || uploadCancel)?.()
-                                    ">
-                                Cancel
-                            </button>
-                        </div>
-
-                        <div class="mt-1">{{ formatBytes(uploadProgress.bytes) }} / {{ formatBytes(uploadProgress.size)
-                            }}</div>
-
-                        <div v-if="uploadPct != null" class="mt-2">
-                            <div class="h-2 w-full rounded bg-well overflow-hidden">
-                                <div class="h-2 bg-default" :style="{ width: uploadPct + '%' }"></div>
-                            </div>
-                            <div class="mt-1 text-xs opacity-80">{{ uploadPct }}%</div>
                         </div>
                     </div>
 
@@ -169,6 +96,7 @@
                             <div class="mt-1 text-xs opacity-80">{{ renamePct }}%</div>
                         </div>
                     </div>
+
                     <div v-if="transferBusy" class="mb-3 rounded-md border border-yellow-300 bg-default p-3 text-sm">
                         <div class="font-semibold">Transfer in progress</div>
                         <div class="opacity-80">Do not close or refresh this tab.</div>
@@ -183,8 +111,7 @@
                         </div>
                     </div>
 
-
-
+                    <!-- path/search bar -->
                     <div class="mb-3 flex items-center gap-2">
                         <button type="button"
                             class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
@@ -214,180 +141,187 @@
 
                         <div class="flex-1"></div>
                     </div>
-                    <!-- TABLE VIEW -->
-                    <div v-if="viewMode === 'table'" class="rounded-md border border-default ">
-                        <div class="bg-well text-left text-default w-full"
-                            :style="colsStyle + 'scrollbar-gutter: stable;'">
-                            <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Name</div>
-                            <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Type</div>
-                            <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Size</div>
-                            <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Last modified
-                            </div>
-                            <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Storage class
-                            </div>
-                        </div>
-                        <div class="w-full" @contextmenu="openMenuAtPoint">
-                            <RecycleScroller class="w-full overflow-y-auto h-[96vh]"
-                                style="scrollbar-gutter: stable; height: 96vh;;" :items="virtualRows" :item-size="56"
-                                key-field="__key" v-slot="{ item: r, index }">
-                                <div class="w-full hover:bg-default border-b border-default cursor-pointer outline-none"
-                                    :style="colsStyle + 'align-items:center; height:56px;'"
-                                    :class="selectedIds.has(rowId(r)) ? 'bg-well' : ''"
-                                    @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
-                                    @keydown.enter.prevent="onRowDblClick(r)"
-                                    @contextmenu.prevent.stop="openMenu($event, r, index)">
-                                    <div class="px-3 py-2 text-default min-w-0">
-                                        <div class="flex items-center gap-2 min-w-0">
-                                            <span class="shrink-0 opacity-80 w-4 h-4"></span>
 
-                                            <div class="min-w-0 flex items-center gap-2">
-                                                <button v-if="r.type === 'folder'" type="button"
-                                                    class="font-semibold text-default hover:opacity-90 truncate min-w-0"
-                                                    :disabled="busy || isDeletingRow(r)"
-                                                    @click.stop="onRowClick($event, r, index)"
-                                                    @dblclick.stop.prevent="openPrefix(r.prefix)"
-                                                    @keydown.enter.stop.prevent="openPrefix(r.prefix)"
-                                                    @contextmenu.stop.prevent="openMenu($event, r, index)">
-                                                    {{ r.name }}/
-                                                </button>
+                    <!-- LIST + DETAILS: start at same height -->
+                    <div class="flex items-start gap-0">
+                        <!-- left: list -->
+                        <div class="flex-1 min-w-0 pr-0">
+                            <!-- TABLE VIEW -->
+                            <div v-if="viewMode === 'table'" class="rounded-md border border-default">
+                                <div class="bg-well text-left text-default w-full"
+                                    :style="colsStyle + 'scrollbar-gutter: stable;'">
+                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Name
+                                    </div>
+                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Type
+                                    </div>
+                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Size
+                                    </div>
+                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Last
+                                        modified</div>
+                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                                        Storage class</div>
+                                </div>
 
-                                                <div v-else class="min-w-0">
-                                                    <div class="text-default text-sm truncate" :title="r.key">{{ r.name
-                                                    }}
+                                <div class="w-full" @contextmenu="openMenuAtPoint">
+                                    <RecycleScroller class="w-full overflow-y-auto h-[80vh]"
+                                        style="scrollbar-gutter: stable; height: 80vh;" :items="virtualRows"
+                                        :item-size="56" key-field="__key" v-slot="{ item: r, index }">
+                                        <div class="w-full hover:bg-default border-b border-default cursor-pointer outline-none"
+                                            :style="colsStyle + 'align-items:center; height:56px;'"
+                                            :class="selectedIds.has(rowId(r)) ? 'bg-well' : ''"
+                                            @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
+                                            @keydown.enter.prevent="onRowDblClick(r)"
+                                            @contextmenu.prevent.stop="openMenu($event, r, index)">
+                                            <div class="px-3 py-2 text-default min-w-0">
+                                                <div class="flex items-center gap-2 min-w-0">
+                                                    <span class="shrink-0 opacity-80 w-4 h-4"></span>
+
+                                                    <div class="min-w-0 flex items-center gap-2">
+                                                        <button v-if="r.type === 'folder'" type="button"
+                                                            class="font-semibold text-default hover:opacity-90 truncate min-w-0"
+                                                            :disabled="busy || isDeletingRow(r)"
+                                                            @click.stop="onRowClick($event, r, index)"
+                                                            @dblclick.stop.prevent="openPrefix(r.prefix)"
+                                                            @keydown.enter.stop.prevent="openPrefix(r.prefix)"
+                                                            @contextmenu.stop.prevent="openMenu($event, r, index)">
+                                                            {{ r.name }}/
+                                                        </button>
+
+                                                        <div v-else class="min-w-0">
+                                                            <div class="text-default text-sm truncate" :title="r.key">{{
+                                                                r.name }}</div>
+                                                        </div>
+
+                                                        <span v-if="isDeletingRow(r)"
+                                                            class="text-xs rounded-full border border-default px-2 py-0.5 opacity-80">
+                                                            Deleting…
+                                                        </span>
                                                     </div>
                                                 </div>
+                                            </div>
 
-                                                <span v-if="isDeletingRow(r)"
-                                                    class="text-xs rounded-full border border-default px-2 py-0.5 opacity-80">
-                                                    Deleting…
-                                                </span>
+                                            <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                <span v-if="r.type === 'file'">{{ r.fileType || "—" }}</span>
+                                                <span v-else>folder</span>
+                                            </div>
+
+                                            <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                <span v-if="r.type === 'file'">{{ formatBytes(r.size) }}</span>
+                                                <span v-else>—</span>
+                                            </div>
+
+                                            <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                <span v-if="r.type === 'file'">{{ formatDate(r.lastModified) }}</span>
+                                                <span v-else>—</span>
+                                            </div>
+
+                                            <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                <span v-if="r.type === 'file'">{{ r.storageClass || "—" }}</span>
+                                                <span v-else>—</span>
                                             </div>
                                         </div>
-
-                                    </div>
-
-                                    <div class="px-3 py-2 text-default min-w-0 truncate">
-                                        <span v-if="r.type === 'file'">{{ r.fileType || "—" }}</span>
-                                        <span v-else>folder</span>
-                                    </div>
-
-                                    <div class="px-3 py-2 text-default min-w-0 truncate">
-                                        <span v-if="r.type === 'file'">{{ formatBytes(r.size) }}</span>
-                                        <span v-else>—</span>
-                                    </div>
-
-                                    <div class="px-3 py-2 text-default min-w-0 truncate">
-                                        <span v-if="r.type === 'file'">{{ formatDate(r.lastModified) }}</span>
-                                        <span v-else>—</span>
-                                    </div>
-
-                                    <div class="px-3 py-2 text-default min-w-0 truncate">
-                                        <span v-if="r.type === 'file'">{{ r.storageClass || "—" }}</span>
-                                        <span v-else>—</span>
-                                    </div>
+                                    </RecycleScroller>
                                 </div>
-                            </RecycleScroller>
-                        </div>
-                    </div>
+                            </div>
 
-                    <!-- ICON VIEW -->
-                    <div v-else class="rounded-md border border-default overflow-y-scroll"
-                        @contextmenu="openMenuAtPoint">
-                        <RecycleScroller ref="iconScroller" class=" w-full overflow-y-auto p-4  "
-                            style="height: 96vh; scrollbar-gutter: stable; " :items="virtualRows"
-                            :grid-items="gridItems" :item-size="120" :item-secondary-size="150" key-field="__key"
-                            v-slot="{ item: r, index }">
-                            <button type="button"
-                                class="w-full h-full rounded-md border border-default bg-default p-3 text-left hover:opacity-90 active:opacity-80"
-                                :class="selectedIds.has(rowId(r)) ? 'ring-2 ring-default' : ''"
-                                @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
-                                @contextmenu.prevent.stop="openMenu($event, r, index)">
-                                <div class="flex flex-col items-center gap-2 h-full">
-                                    <span class="shrink-0 opacity-80 flex justify-center">
-                                        <svg v-if="iconForRow(r) === 'folder'" class="w-8 h-8" viewBox="0 0 24 24"
-                                            fill="none" xmlns="http://www.w3.org/2000/svg" stroke-width="1.8"
-                                            stroke="currentColor">
-                                            <path
-                                                d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-11Z" />
-                                        </svg>
-                                        <svg v-else class="w-8 h-8" viewBox="0 0 24 24" fill="none"
-                                            xmlns="http://www.w3.org/2000/svg" stroke-width="1.8" stroke="currentColor">
-                                            <path
-                                                d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
-                                            <path d="M8 7h8" />
-                                            <path d="M8 11h8" />
-                                            <path d="M8 15h5" />
-                                        </svg>
-                                    </span>
+                            <!-- ICON VIEW -->
+                            <div v-else class="rounded-md border border-default overflow-y-scroll"
+                                @contextmenu="openMenuAtPoint">
+                                <RecycleScroller ref="iconScroller" class="w-full overflow-y-auto p-4"
+                                    style="height: 80vh; scrollbar-gutter: stable;" :items="virtualRows"
+                                    :grid-items="gridItems" :item-size="120" :item-secondary-size="150"
+                                    key-field="__key" v-slot="{ item: r, index }">
+                                    <button type="button"
+                                        class="w-full h-full rounded-md border border-default bg-default p-3 text-left hover:opacity-90 active:opacity-80"
+                                        :class="selectedIds.has(rowId(r)) ? 'ring-2 ring-default' : ''"
+                                        @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
+                                        @contextmenu.prevent.stop="openMenu($event, r, index)">
+                                        <div class="flex flex-col items-center gap-2 h-full">
+                                            <span class="shrink-0 opacity-80 flex justify-center">
+                                                <svg v-if="iconForRow(r) === 'folder'" class="w-8 h-8"
+                                                    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+                                                    stroke-width="1.8" stroke="currentColor">
+                                                    <path
+                                                        d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-11Z" />
+                                                </svg>
 
-                                    <div class="w-full text-center min-w-0">
-                                        <!-- Filename: clamp to 2 lines, adds "..." -->
-                                        <div class="min-w-0 w-full text-default text-sm leading-snug line-clamp-2"
-                                            style="display: block;
-    max-width: 98%;
-    white-space: nowrap;
-    overflow: hidden !important;
-    text-overflow: ellipsis" :title="r.type === 'folder' ? (r.name + '/') : r.name">
+                                                <svg v-else class="w-8 h-8" viewBox="0 0 24 24" fill="none"
+                                                    xmlns="http://www.w3.org/2000/svg" stroke-width="1.8"
+                                                    stroke="currentColor">
+                                                    <path
+                                                        d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+                                                    <path d="M8 7h8" />
+                                                    <path d="M8 11h8" />
+                                                    <path d="M8 15h5" />
+                                                </svg>
+                                            </span>
 
-                                            {{ r.type === "folder" ? (r.name + "/") : r.name }}
+                                            <div class="w-full text-center min-w-0">
+                                                <div class="min-w-0 w-full text-default text-sm leading-snug line-clamp-2"
+                                                    style="display:block; max-width:98%; white-space:nowrap; overflow:hidden !important; text-overflow:ellipsis;"
+                                                    :title="r.type === 'folder' ? (r.name + '/') : r.name">
+                                                    {{ r.type === "folder" ? (r.name + "/") : r.name }}
+                                                </div>
+
+                                                <div v-if="r.type === 'file'" class="text-xs text-default mt-1 truncate"
+                                                    :title="`${r.fileType || '—'} · ${formatBytes(r.size)}`">
+                                                    {{ r.fileType || "—" }} · {{ formatBytes(r.size) }}
+                                                </div>
+                                            </div>
+
+                                            <div v-if="isDeletingRow(r)"
+                                                class="text-xs mt-1 rounded-full border border-default px-2 py-0.5 opacity-80">
+                                                Deleting…
+                                            </div>
                                         </div>
+                                    </button>
+                                </RecycleScroller>
+                            </div>
 
-                                        <!-- Meta: always visible -->
-                                        <div v-if="r.type === 'file'" class="text-xs text-default mt-1 truncate"
-                                            :title="`${r.fileType || '—'} · ${formatBytes(r.size)}`">
-                                            {{ r.fileType || "—" }} · {{ formatBytes(r.size) }}
-                                        </div>
-
-                                    </div>
-                                    <div v-if="isDeletingRow(r)"
-                                        class="text-xs mt-1 rounded-full border border-default px-2 py-0.5 opacity-80">
-                                        Deleting…
-                                    </div>
-
+                            <div class="mt-3 flex items-center justify-between">
+                                <div class="text-xs text-default">
+                                    Loaded: <span class="text-default">{{ virtualRows.length }}</span>
                                 </div>
-                            </button>
-                        </RecycleScroller>
 
-                    </div>
+                                <button type="button"
+                                    class="inline-flex items-center justify-center rounded-md border border-default bg-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
+                                    :disabled="busy" @click="toggleView()">
+                                    {{ viewMode === "table" ? "Icon view" : "Table view" }}
+                                </button>
 
-
-                    <div class="mt-3 flex items-center justify-between">
-                        <div class="text-xs text-default">
-                            Loaded: <span class="text-default">{{ virtualRows.length }}</span>
+                                <div class="text-xs text-default">
+                                    <span v-if="prefetching">Loading items…</span>
+                                    <span v-else>All items loaded</span>
+                                </div>
+                            </div>
                         </div>
 
-                        <button type="button"
-                            class="inline-flex items-center justify-center rounded-md border border-default bg-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
-                            :disabled="busy" @click="toggleView()">
-                            {{ viewMode === "table" ? "Icon view" : "Table view" }}
-                        </button>
-
-                        <div class="text-xs text-default">
-                            <span v-if="prefetching">Loading items…</span>
-                            <span v-else>All items loaded</span>
-                        </div>
+                        <!-- right: details -->
+                        <ObjectDetailsPanel v-if="detailsOpen" class="shrink-0" :connectionId="connectionId"
+                            :bucket="bucket" :row="activeRow" @close="detailsOpen = false" />
                     </div>
                 </div>
             </div>
         </div>
     </div>
+
     <ObjectContextMenu :open="menuOpen" :pos="menuPos" :canPaste="canPasteHere" @close="menuOpen = false"
         @action="onMenuAction" />
+
     <ConfirmDeleteModal :open="deleteOpen" :kind="pendingDeleteKind" :name="pendingDeleteName" :busy="deleteBusy"
         :progressText="deleteBusy ? 'Deleting…' : ''" @cancel="cancelDelete" @confirm="confirmDeleteNow" />
 
-
-
-
+    <TagsModal :open="tagsOpen" :busy="tags.tagsBusy.value" :title="tagsTitle" :tags="tagsInitial"
+        @close="tagsOpen = false" @save="onSaveTags" />
 </template>
+
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
     listObjects, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus
-    , copyPrefix, movePrefix, copyObject,
-    statObject
+    , copyPrefix, movePrefix, copyObject, getObjectTags, putObjectTags, statObject, changeStorageClass, cancelDownloadJob
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
@@ -400,12 +334,15 @@ import {
     formatBytes, formatDate, normalizePrefix, guessFileTypeFromKey, fileExt,
     isSystemFile, isTextFile, isApplicationFile, nameFromKey, nameFromPrefix,
 } from "../lib/helpers";
-import { DeleteKind, FileRow, FolderRow, Row, ViewMode } from "../types";
+import { DeleteKind, FileRow, FolderRow, Row, UiTask, ViewMode } from "../types";
 import { useDownloads } from "../operations/useDownloads";
 import { useUploads } from "../operations/useUploads";
 import { useTransfers } from "../operations/useTransfers";
 import { useRename } from "../operations/useRename";
 import { useDeletes } from "../operations/useDeletes";
+import TagsModal, { type TagKV } from "../components/TagsModal.vue";
+import { useTags } from "../operations/tags";
+import ObjectDetailsPanel from "../components/ObjectDetailsPanel.vue";
 
 
 const iconScroller = ref<any>(null);
@@ -480,6 +417,7 @@ const menuRow = ref<Row | null>(null);
 const selectedIds = ref<Set<string>>(new Set());
 const anchorIndex = ref<number | null>(null);
 const clip = useClipboardStore();
+const detailsOpen = ref(true);
 
 const canPasteHere = computed(() =>
     clip.canPaste(connectionId.value)
@@ -499,7 +437,9 @@ const downloads = useDownloads({
     downloadObject,
     downloadPrefixTarGz,
     getDownloadJobStatus,
+    cancelDownloadJob,
     setError: (m) => (error.value = m),
+
 });
 
 const downloadJobs = downloads.downloadJobs;
@@ -519,43 +459,35 @@ const uploads = useUploads({
 
 const uploadBusy = uploads.uploadBusy;
 const uploadItems = uploads.uploadItems;
-const uploadProgress = uploads.uploadProgress;
-const uploadPct = uploads.uploadPct;
 const overallPct = uploads.overallPct;
-const uploadCancel = uploads.uploadCancel;
-const uploadCancelAll = uploads.uploadCancelAll;
 
 const transfers = useTransfers({
-  connectionId,
-  bucket,
-  prefix,
-  clip,
-  copyObject,
-  copyPrefix,
-  movePrefix,
-  renameObjectStreamed,
-  setError: (m) => (error.value = m),
-  setBusy: (b) => (busy.value = b),
+    connectionId,
+    bucket,
+    prefix,
+    clip,
+    copyObject,
+    copyPrefix,
+    movePrefix,
+    renameObjectStreamed,
+    setError: (m) => (error.value = m),
+    setBusy: (b) => (busy.value = b),
 
-  onCreated: (it) => {
-    if (it.type === "file") upsertFileRowByKey(it.key);
-    else upsertFolderRowByPrefix(it.prefix);
-  },
-  onDeleted: (it) => {
-    if (it.type === "file") removeFileRowByKey(it.key);
-    else removeFolderRowByPrefix(it.prefix);
-  },
+    onCreated: (it) => {
+        if (it.type === "file") upsertFileRowByKey(it.key);
+        else upsertFolderRowByPrefix(it.prefix);
+    },
+    onDeleted: (it) => {
+        if (it.type === "file") removeFileRowByKey(it.key);
+        else removeFolderRowByPrefix(it.prefix);
+    },
 });
 
 
 const transferJobs = transfers.transferJobs;
 const transferBusy = transfers.transferBusy;
 
-const pasteItems = transfers.pasteItems;
 const pasteBusy = transfers.pasteBusy;
-const pasteTotal = transfers.pasteTotal;
-const pasteDone = transfers.pasteDone;
-const pastePct = transfers.pastePct;
 
 const renamer = useRename({
     connectionId,
@@ -572,22 +504,35 @@ const renamePct = renamer.renamePct;
 const renameCancel = renamer.renameCancel;
 
 const deletes = useDeletes({
-  connectionId,
-  bucket,
-  delStore,
-  deletePrefixStreamed,
-  deleteObject,
-  refresh,
+    connectionId,
+    bucket,
+    delStore,
+    deletePrefixStreamed,
+    deleteObject,
+    refresh,
 
-  onDeleted: (it) => {
-    if (it.type === "file") removeFileRowByKey(it.key);
-    else removeFolderRowByPrefix(it.prefix);
-  },
+    onDeleted: (it) => {
+        if (it.type === "file") removeFileRowByKey(it.key);
+        else removeFolderRowByPrefix(it.prefix);
+    },
 });
 
 
 const deleteBusy = deletes.deleteBusy;
 const isDeletingRow = deletes.isDeletingRow;
+
+const tags = useTags({
+    connectionId,
+    bucket,
+    getObjectTags,
+    putObjectTags,
+    setError: (m) => (error.value = m),
+});
+
+const tagsOpen = ref(false);
+const tagsKey = ref<string>("");
+const tagsTitle = ref<string>("");
+const tagsInitial = ref<TagKV[]>([]);
 
 
 
@@ -875,11 +820,11 @@ watch(
 );
 
 function openMenuAtPoint(e: MouseEvent) {
-  e.preventDefault();
-  menuRow.value = null;
+    e.preventDefault();
+    menuRow.value = null;
 
-  menuOpen.value = true;
-  menuPos.value = { x: e.clientX, y: e.clientY };
+    menuOpen.value = true;
+    menuPos.value = { x: e.clientX, y: e.clientY };
 }
 
 function openMenu(e: MouseEvent, r: Row, index: number) {
@@ -956,18 +901,112 @@ async function onMenuAction(action: MenuAction) {
         if (!newName) return;
 
         const basePrefix = prefix.value || "";
-        const cleaned = newName.replace(/\//g, "").trim();
-        if (!cleaned) return;
 
-        const dstKey = (basePrefix ? basePrefix : "") + cleaned;
+        // Allow slashes (move into "folders"), but sanitize
+        let cleaned = newName.trim();
+
+        // strip leading slashes so user can't accidentally create "/foo" keys in your UI
+        cleaned = cleaned.replace(/^\/+/, "");
+
+        // collapse multiple slashes
+        cleaned = cleaned.replace(/\/{2,}/g, "/");
+
+        // forbid path traversal
+        if (
+            !cleaned ||
+            cleaned === "." ||
+            cleaned === ".." ||
+            cleaned.startsWith("../") ||
+            cleaned.includes("/../") ||
+            cleaned.endsWith("/..")
+        ) {
+            error.value = "Invalid name.";
+            return;
+        }
+
+        // If user typed a path (contains "/"), treat as absolute-from-bucket.
+        // If they typed just a filename, rename within the current prefix.
+        const dstKey = cleaned.includes("/")
+            ? cleaned
+            : (basePrefix ? basePrefix : "") + cleaned;
+
         await renamer.renameFile(f.key, dstKey);
         return;
     }
+
 
     if (action === "paste") {
         await transfers.pasteHere();
         return;
     }
+
+    if (action === "tags") {
+        const items = effectiveSelection();
+        if (items.length !== 1) {
+            error.value = "Select a single item to edit tags.";
+            return;
+        }
+
+        const it = items[0];
+
+        if (it.type === "folder") {
+            error.value = "Folders (prefixes) cannot be tagged. Only objects can be tagged.";
+            return;
+        }
+
+        // file
+        tagsKey.value = it.key;
+        tagsTitle.value = it.key;
+        await tags.loadObjectTags(it.key);
+        tagsInitial.value = [...tags.currentTags.value];
+        tagsOpen.value = true;
+        return;
+    }
+
+    if (action === "storageClass") {
+        const items = effectiveSelection();
+        const files = items.filter(isFileRow);
+        if (files.length !== 1 || items.length !== 1) {
+            error.value = "Select a single file to change storage class.";
+            return;
+        }
+
+        const f = files[0];
+
+        const next = window.prompt(
+            "Storage class (e.g. STANDARD, STANDARD_IA, ONEZONE_IA, INTELLIGENT_TIERING, GLACIER, DEEP_ARCHIVE):",
+            f.storageClass || "STANDARD"
+        );
+        if (!next) return;
+
+        busy.value = true;
+        try {
+            const res = await changeStorageClass({
+                connectionId: connectionId.value,
+                bucket: bucket.value,
+                key: f.key,
+                storageClass: next.trim(),
+                concurrency: 6,
+                force: true,
+            });
+
+            if (res.isErr()) {
+                error.value = res.error.message;
+                return;
+            }
+
+            // Update the row so the table column changes immediately
+            // (statObject will re-head and patch size/lm/storageClass)
+            await upsertFileRowByKey(f.key);
+        } finally {
+            busy.value = false;
+            menuOpen.value = false;
+        }
+
+        return;
+    }
+
+
 }
 
 
@@ -1015,6 +1054,7 @@ function selectRange(from: number, to: number, replace: boolean) {
 
 function onRowClick(e: MouseEvent, r: Row, index: number) {
     if (isDeletingRow(r)) return;
+    detailsOpen.value = true;
 
     const id = rowId(r);
     const isToggle = e.ctrlKey || e.metaKey;
@@ -1071,8 +1111,6 @@ function isFileRow(r: Row): r is FileRow {
 
 
 function updateRowAfterRename(srcKey: string, dstKey: string) {
-  removeFileRowByKey(srcKey);
-  upsertFileRowByKey(dstKey);
 }
 
 
@@ -1120,100 +1158,174 @@ onBeforeUnmount(() => {
 
 
 function selectionToClipItems(items: Row[]) {
-  return items.map((it) =>
-    it.type === "folder"
-      ? ({ type: "folder", prefix: it.prefix, name: it.name, bucket: bucket.value } as const)
-      : ({ type: "file", key: it.key, name: it.name, bucket: bucket.value } as const)
-  );
+    return items.map((it) =>
+        it.type === "folder"
+            ? ({ type: "folder", prefix: it.prefix, name: it.name, bucket: bucket.value } as const)
+            : ({ type: "file", key: it.key, name: it.name, bucket: bucket.value } as const)
+    );
 }
 
 
 function stripBasePrefix(full: string, base: string) {
-  const b = base || "";
-  return b && full.startsWith(b) ? full.slice(b.length) : full;
+    const b = base || "";
+    return b && full.startsWith(b) ? full.slice(b.length) : full;
 }
 
 // "direct child" means: under current prefix, and the remainder has no extra "/"
 function isDirectChildKey(key: string, basePrefix: string) {
-  const rest = stripBasePrefix(key, basePrefix);
-  if (rest === key && basePrefix) return false; // not under prefix
-  if (!rest) return false;
-  return !rest.includes("/");
+    const rest = stripBasePrefix(key, basePrefix);
+    if (rest === key && basePrefix) return false; // not under prefix
+    if (!rest) return false;
+    return !rest.includes("/");
 }
 
 function isDirectChildFolderPrefix(folderPrefix: string, basePrefix: string) {
-  const rest = stripBasePrefix(folderPrefix, basePrefix);
-  if (rest === folderPrefix && basePrefix) return false;
-  if (!rest) return false;
-  if (!rest.endsWith("/")) return false;
-  const inner = rest.slice(0, -1);
-  return inner.length > 0 && !inner.includes("/");
+    const rest = stripBasePrefix(folderPrefix, basePrefix);
+    if (rest === folderPrefix && basePrefix) return false;
+    if (!rest) return false;
+    if (!rest.endsWith("/")) return false;
+    const inner = rest.slice(0, -1);
+    return inner.length > 0 && !inner.includes("/");
 }
 
 async function upsertFileRowByKey(key: string) {
-  if (!isDirectChildKey(key, prefix.value || "")) return;
+    if (!isDirectChildKey(key, prefix.value || "")) return;
 
-  const i = rows.value.findIndex((r) => r.type === "file" && r.key === key);
+    const i = rows.value.findIndex((r) => r.type === "file" && r.key === key);
 
-  // optimistic row first (instant UI)
-  const base: FileRow = {
-    type: "file",
-    key,
-    name: nameFromKey(key),
-    size: 0,
-    lastModified: null,
-    storageClass: null,
-    fileType: guessFileTypeFromKey(key),
-  };
+    // optimistic row first (instant UI)
+    const base: FileRow = {
+        type: "file",
+        key,
+        name: nameFromKey(key),
+        size: 0,
+        lastModified: null,
+        storageClass: null,
+        fileType: guessFileTypeFromKey(key),
+    };
 
-  if (i >= 0) rows.value[i] = { ...(rows.value[i] as FileRow), ...base };
-  else rows.value.push(base);
+    if (i >= 0) rows.value[i] = { ...(rows.value[i] as FileRow), ...base };
+    else rows.value.push(base);
 
-  rows.value = [...rows.value];
-
-  // fetch real metadata
-  const meta = await statObject({
-    connectionId: connectionId.value,
-    bucket: bucket.value,
-    key,
-  });
-
-  if (meta.isErr()) return;
-
-  const lmIso = meta.value.lastModified; // iso string | null
-
-  const patch: Partial<FileRow> = {
-    size: meta.value.size,
-    lastModified: lmIso ? new Date(lmIso).toString() : null,
-    storageClass: meta.value.storageClass,
-  };
-
-  const j = rows.value.findIndex((r) => r.type === "file" && r.key === key);
-  if (j >= 0) {
-    rows.value[j] = { ...(rows.value[j] as FileRow), ...patch };
     rows.value = [...rows.value];
-  }
+
+    // fetch real metadata
+    const meta = await statObject({
+        connectionId: connectionId.value,
+        bucket: bucket.value,
+        key,
+    });
+
+    if (meta.isErr()) return;
+
+    const lmIso = meta.value.lastModified; // iso string | null
+
+    const patch: Partial<FileRow> = {
+        size: meta.value.size,
+        lastModified: lmIso ?? null,
+        storageClass: meta.value.storageClass,
+    };
+
+    const j = rows.value.findIndex((r) => r.type === "file" && r.key === key);
+    if (j >= 0) {
+        rows.value[j] = { ...(rows.value[j] as FileRow), ...patch };
+        rows.value = [...rows.value];
+    }
 }
 
 
 function upsertFolderRowByPrefix(pfx: string) {
-  if (!isDirectChildFolderPrefix(pfx, prefix.value || "")) return;
+    if (!isDirectChildFolderPrefix(pfx, prefix.value || "")) return;
 
-  const i = rows.value.findIndex((r) => r.type === "folder" && r.prefix === pfx);
-  const next: FolderRow = { type: "folder", prefix: pfx, name: nameFromPrefix(pfx) };
+    const i = rows.value.findIndex((r) => r.type === "folder" && r.prefix === pfx);
+    const next: FolderRow = { type: "folder", prefix: pfx, name: nameFromPrefix(pfx) };
 
-  if (i >= 0) rows.value[i] = next;
-  else rows.value.push(next);
+    if (i >= 0) rows.value[i] = next;
+    else rows.value.push(next);
 }
 
 function removeFileRowByKey(key: string) {
-  const i = rows.value.findIndex((r) => r.type === "file" && r.key === key);
-  if (i >= 0) rows.value.splice(i, 1);
+    const i = rows.value.findIndex((r) => r.type === "file" && r.key === key);
+    if (i >= 0) rows.value.splice(i, 1);
 }
 
 function removeFolderRowByPrefix(pfx: string) {
-  const i = rows.value.findIndex((r) => r.type === "folder" && r.prefix === pfx);
-  if (i >= 0) rows.value.splice(i, 1);
+    const i = rows.value.findIndex((r) => r.type === "folder" && r.prefix === pfx);
+    if (i >= 0) rows.value.splice(i, 1);
 }
+
+
+async function onSaveTags(payload: { tags: TagKV[] }) {
+    const key = tagsKey.value;
+    if (!key) return;
+
+    await tags.applyObjectTags({
+        key,
+        tags: payload.tags,
+    });
+
+    tagsInitial.value = [...tags.currentTags.value];
+    tagsOpen.value = false;
+}
+
+const allTasks = computed(() => {
+    const tasks: UiTask[] = [];
+
+    // downloads
+    for (const j of downloads.downloadJobs.value) {
+        tasks.push({
+            id: j.id,
+            kind: "download",
+            name: j.name,
+            state: j.state,
+            progressText:
+                j.totalBytes && j.bytes != null ? `${formatBytes(j.bytes)} / ${formatBytes(j.totalBytes)}` : undefined,
+            error: j.error || undefined,
+        });
+    }
+
+    // uploads
+    for (const u of uploads.uploadItems.value) {
+        tasks.push({
+            id: u.id,
+            kind: "upload",
+            name: u.file.name,
+            state: u.status as any,
+            progressText: u.status === "uploading" ? `${formatBytes(u.bytes)} / ${formatBytes(u.file.size)}` : undefined,
+            error: u.error || undefined,
+        });
+    }
+
+    // transfers (copy/move) from transfers.transferJobs
+    for (const t of transfers.transferJobs.value) {
+        tasks.push({
+            id: t.id,
+            kind: t.kind === "copy" ? "copy" : "move",
+            name: t.name,
+            state: t.state as any,
+            progressText: undefined,
+            error: t.error || undefined,
+        });
+    }
+
+    // deletes from delete store
+    for (const d of delStore.list) {
+        tasks.push({
+            id: d.id,
+            kind: "delete",
+            name: d.name,
+            state: d.busy ? "running" : (d.error ? "failed" : "done"),
+            progressText: d.progress,
+            error: d.error || undefined,
+        });
+    }
+
+    return tasks;
+});
+
+const activeRow = computed<Row | null>(() => {
+    const sel = selectedRows.value;
+    return sel.length === 1 ? sel[0] : null;
+});
 
 </script>

@@ -304,6 +304,45 @@ export function useTransfers(deps: Deps) {
     }
   }
 
+  function dismiss(id: string) {
+    // transferJobs
+    const tj = transferJobs.value.find((x) => x.id === id);
+    if (tj) {
+      if (tj.state === "running" || tj.state === "canceling") return;
+      transferJobs.value = transferJobs.value.filter((x) => x.id !== id);
+      return;
+    }
+  
+    // pasteItems
+    const p = pasteItems.value.find((x) => x.id === id);
+    if (p) {
+      if (p.step === "queued" || p.step === "copying") return;
+      pasteItems.value = pasteItems.value.filter((x) => x.id !== id);
+    }
+  }
+  
+  function cancelJob(id: string) {
+    const j = transferJobs.value.find((x) => x.id === id);
+    if (!j) return;
+  
+    // only active jobs
+    if (j.state !== "running" && j.state !== "canceling") return;
+  
+    // mark canceling; actual operation may still finish in background
+    j.state = "canceling";
+    j.error = "Canceled";
+    j.finishedAt = Date.now();
+  
+    transferJobs.value = [...transferJobs.value];
+  
+    // also try to cancel the matching paste item (if any)
+    const p = pasteItems.value.find((x) => x.name === j.name && x.step === "copying");
+    if (p) {
+      p.step = "canceled";
+      pasteItems.value = [...pasteItems.value];
+    }
+  }
+  
   return {
     // transfer jobs
     transferJobs,
@@ -318,5 +357,7 @@ export function useTransfers(deps: Deps) {
 
     // actions
     pasteHere,
+    dismiss,
+    cancelJob
   };
 }

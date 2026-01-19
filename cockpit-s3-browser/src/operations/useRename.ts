@@ -1,6 +1,7 @@
 // src/operations/useRename.ts
 import { computed, ref } from "vue";
 import type { renameObjectStreamed as renameObjectStreamedFn } from "../lib/s3Objects";
+import { useTaskCenterStore } from "../stores/taskCenter";
 
 type RenameProgress = { done: number; total: number; bytes: number; size: number };
 
@@ -10,17 +11,21 @@ type Deps = {
 
   renameObjectStreamed: typeof renameObjectStreamedFn;
 
-  // UI integration hooks
   setError?: (msg: string) => void;
   setBusy?: (busy: boolean) => void;
 
-  // Called on success so the page can update its rows (or call refresh)
   onRenamed?: (srcKey: string, dstKey: string) => void;
 };
 
 export function useRename(deps: Deps) {
+  const taskCenter = useTaskCenterStore();
+
   const renameProgress = ref<RenameProgress | null>(null);
   const renameCancel = ref<null | (() => void)>(null);
+
+  // Keep track of the current task id so cancel/dismiss can target it
+  const currentTaskId = ref<string | null>(null);
+  const currentTaskName = ref<string>("");
 
   const renameStatusText = computed(() => {
     const p = renameProgress.value;
@@ -39,8 +44,65 @@ export function useRename(deps: Deps) {
     return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
   });
 
+  function upsertTask(
+    state: "running" | "canceling" | "done" | "failed" | "canceled",
+    error?: string,
+  ) {
+    const id = currentTaskId.value;
+    if (!id) return;
+  
+    const p = renameProgress.value;
+  
+    const cur =
+      p && typeof p.bytes === "number" ? p.bytes : null;
+  
+    const tot =
+      p && typeof p.size === "number" && p.size > 0 ? p.size : null;
+  
+    taskCenter.upsert({
+      id,
+      kind: "rename",
+      name: currentTaskName.value || "Rename",
+      state,
+  
+      progressText: renameStatusText.value || undefined,
+      progressCurrent: cur,
+      progressTotal: tot,
+      progressPct: typeof renamePct.value === "number" ? renamePct.value : null,
+  
+      error,
+      actions: {
+        cancel: () => cancelRename(),
+        dismiss: () => dismiss(),
+      },
+    });
+  }
+  
+
   function cancelRename() {
-    renameCancel.value?.();
+    const id = currentTaskId.value;
+    if (!id) return;
+
+    // optimistic UI state
+    upsertTask("canceling");
+
+    try {
+      renameCancel.value?.();
+    } catch {
+      // ignore
+    }
+  }
+
+  function dismiss() {
+    const id = currentTaskId.value;
+    if (!id) return;
+
+    taskCenter.remove(id);
+
+    currentTaskId.value = null;
+    currentTaskName.value = "";
+    renameProgress.value = null;
+    renameCancel.value = null;
   }
 
   async function renameFile(srcKey: string, dstKey: string, concurrency = 6) {
@@ -50,6 +112,27 @@ export function useRename(deps: Deps) {
 
     deps.setError?.("");
     deps.setBusy?.(true);
+
+    // Create/replace the global TaskCenter entry for this rename
+    const id = `rename:${Date.now()}:${Math.random().toString(16).slice(2)}`;
+    currentTaskId.value = id;
+    currentTaskName.value = `${srcKey} → ${dstKey}`;
+
+    taskCenter.upsert({
+      id,
+      kind: "rename",
+      name: currentTaskName.value,
+      state: "running",
+      progressText: "Renaming…",
+      progressCurrent: 0,
+      progressTotal: null,
+      progressPct: null,
+      actions: {
+        cancel: () => cancelRename(),
+        dismiss: () => dismiss(),
+      },
+    });
+    
 
     const job = deps.renameObjectStreamed({
       connectionId: deps.connectionId.value,
@@ -65,6 +148,7 @@ export function useRename(deps: Deps) {
             bytes: 0,
             size: Number(ev.size ?? 0),
           };
+          upsertTask("running");
         } else if (ev.type === "progress") {
           if (!renameProgress.value) {
             renameProgress.value = { done: 0, total: 0, bytes: 0, size: 0 };
@@ -73,25 +157,46 @@ export function useRename(deps: Deps) {
           renameProgress.value.total = Number(ev.totalParts ?? renameProgress.value.total);
           renameProgress.value.bytes = Number(ev.bytesCopied ?? renameProgress.value.bytes);
           renameProgress.value.size = Number(ev.size ?? renameProgress.value.size);
+
+          upsertTask("running");
         } else if (ev.type === "result") {
-          // Clear progress UI on finish (success or failure)
+          // Clear inline progress UI (page-level)
           renameProgress.value = null;
           renameCancel.value = null;
 
-          if (!ev.ok) deps.setError?.(ev.error || "Rename canceled/failed");
+          if (ev.ok) {
+            upsertTask("done");
+          } else {
+            const msg = ev.error || "Rename canceled/failed";
+            // Best-effort: classify cancel vs fail
+            const canceled = msg.toLowerCase().includes("cancel");
+            upsertTask(canceled ? "canceled" : "failed", msg);
+            deps.setError?.(msg);
+          }
         }
       },
     });
 
-    renameCancel.value = job.cancel;
+    renameCancel.value = () => {
+      try {
+        job.cancel();
+      } catch {
+        // ignore
+      }
+    };
 
     try {
       const res = await job.run;
       if (res.isErr()) {
-        deps.setError?.(res.error.message);
+        const msg = res.error.message || "Rename failed";
+        const canceled = msg.toLowerCase().includes("cancel");
+        upsertTask(canceled ? "canceled" : "failed", msg);
+        deps.setError?.(msg);
         return;
       }
 
+      // success
+      upsertTask("done");
       deps.onRenamed?.(srcKey, dstKey);
     } finally {
       deps.setBusy?.(false);
@@ -106,5 +211,6 @@ export function useRename(deps: Deps) {
 
     renameFile,
     cancelRename,
+    dismiss,
   };
 }

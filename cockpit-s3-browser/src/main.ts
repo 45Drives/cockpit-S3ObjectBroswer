@@ -1,10 +1,28 @@
-import { createApp} from 'vue';
-import App from './App.vue';
-import '@45drives/houston-common-css/src/index.css';
- import "@45drives/houston-common-ui/style.css";
-//import '../../houston-common/houston-common-ui/dist/style.css';
+import { createApp } from "vue";
+import App from "./App.vue";
 import { router } from "./router";
-import { createPinia } from 'pinia';
+import { createPinia } from "pinia";
+import VueProgressBar from "@aacassandra/vue3-progressbar";
 
+const app = createApp(App);
 
-createApp(App).use(createPinia()).use(router).mount("#app");
+const pinia = createPinia();
+
+app.use(pinia);
+app.use(router);
+
+app.use(VueProgressBar, {
+  color: "currentColor",
+  failedColor: "currentColor",
+  thickness: "3px",
+  transition: {
+    speed: "0.2s",
+    opacity: "0.6s",
+    termination: 300,
+  },
+  autoRevert: true,
+  location: "top",
+  inverse: false,
+});
+
+app.mount("#app");

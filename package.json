@@ -12,6 +12,7 @@
   },
   "packageManager": "yarn@4.12.0",
   "dependencies": {
+    "@aacassandra/vue3-progressbar": "^1.0.3",
     "@headlessui/vue": "^1.7.23",
     "@heroicons/vue": "^2.2.0",
     "pinia": "^3.0.4",

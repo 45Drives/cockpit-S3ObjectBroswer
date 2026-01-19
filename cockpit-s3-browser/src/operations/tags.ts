@@ -1,0 +1,185 @@
+// src/composables/useTags.ts
+import { computed, ref } from "vue";
+import type { Row, FileRow, FolderRow } from "../types";
+import type {
+  getObjectTags as getObjectTagsFn,
+  putObjectTags as putObjectTagsFn,
+} from "../lib/s3Objects";
+
+type TagKV = { key: string; value: string };
+type TagMap = Record<string, string>;
+
+type Deps = {
+  connectionId: { value: string };
+  bucket: { value: string };
+
+  getObjectTags: typeof getObjectTagsFn;
+  putObjectTags: typeof putObjectTagsFn;
+
+  setError?: (msg: string) => void;
+};
+
+export function useTags(deps: Deps) {
+  const tagsBusy = ref(false);
+
+  // Optional: keep last loaded tags to populate a dialog
+  const currentTags = ref<TagKV[]>([]);
+
+  const hasConn = computed(
+    () => !!deps.connectionId.value && !!deps.bucket.value
+  );
+
+  function isFileRow(r: Row): r is FileRow {
+    return r.type === "file";
+  }
+
+  function isFolderRow(r: Row): r is FolderRow {
+    return r.type === "folder";
+  }
+
+  function toTagMap(tags: TagKV[]): TagMap {
+    const out: TagMap = {};
+    for (const t of tags) {
+      const k = (t.key || "").trim();
+      if (!k) continue;
+      out[k] = String(t.value ?? "");
+    }
+    return out;
+  }
+
+  function fromTagMap(m: TagMap): TagKV[] {
+    return Object.entries(m).map(([key, value]) => ({ key, value }));
+  }
+
+  async function loadObjectTags(key: string) {
+    if (!hasConn.value) return;
+    tagsBusy.value = true;
+    try {
+      const res = await deps.getObjectTags({
+        connectionId: deps.connectionId.value,
+        bucket: deps.bucket.value,
+        key,
+      });
+      if (res.isErr()) {
+        const msg = res.error.message;
+        deps.setError?.(msg);
+        return;
+      }
+      currentTags.value = Array.isArray(res.value.tags) ? res.value.tags : [];
+    } finally {
+      tagsBusy.value = false;
+    }
+  }
+
+  async function applyObjectTags(opts: {
+    key: string;
+    tags: TagMap | TagKV[];
+  }) {
+    if (!hasConn.value) return;
+    const tagMap: TagMap = Array.isArray(opts.tags)
+      ? toTagMap(opts.tags)
+      : opts.tags;
+
+    tagsBusy.value = true;
+    try {
+      const res = await deps.putObjectTags({
+        connectionId: deps.connectionId.value,
+        bucket: deps.bucket.value,
+        key: opts.key,
+        tags: tagMap,
+      });
+
+      if (res.isErr()) {
+        const msg = res.error.message;
+        deps.setError?.(msg);
+        return;
+      }
+
+      if (opts.key && Array.isArray(res.value.tags)) {
+        currentTags.value = res.value.tags;
+      }
+    } finally {
+      tagsBusy.value = false;
+    }
+  }
+
+
+
+  // - Files: apply to each file key.
+  // - Folders: optional behavior. Most UIs either:
+  //   (A) disallow tagging folders (since S3 folders aren't real objects), OR
+  //   (B) tag the "folder marker" object if it exists (key ends with "/").
+  // This implementation chooses (B) ONLY if FolderRow has a markerKey, otherwise it skips.
+  async function applyTagsToSelection(opts: {
+    items: Row[];
+    tags: TagMap | TagKV[];
+    includeFolders?: boolean; // default false
+    folderMarkerKey?: (d: FolderRow) => string | null; // optional helper if your FolderRow doesn't store it
+  }) {
+    if (!hasConn.value) return;
+    const tagMap: TagMap = Array.isArray(opts.tags)
+      ? toTagMap(opts.tags)
+      : opts.tags;
+
+    const files = opts.items.filter(isFileRow);
+    const folders = opts.items.filter(isFolderRow);
+
+    tagsBusy.value = true;
+    try {
+      for (const f of files) {
+        const res = await deps.putObjectTags({
+          connectionId: deps.connectionId.value,
+          bucket: deps.bucket.value,
+          key: f.key,
+          tags: tagMap,
+        });
+
+        if (res.isErr()) {
+          const msg = res.error.message;
+          deps.setError?.(msg);
+          // continue with others (best-effort)
+        }
+
+        await new Promise((r) => window.setTimeout(r, 100));
+      }
+
+      if (opts.includeFolders) {
+        for (const d of folders) {
+          const marker =
+            opts.folderMarkerKey?.(d) ??
+            // best guess: prefix itself (often ends with "/")
+            (typeof d.prefix === "string" && d.prefix ? d.prefix : null);
+
+          if (!marker) continue;
+
+          const res = await deps.putObjectTags({
+            connectionId: deps.connectionId.value,
+            bucket: deps.bucket.value,
+            key: marker,
+            tags: tagMap,
+          });
+
+          if (res.isErr()) {
+            const msg = res.error.message;
+            deps.setError?.(msg);
+          }
+
+          await new Promise((r) => window.setTimeout(r, 100));
+        }
+      }
+    } finally {
+      tagsBusy.value = false;
+    }
+  }
+
+  return {
+    tagsBusy,
+    currentTags,
+
+    loadObjectTags,
+    applyObjectTags,
+    applyTagsToSelection,
+    toTagMap,
+    fromTagMap,
+  };
+}

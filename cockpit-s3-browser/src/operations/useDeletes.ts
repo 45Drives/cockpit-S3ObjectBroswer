@@ -2,10 +2,12 @@
 import { computed } from "vue";
 import type { Row } from "../types";
 import type { useDeleteTasksStore } from "../stores/deleteTasks";
+import { useTaskCenterStore } from "../stores/taskCenter";
 import type {
   deleteObject as deleteObjectFn,
   deletePrefixStreamed as deletePrefixStreamedFn,
 } from "../lib/s3Objects";
+import { uid } from "../lib/helpers";
 
 type Deps = {
   connectionId: { value: string };
@@ -16,10 +18,14 @@ type Deps = {
   deleteObject: typeof deleteObjectFn;
 
   refresh?: () => Promise<void> | void;
-  onDeleted?: (item: { type: "file"; key: string } | { type: "folder"; prefix: string }) => void;
+  onDeleted?: (
+    item: { type: "file"; key: string } | { type: "folder"; prefix: string },
+  ) => void;
 };
 
 export function useDeletes(deps: Deps) {
+    const taskCenter = useTaskCenterStore();
+
   const deleteBusy = computed(() => deps.delStore.list.some((t) => t.busy));
 
   function isDeletingRow(r: Row): boolean {
@@ -40,13 +46,56 @@ export function useDeletes(deps: Deps) {
     return false;
   }
 
+  function upsertDeleteTask(opts: {
+    id: string;
+    name: string;
+    state: "running" | "done" | "failed" | "canceled";
+    progressText?: string;
+    error?: string;
+    cancel?: () => void;
+    dismiss?: () => void;
+  }) {
+    taskCenter.upsert({
+      id: opts.id,
+      kind: "delete",
+      name: opts.name,
+      state: opts.state,
+      progressText: opts.progressText,
+      error: opts.error,
+      actions: {
+        cancel: opts.cancel,
+        dismiss: opts.dismiss,
+      },
+    });
+  }
+
   function deleteNow(items: Row[]) {
     if (!deps.connectionId.value || !deps.bucket.value) return;
     if (!items.length) return;
-  
+
     for (const it of items) {
       if (isDeletingRow(it)) continue;
-  
+
+      // Create a stable TaskCenter id (not the delStore id) so TaskCenter can own dismiss/remove.
+      const tcId = uid();
+      const displayName = it.type === "folder" ? `${it.name}/` : it.name;
+
+      // Upsert into TaskCenter immediately
+      upsertDeleteTask({
+        id: tcId,
+        name: displayName,
+        state: "running",
+        progressText: "Deleting…",
+        cancel: () => {
+          // You already have delStore.cancel(taskId), but taskId is unknown here until createTask returns.
+          // We'll bind the real cancel once we have task below.
+        },
+        dismiss: () => {
+          // dismiss should only remove from TaskCenter; the delete store has its own lifecycle.
+          taskCenter.remove(tcId);
+        },
+      });
+
       if (it.type === "folder") {
         const task = deps.delStore.createTask({
           connectionId: deps.connectionId.value,
@@ -55,16 +104,53 @@ export function useDeletes(deps: Deps) {
           name: it.name,
           prefix: it.prefix,
         });
-  
+
+        // Now we can wire cancel properly (needs task.id from delete store)
+        upsertDeleteTask({
+          id: tcId,
+          name: displayName,
+          state: "running",
+          progressText: "Deleting…",
+          cancel: () => deps.delStore.cancel(task.id),
+          dismiss: () => taskCenter.remove(tcId),
+        });
+
         void (async () => {
-          const res = await deps.delStore.run(task, {
-            deletePrefixStreamed: deps.deletePrefixStreamed,
-            deleteObject: deps.deleteObject,
-          });
-  
-          // If your run() returns boolean success, use that. Otherwise treat "no throw" as success.
-          if ((res as any) !== false) {
-            deps.onDeleted?.({ type: "folder", prefix: it.prefix });
+          try {
+            const res = await deps.delStore.run(task, {
+              deletePrefixStreamed: deps.deletePrefixStreamed,
+              deleteObject: deps.deleteObject,
+            });
+
+            const ok = (res as any) !== false && !task.error;
+            if (ok) {
+              upsertDeleteTask({
+                id: tcId,
+                name: displayName,
+                state: "done",
+                progressText: "Done",
+                dismiss: () => taskCenter.remove(tcId),
+              });
+              deps.onDeleted?.({ type: "folder", prefix: it.prefix });
+            } else {
+              upsertDeleteTask({
+                id: tcId,
+                name: displayName,
+                state: "failed",
+                progressText: "Failed",
+                error: task.error || "Delete failed",
+                dismiss: () => taskCenter.remove(tcId),
+              });
+            }
+          } catch (e: any) {
+            upsertDeleteTask({
+              id: tcId,
+              name: displayName,
+              state: "failed",
+              progressText: "Failed",
+              error: e?.message || "Delete failed",
+              dismiss: () => taskCenter.remove(tcId),
+            });
           }
         })();
       } else {
@@ -75,23 +161,57 @@ export function useDeletes(deps: Deps) {
           name: it.name,
           key: it.key,
         });
-  
+
+        upsertDeleteTask({
+          id: tcId,
+          name: displayName,
+          state: "running",
+          progressText: "Deleting…",
+          cancel: () => deps.delStore.cancel(task.id),
+          dismiss: () => taskCenter.remove(tcId),
+        });
+
         void (async () => {
-          const res = await deps.delStore.run(task, {
-            deletePrefixStreamed: deps.deletePrefixStreamed,
-            deleteObject: deps.deleteObject,
-          });
-  
-          if ((res as any) !== false) {
-            deps.onDeleted?.({ type: "file", key: it.key });
+          try {
+            const res = await deps.delStore.run(task, {
+              deletePrefixStreamed: deps.deletePrefixStreamed,
+              deleteObject: deps.deleteObject,
+            });
+
+            const ok = (res as any) !== false && !task.error;
+            if (ok) {
+              upsertDeleteTask({
+                id: tcId,
+                name: displayName,
+                state: "done",
+                progressText: "Done",
+                dismiss: () => taskCenter.remove(tcId),
+              });
+              deps.onDeleted?.({ type: "file", key: it.key });
+            } else {
+              upsertDeleteTask({
+                id: tcId,
+                name: displayName,
+                state: "failed",
+                progressText: "Failed",
+                error: task.error || "Delete failed",
+                dismiss: () => taskCenter.remove(tcId),
+              });
+            }
+          } catch (e: any) {
+            upsertDeleteTask({
+              id: tcId,
+              name: displayName,
+              state: "failed",
+              progressText: "Failed",
+              error: e?.message || "Delete failed",
+              dismiss: () => taskCenter.remove(tcId),
+            });
           }
         })();
       }
     }
-  
-    // No refresh needed anymore
   }
-  
 
   return {
     deleteBusy,

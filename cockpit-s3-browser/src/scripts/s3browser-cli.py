@@ -876,6 +876,18 @@ def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
   head = client.head_object(Bucket=bucket, Key=key)
   lm = head.get("LastModified")
 
+  # user-defined metadata: x-amz-meta-*
+  user_meta = head.get("Metadata") or {}
+  if not isinstance(user_meta, dict):
+    user_meta = {}
+
+  # x-amz-tagging-count (boto3 exposes it as TagCount)
+  tag_count = head.get("TagCount")
+  try:
+    tag_count_int = int(tag_count) if tag_count is not None else None
+  except Exception:
+    tag_count_int = None
+
   sys.stdout.write(json.dumps({
     "ok": True,
     "key": key,
@@ -883,6 +895,13 @@ def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
     "lastModified": (lm.isoformat() if lm else None),
     "etag": str(head.get("ETag") or "").strip('"') or None,
     "storageClass": head.get("StorageClass"),
+
+    # useful “system” metadata
+    "contentType": head.get("ContentType") or None,
+    "taggingCount": tag_count_int,
+
+    # user metadata
+    "metadata": {str(k): str(v) for (k, v) in user_meta.items()},
   }) + "\n")
 
 
@@ -1017,6 +1036,40 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
     emit({"type": "result", "ok": False, "bucket": bucket, "key": key, "size": total_size, "error": str(e)})
     raise
 
+def cmd_cancel_download_job(job_id: str) -> None:
+  job_id = (job_id or "").strip()
+  if not job_id:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Missing jobId"}) + "\n")
+    return
+
+  path = os.path.join(JOB_DIR, f"{job_id}.json")
+  if not os.path.exists(path):
+    sys.stdout.write(json.dumps({"ok": False, "error": "Job not found"}) + "\n")
+    return
+
+  try:
+    with open(path, "r", encoding="utf-8") as f:
+      data = json.load(f) if f else {}
+  except Exception as e:
+    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    return
+
+  pid = int((data or {}).get("pid") or 0)
+  if pid <= 0:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Missing pid for job" }) + "\n")
+    return
+
+  try:
+    os.kill(pid, signal.SIGINT)  # your install_cancel_handler turns this into KeyboardInterrupt
+  except ProcessLookupError:
+    sys.stdout.write(json.dumps({"ok": True, "alreadyExited": True}) + "\n")
+    return
+  except Exception as e:
+    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    return
+
+  sys.stdout.write(json.dumps({"ok": True}) + "\n")
+
 def install_cancel_handler(abort_fn):
   global _current_abort
   _current_abort = abort_fn
@@ -1084,12 +1137,14 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
     "type": "start",
     "ok": True,
     "kind": "prefix-targz",
+    "pid": os.getpid(),
     "bucket": bucket,
     "prefix": p,
     "files": len(keys),
     "totalBytes": total_bytes,
     "state": "running",
   })
+
 
   out = sys.stdout.buffer  # tar.gz stream destination
 
@@ -1166,6 +1221,7 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
           "type": "progress",
           "ok": True,
           "kind": "prefix-targz",
+          "pid": os.getpid(),
           "bucket": bucket,
           "prefix": p,
           "fileIndex": file_index,
@@ -1189,6 +1245,7 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
       "type": "result",
       "ok": True,
       "kind": "prefix-targz",
+      "pid": os.getpid(),
       "bucket": bucket,
       "prefix": p,
       "files": len(keys),
@@ -1204,6 +1261,7 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
       "type": "result",
       "ok": False,
       "kind": "prefix-targz",
+      "pid": os.getpid(),
       "bucket": bucket,
       "prefix": p,
       "bytes": sent_bytes,
@@ -1220,6 +1278,7 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
       "type": "result",
       "ok": False,
       "kind": "prefix-targz",
+      "pid": os.getpid(),
       "bucket": bucket,
       "prefix": p,
       "bytes": sent_bytes,
@@ -1280,6 +1339,7 @@ def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) ->
     "type": "start",
     "ok": True,
     "kind": "object",
+    "pid": os.getpid(),
     "bucket": bucket,
     "key": key,
     "size": size,
@@ -1287,6 +1347,7 @@ def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) ->
     "chunkSize": chunk_size,
     "state": "running",
   })
+
 
   out = sys.stdout.buffer
   sent = 0
@@ -1320,6 +1381,8 @@ def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) ->
           "type": "progress",
           "ok": True,
           "kind": "object",
+          "pid": os.getpid(),
+
           "bucket": bucket,
           "key": key,
           "bytes": sent,
@@ -1346,6 +1409,7 @@ def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) ->
       "type": "result",
       "ok": True,
       "kind": "object",
+      "pid": os.getpid(),
       "bucket": bucket,
       "key": key,
       "bytes": sent,
@@ -1361,6 +1425,7 @@ def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) ->
         "type": "result",
         "ok": False,
         "kind": "object",
+        "pid": os.getpid(),
         "bucket": bucket,
         "key": key,
         "bytes": sent,
@@ -1379,6 +1444,7 @@ def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) ->
       "type": "result",
       "ok": False,
       "kind": "object",
+      "pid": os.getpid(),
       "bucket": bucket,
       "key": key,
       "bytes": sent,
@@ -1395,6 +1461,7 @@ def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) ->
       "type": "result",
       "ok": False,
       "kind": "object",
+      "pid": os.getpid(),
       "bucket": bucket,
       "key": key,
       "bytes": sent,
@@ -1427,6 +1494,673 @@ def cmd_download_job_status(job_id: str) -> None:
     sys.stdout.write(json.dumps(out) + "\n")
   except Exception as e:
     sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+
+def _parse_tag_kv(s: str) -> Dict[str, str]:
+  s = (s or "").strip()
+  if not s:
+    raise ValueError("Empty tag")
+  if "=" not in s:
+    raise ValueError(f"Invalid tag '{s}' (expected key=value)")
+  k, v = s.split("=", 1)
+  k = k.strip()
+  v = v.strip()
+  if not k:
+    raise ValueError(f"Invalid tag '{s}' (empty key)")
+  return {k: v}
+
+def _get_repeat_flags(argv: List[str], name: str) -> List[str]:
+  out: List[str] = []
+  i = 0
+  while i < len(argv):
+    if argv[i] == name and i + 1 < len(argv):
+      out.append(argv[i + 1])
+      i += 2
+      continue
+    i += 1
+  return out
+
+def cmd_put_object_tags(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  # Collect tags from repeated --tag key=value
+  tag_args = _get_repeat_flags(argv, "--tag")
+
+  # Collect tags from --tags-json (expects {"k":"v", ...} or [{"Key":"k","Value":"v"}, ...])
+  tags_json_raw = (get_flag_value(argv, "--tags-json", "") or "").strip()
+
+  final_tags: Dict[str, str] = {}
+
+  for t in tag_args:
+    final_tags.update(_parse_tag_kv(t))
+
+  if tags_json_raw:
+    try:
+      data = json.loads(tags_json_raw)
+    except Exception as e:
+      raise ValueError(f"Invalid --tags-json: {e}")
+
+    if isinstance(data, dict):
+      for k, v in data.items():
+        # allow explicit empty value, but skip nulls
+        if v is None:
+          continue
+        kk = str(k).strip()
+        if not kk:
+          continue
+        final_tags[kk] = str(v)
+    elif isinstance(data, list):
+      for it in data:
+        if isinstance(it, dict) and "Key" in it and "Value" in it:
+          kk = str(it.get("Key") or "").strip()
+          if not kk:
+            continue
+          final_tags[kk] = str(it.get("Value") or "")
+        else:
+          raise ValueError("Invalid --tags-json list (expected [{Key,Value}, ...])")
+    else:
+      raise ValueError("Invalid --tags-json (expected object or list)")
+
+  # Since UI sends the complete list, allow empty tagset to mean "remove all tags"
+  tagset = [{"Key": k, "Value": v} for k, v in final_tags.items()]
+
+  client.put_object_tagging(
+    Bucket=bucket,
+    Key=key,
+    Tagging={"TagSet": tagset},
+  )
+
+  sys.stdout.write(json.dumps({
+    "ok": True,
+    "bucket": bucket,
+    "key": key,
+    "tags": [{"key": k, "value": v} for k, v in final_tags.items()],
+  }) + "\n")
+
+
+
+def cmd_get_object_tags(conn_id: str, bucket: str, key: str) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  try:
+    res = client.get_object_tagging(Bucket=bucket, Key=key)
+    tagset = res.get("TagSet") or []
+
+    tags = []
+    for it in tagset:
+      if not isinstance(it, dict):
+        continue
+      k = str(it.get("Key") or "").strip()
+      if not k:
+        continue
+      v = str(it.get("Value") or "")
+      tags.append({"key": k, "value": v})
+
+    sys.stdout.write(json.dumps({
+      "ok": True,
+      "bucket": bucket,
+      "key": key,
+      "tags": tags,
+    }) + "\n")
+
+  except Exception as e:
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "bucket": bucket,
+      "key": key,
+      "error": str(e),
+    }) + "\n")
+    raise
+
+def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  storage_class = (get_flag_value(argv, "--storage-class", "") or "").strip()
+  if not storage_class:
+    raise ValueError("Missing --storage-class")
+
+  conc_raw = (get_flag_value(argv, "--concurrency", str(DEFAULT_CONCURRENCY)) or str(DEFAULT_CONCURRENCY)).strip()
+  try:
+    concurrency = int(conc_raw)
+  except ValueError:
+    raise ValueError("Invalid --concurrency")
+  if concurrency < 1:
+    concurrency = 1
+  if concurrency > 32:
+    concurrency = 32
+
+  force = (get_flag_value(argv, "--force", "0") or "0").strip() in ("1", "true", "yes", "on")
+
+  canceled = {"yes": False}
+
+  def abort():
+    canceled["yes"] = True
+
+  install_cancel_handler(abort)
+
+  head = client.head_object(Bucket=bucket, Key=key)
+  size = int(head.get("ContentLength") or 0)
+  lm = head.get("LastModified")
+  cur_sc = head.get("StorageClass")  # may be None
+
+  # If already set and not forcing, short-circuit
+  if (not force) and cur_sc and str(cur_sc) == storage_class:
+    sys.stdout.write(json.dumps({
+      "ok": True,
+      "bucket": bucket,
+      "key": key,
+      "changed": False,
+      "requestedStorageClass": storage_class,
+      "storageClass": cur_sc,
+      "size": size,
+      "lastModified": (lm.isoformat() if lm else None),
+    }) + "\n")
+    return
+
+  if canceled["yes"]:
+    # print and return (do not raise -> avoid double JSON)
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "error": "Canceled",
+      "bucket": bucket,
+      "key": key,
+      "requestedStorageClass": storage_class,
+      "storageClass": (str(cur_sc) if cur_sc else None),
+      "size": size,
+      "lastModified": (lm.isoformat() if lm else None),
+    }) + "\n")
+    return
+
+  MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
+
+  try:
+    if size >= MULTIPART_THRESHOLD:
+      def emit(_obj: Dict[str, Any]) -> None:
+        emit_ndjson(_obj)
+
+      part_size = choose_part_size(size)
+      total_parts = int(math.ceil(size / part_size)) if size > 0 else 1
+
+      create_args: Dict[str, Any] = {
+        "Bucket": bucket,
+        "Key": key,
+        "ContentType": head.get("ContentType") or "application/octet-stream",
+        "StorageClass": storage_class,
+      }
+      if head.get("CacheControl"):
+        create_args["CacheControl"] = head["CacheControl"]
+      if head.get("ContentDisposition"):
+        create_args["ContentDisposition"] = head["ContentDisposition"]
+      if head.get("ContentEncoding"):
+        create_args["ContentEncoding"] = head["ContentEncoding"]
+      if head.get("ContentLanguage"):
+        create_args["ContentLanguage"] = head["ContentLanguage"]
+      if head.get("Metadata"):
+        create_args["Metadata"] = head["Metadata"]
+
+      mpu = client.create_multipart_upload(**create_args)
+      upload_id = mpu["UploadId"]
+
+      def abort_mpu():
+        try:
+          client.abort_multipart_upload(Bucket=bucket, Key=key, UploadId=upload_id)
+        except Exception:
+          pass
+
+      install_cancel_handler(abort_mpu)
+
+      emit({
+        "type": "start",
+        "ok": True,
+        "bucket": bucket,
+        "key": key,
+        "size": size,
+        "multipart": True,
+        "uploadId": upload_id,
+        "partSize": part_size,
+        "totalParts": total_parts,
+        "requestedStorageClass": storage_class,
+      })
+
+      lock = threading.Lock()
+      parts_done = 0
+
+      def copy_one_part(part_num: int) -> Dict[str, Any]:
+        if canceled["yes"]:
+          raise KeyboardInterrupt("Canceled")
+
+        start = (part_num - 1) * part_size
+        end = min(size - 1, start + part_size - 1)
+        byte_range = f"bytes={start}-{end}" if size > 0 else "bytes=0-0"
+
+        resp = client.upload_part_copy(
+          Bucket=bucket,
+          Key=key,
+          PartNumber=part_num,
+          UploadId=upload_id,
+          CopySource={"Bucket": bucket, "Key": key},
+          CopySourceRange=byte_range,
+        )
+        etag = (resp.get("CopyPartResult") or {}).get("ETag")
+        if not etag:
+          raise ValueError(f"Missing ETag for part {part_num}")
+
+        nonlocal parts_done
+        with lock:
+          parts_done += 1
+          bytes_copied = int(min(size, parts_done * part_size))
+          emit({
+            "type": "progress",
+            "ok": True,
+            "partsDone": parts_done,
+            "totalParts": total_parts,
+            "bytesCopied": bytes_copied,
+            "size": size,
+          })
+
+        return {"ETag": etag, "PartNumber": part_num}
+
+      parts: List[Dict[str, Any]] = []
+      try:
+        with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+          futures = [ex.submit(copy_one_part, i) for i in range(1, total_parts + 1)]
+          for fut in as_completed(futures):
+            parts.append(fut.result())
+
+        parts.sort(key=lambda p: int(p["PartNumber"]))
+
+        client.complete_multipart_upload(
+          Bucket=bucket,
+          Key=key,
+          UploadId=upload_id,
+          MultipartUpload={"Parts": parts},
+        )
+
+      except Exception as e:
+        abort_mpu()
+        raise e
+
+      head2 = client.head_object(Bucket=bucket, Key=key)
+      lm2 = head2.get("LastModified")
+      new_sc = head2.get("StorageClass")
+
+      emit({
+        "type": "result",
+        "ok": True,
+        "bucket": bucket,
+        "key": key,
+        "size": int(head2.get("ContentLength") or 0),
+        "lastModified": (lm2.isoformat() if lm2 else None),
+        "requestedStorageClass": storage_class,
+        "storageClass": (str(new_sc) if new_sc else None),
+      })
+      return
+
+    # Small/medium: single self-copy with StorageClass
+    copy_args: Dict[str, Any] = {
+      "Bucket": bucket,
+      "Key": key,
+      "CopySource": {"Bucket": bucket, "Key": key},
+      "MetadataDirective": "COPY",
+      "StorageClass": storage_class,
+    }
+
+    ct = head.get("ContentType")
+    if ct:
+      copy_args["ContentType"] = ct
+
+    client.copy_object(**copy_args)
+
+    head2 = client.head_object(Bucket=bucket, Key=key)
+    lm2 = head2.get("LastModified")
+    new_sc = head2.get("StorageClass")
+
+    sys.stdout.write(json.dumps({
+      "ok": True,
+      "bucket": bucket,
+      "key": key,
+      "changed": True,
+      "requestedStorageClass": storage_class,
+      "storageClass": (str(new_sc) if new_sc else None),
+      "size": int(head2.get("ContentLength") or 0),
+      "lastModified": (lm2.isoformat() if lm2 else None),
+    }) + "\n")
+    return
+
+  except KeyboardInterrupt:
+    # IMPORTANT: do not re-raise; print once and return
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "error": "Canceled",
+      "bucket": bucket,
+      "key": key,
+      "requestedStorageClass": storage_class,
+      "storageClass": (str(cur_sc) if cur_sc else None),
+      "size": size,
+      "lastModified": (lm.isoformat() if lm else None),
+    }) + "\n")
+    return
+
+  except Exception as e:
+    # IMPORTANT: do not re-raise; print once and return
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "error": str(e),
+      "bucket": bucket,
+      "key": key,
+      "requestedStorageClass": storage_class,
+      "storageClass": (str(cur_sc) if cur_sc else None),
+      "size": size,
+      "lastModified": (lm.isoformat() if lm else None),
+    }) + "\n")
+    return
+
+def cmd_list_object_versions(conn_id: str, bucket: str, key: str, max_keys: int = 200) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  out = []
+  key_marker = None
+  version_marker = None
+
+  while True:
+    kwargs = {
+      "Bucket": bucket,
+      "Prefix": key,
+      "MaxKeys": max_keys,
+    }
+    if key_marker is not None:
+      kwargs["KeyMarker"] = key_marker
+    if version_marker is not None:
+      kwargs["VersionIdMarker"] = version_marker
+
+    res = client.list_object_versions(**kwargs)
+
+    for v in (res.get("Versions") or []):
+      if v.get("Key") != key:
+        continue
+      lm = v.get("LastModified")
+      out.append({
+        "key": key,
+        "versionId": v.get("VersionId"),
+        "isLatest": bool(v.get("IsLatest")),
+        "lastModified": (lm.isoformat() if lm else None),
+        "size": int(v.get("Size") or 0),
+        "etag": str(v.get("ETag") or "").strip('"') or None,
+      })
+
+    if not res.get("IsTruncated"):
+      break
+
+    key_marker = res.get("NextKeyMarker")
+    version_marker = res.get("NextVersionIdMarker")
+    if not key_marker:
+      break
+
+  # sort latest first (best-effort)
+  out.sort(key=lambda x: (x["lastModified"] or ""), reverse=True)
+
+  sys.stdout.write(json.dumps({
+    "ok": True,
+    "versions": out,
+  }) + "\n")
+
+def cmd_delete_object_version(conn_id: str, bucket: str, key: str, version_id: str) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  if not version_id:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Missing versionId"}) + "\n")
+    return
+
+  client.delete_object(Bucket=bucket, Key=key, VersionId=version_id)
+
+  sys.stdout.write(json.dumps({
+    "ok": True,
+    "bucket": bucket,
+    "key": key,
+    "versionId": version_id,
+  }) + "\n")
+
+def cmd_download_object_version(conn_id: str, bucket: str, key: str, version_id: str, argv: List[str]) -> None:
+  job_id = get_job_id(argv)
+
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  if not version_id:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Missing versionId"}) + "\n")
+    return
+
+  chunk_raw = (get_flag_value(argv, "--chunk", "8388608") or "8388608").strip()
+  try:
+    chunk_size = max(64 * 1024, int(chunk_raw))
+  except ValueError:
+    chunk_size = 8 * 1024 * 1024
+
+  def emit_err(obj: Dict[str, Any]) -> None:
+    try:
+      sys.stderr.write(json.dumps(obj) + "\n")
+      sys.stderr.flush()
+    except Exception:
+      pass
+
+  canceled = {"yes": False}
+
+  def abort():
+    canceled["yes"] = True
+
+  install_cancel_handler(abort)
+
+  # HEAD for this version (size/lastModified). Some backends support VersionId in head_object.
+  head = client.head_object(Bucket=bucket, Key=key, VersionId=version_id)
+  size = int(head.get("ContentLength") or 0)
+  lm = head.get("LastModified")
+
+  emit_err({
+    "type": "start",
+    "ok": True,
+    "jobId": job_id,
+    "bucket": bucket,
+    "key": key,
+    "versionId": version_id,
+    "size": size,
+    "lastModified": (lm.isoformat() if lm else None),
+    "chunkSize": chunk_size,
+  })
+
+  write_job(job_id, {
+    "type": "start",
+    "ok": True,
+    "kind": "object-version",
+    "pid": os.getpid(),
+    "bucket": bucket,
+    "key": key,
+    "versionId": version_id,
+    "size": size,
+    "lastModified": (lm.isoformat() if lm else None),
+    "chunkSize": chunk_size,
+    "state": "running",
+  })
+
+  out = sys.stdout.buffer
+  sent = 0
+
+  try:
+    obj = client.get_object(Bucket=bucket, Key=key, VersionId=version_id)
+    body = obj["Body"]
+
+    try:
+      while True:
+        if canceled["yes"]:
+          raise KeyboardInterrupt("Canceled")
+
+        b = body.read(chunk_size)
+        if not b:
+          break
+
+        out.write(b)
+        sent += len(b)
+
+        emit_err({
+          "type": "progress",
+          "ok": True,
+          "jobId": job_id,
+          "bytes": sent,
+          "size": size,
+          "key": key,
+          "versionId": version_id,
+        })
+
+        write_job(job_id, {
+          "type": "progress",
+          "ok": True,
+          "kind": "object-version",
+          "pid": os.getpid(),
+          "bucket": bucket,
+          "key": key,
+          "versionId": version_id,
+          "bytes": sent,
+          "size": size,
+          "state": "running",
+        })
+
+    finally:
+      try:
+        body.close()
+      except Exception:
+        pass
+
+    emit_err({
+      "type": "result",
+      "ok": True,
+      "jobId": job_id,
+      "bytes": sent,
+      "size": size,
+      "key": key,
+      "versionId": version_id,
+    })
+
+    write_job(job_id, {
+      "type": "result",
+      "ok": True,
+      "kind": "object-version",
+      "pid": os.getpid(),
+      "bucket": bucket,
+      "key": key,
+      "versionId": version_id,
+      "bytes": sent,
+      "size": size,
+      "state": "done",
+    })
+
+  except BrokenPipeError:
+    try:
+      write_job(job_id, {
+        "type": "result",
+        "ok": False,
+        "kind": "object-version",
+        "pid": os.getpid(),
+        "bucket": bucket,
+        "key": key,
+        "versionId": version_id,
+        "bytes": sent,
+        "size": size,
+        "error": "BrokenPipe",
+        "state": "canceled",
+      })
+    except Exception:
+      pass
+    raise SystemExit(0)
+
+  except KeyboardInterrupt:
+    emit_err({
+      "type": "result",
+      "ok": False,
+      "jobId": job_id,
+      "error": "Canceled",
+      "bytes": sent,
+      "size": size,
+      "key": key,
+      "versionId": version_id,
+    })
+
+    write_job(job_id, {
+      "type": "result",
+      "ok": False,
+      "kind": "object-version",
+      "pid": os.getpid(),
+      "bucket": bucket,
+      "key": key,
+      "versionId": version_id,
+      "bytes": sent,
+      "size": size,
+      "error": "Canceled",
+      "state": "canceled",
+    })
+    raise
+
+  except Exception as e:
+    emit_err({
+      "type": "result",
+      "ok": False,
+      "jobId": job_id,
+      "error": str(e),
+      "bytes": sent,
+      "size": size,
+      "key": key,
+      "versionId": version_id,
+    })
+
+    write_job(job_id, {
+      "type": "result",
+      "ok": False,
+      "kind": "object-version",
+      "pid": os.getpid(),
+      "bucket": bucket,
+      "key": key,
+      "versionId": version_id,
+      "bytes": sent,
+      "size": size,
+      "error": str(e),
+      "state": "failed",
+    })
+    raise
+
+def cmd_rollback_object_version(conn_id: str, bucket: str, key: str, version_id: str) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  if not version_id:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Missing versionId"}) + "\n")
+    return
+
+  src = f"{bucket}/{key}"
+  copy_source = {"Bucket": bucket, "Key": key, "VersionId": version_id}
+
+  # Copy onto the same key (creates a new latest version)
+  client.copy_object(
+    Bucket=bucket,
+    Key=key,
+    CopySource=copy_source,
+    MetadataDirective="COPY",
+  )
+
+  sys.stdout.write(json.dumps({
+    "ok": True,
+    "bucket": bucket,
+    "key": key,
+    "fromVersionId": version_id,
+  }) + "\n")
 
 
 def main() -> None:
@@ -1522,6 +2256,67 @@ def main() -> None:
       raise ValueError("Usage: s3browser-cli stat-object <connectionId> <bucket> <key>")
     cmd_stat_object(sys.argv[2], sys.argv[3], sys.argv[4])
     return
+  
+  if cmd == "put-object-tags":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli put-object-tags <connectionId> <bucket> <key> [--tag k=v ...] [--tags-json JSON]")
+    cmd_put_object_tags(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+    return
+
+  
+  if cmd == "get-object-tags":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli get-object-tags <connectionId> <bucket> <key>")
+    cmd_get_object_tags(sys.argv[2], sys.argv[3], sys.argv[4])
+    return
+  
+  if cmd == "change-storage-class":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli change-storage-class <connectionId> <bucket> <key> --storage-class CLASS [--force 1] [--concurrency N]")
+    cmd_change_storage_class(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+    return
+  if cmd == "cancel-download-job":
+    if len(sys.argv) < 3:
+      raise ValueError("Usage: cancel-download-job <job_id>")
+    cmd_cancel_download_job(sys.argv[2])
+    return
+  
+  if cmd == "list-object-versions":
+    if len(sys.argv) < 5:
+      raise ValueError("Usage: s3browser-cli list-object-versions <connectionId> <bucket> <key> [--max-keys N]")
+    conn_id = sys.argv[2]
+    bucket = sys.argv[3]
+    key = sys.argv[4]
+    argv = sys.argv[5:]
+
+    max_keys = 200
+    try:
+      mk = get_flag_value(argv, "--max-keys")
+      if mk is not None and str(mk).strip() != "":
+        max_keys = int(mk)
+    except Exception:
+      max_keys = 200
+
+    cmd_list_object_versions(conn_id, bucket, key, max_keys=max_keys)
+    return
+  if cmd == "delete-object-version":
+    if len(sys.argv) < 6:
+      raise ValueError("Usage: delete-object-version <connectionId> <bucket> <key> <versionId>")
+    cmd_delete_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+    return
+
+  if cmd == "rollback-object-version":
+    if len(sys.argv) < 6:
+      raise ValueError("Usage: rollback-object-version <connectionId> <bucket> <key> <versionId>")
+    cmd_rollback_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+    return
+
+  if cmd == "download-object-version":
+    if len(sys.argv) < 6:
+      raise ValueError("Usage: download-object-version <connectionId> <bucket> <key> <versionId> --job-id JOB [--chunk N]")
+    cmd_download_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+    return
+
 
 
 
