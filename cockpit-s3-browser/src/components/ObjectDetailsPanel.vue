@@ -1,7 +1,7 @@
 <!-- src/components/ObjectDetailsPanel.vue -->
 <template>
-<aside class="w-[22rem] shrink-0 border-l border-default bg-default flex flex-col h-[80vh] min-h-0">
-    <!-- Header (fixed) -->
+<aside class="w-full h-[96vh] min-h-0 flex flex-col border-l border-default bg-default">
+  <!-- Header (fixed) -->
         <div class="border-b border-default px-4 py-3 flex items-center justify-between gap-2">
             <div class="min-w-0">
                 <div class="text-sm font-semibold text-default truncate">
@@ -45,34 +45,123 @@
 
                         <div class="divide-y divide-default text-sm">
                             <div class="flex items-start justify-between gap-4 py-2">
-                                <div class="text-default font-semibold opacity-70 shrink-0 w-[120px]">Name</div>
-                                <div class="text-default break-all text-right flex-1">{{ nameText }}</div>
+                                <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Name</div>
+                                <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">{{ nameText }}</div>
                             </div>
 
                             <div class="flex items-start justify-between gap-4 py-2">
-                                <div class="text-default font-semibold opacity-70 shrink-0 w-[120px]">Size</div>
-                                <div class="text-default text-right flex-1">{{ sizeText }}</div>
+                                <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Size</div>
+                                <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">{{ sizeText }}</div>
                             </div>
 
                             <div class="flex items-start justify-between gap-4 py-2">
-                                <div class="text-default font-semibold opacity-70 shrink-0 w-[120px]">Last Modified</div>
-                                <div class="text-default text-right flex-1">{{ lastModifiedPretty }}</div>
+                                <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Last Modified</div>
+                                <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">{{ lastModifiedPretty }}</div>
                             </div>
 
                             <div class="flex items-start justify-between gap-4 py-2">
-                                <div class="text-default font-semibold opacity-70 shrink-0 w-[120px]">ETAG</div>
-                                <div class="text-default break-all text-right flex-1">{{ meta?.etag || "—" }}</div>
+                                <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">ETAG</div>
+                                <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">{{ meta?.etag || "—" }}</div>
                             </div>
-
                             <div class="flex items-start justify-between gap-4 py-2">
-                                <div class="text-default font-semibold opacity-70 shrink-0 w-[120px]">Legal Hold</div>
-                                <div class="text-default text-right flex-1">{{ legalHoldText }}</div>
-                            </div>
+  <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Legal Hold</div>
 
-                            <div class="flex items-start justify-between gap-4 py-2">
-                                <div class="text-default font-semibold opacity-70 shrink-0 w-[120px]">Retention Policy</div>
-                                <div class="text-default text-right flex-1">{{ retentionText }}</div>
-                            </div>
+  <div class="text-default flex-1">
+    <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">
+      <div class="text-right">{{ legalHoldText }}</div>
+
+      <button
+        v-if="canEditObjectLock"
+        type="button"
+        class="btn-secondary inline-flex items-center rounded-md border border-default px-2 py-1 text-xs font-semibold"
+        :disabled="legalHoldBusy"
+        @click="editingLegalHold ? cancelEditLegalHold() : startEditLegalHold()"
+      >
+        {{ editingLegalHold ? "Cancel" : "Edit" }}
+      </button>
+    </div>
+
+    <div v-if="editingLegalHold" class="mt-2 flex flex-col items-end gap-2">
+      <div v-if="legalHoldErr" class="text-xs text-red-700">{{ legalHoldErr }}</div>
+
+      <select
+        class="w-full max-w-[220px] rounded-md border border-default bg-default px-2 py-1 text-sm"
+        v-model="legalHoldDraft"
+        :disabled="legalHoldBusy"
+      >
+        <option value="OFF">Off</option>
+        <option value="ON">On</option>
+      </select>
+
+      <button
+        type="button"
+        class="btn-primary inline-flex items-center rounded-md border border-default px-2 py-1 text-xs font-semibold"
+        :disabled="legalHoldBusy"
+        @click="saveLegalHold"
+      >
+        {{ legalHoldBusy ? "Saving…" : "Save" }}
+      </button>
+    </div>
+  </div>
+</div>
+
+<div class="flex items-start justify-between gap-4 py-2">
+  <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Retention Policy</div>
+
+  <div class="text-default flex-1">
+    <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">
+      <div class="text-right">{{ retentionText }}</div>
+
+      <button
+        v-if="canEditObjectLock"
+        type="button"
+        class="btn-secondary inline-flex items-center rounded-md border border-default px-2 py-1 text-xs font-semibold"
+        :disabled="retentionBusy"
+        @click="editingRetention ? cancelEditRetention() : startEditRetention()"
+      >
+        {{ editingRetention ? "Cancel" : "Edit" }}
+      </button>
+    </div>
+
+    <div v-if="editingRetention" class="mt-2 flex flex-col items-end gap-2">
+      <div v-if="retentionErr" class="text-xs text-red-700">{{ retentionErr }}</div>
+
+      <div class="w-full max-w-[280px] grid grid-cols-1 gap-2">
+        <select
+          class="w-full rounded-md border border-default bg-default px-2 py-1 text-sm"
+          v-model="retentionModeDraft"
+          :disabled="retentionBusy"
+        >
+          <option value="GOVERNANCE">GOVERNANCE</option>
+          <option value="COMPLIANCE">COMPLIANCE</option>
+        </select>
+
+        <input
+          class="w-full rounded-md border border-default bg-default px-2 py-1 text-sm"
+          type="datetime-local"
+          v-model="retentionUntilDraft"
+          :disabled="retentionBusy"
+        />
+
+        <label class="flex items-center justify-end gap-2 text-xs text-default opacity-80">
+          <input type="checkbox" v-model="retentionBypassDraft" :disabled="retentionBusy" />
+          Bypass governance (if permitted)
+        </label>
+      </div>
+
+      <button
+        type="button"
+        class="btn-primary inline-flex items-center rounded-md border border-default px-2 py-1 text-xs font-semibold"
+        :disabled="retentionBusy"
+        @click="saveRetention"
+      >
+        {{ retentionBusy ? "Saving…" : "Save" }}
+      </button>
+    </div>
+  </div>
+</div>
+
+
                         </div>
                     </section>
 
@@ -93,7 +182,7 @@
 
                         <div v-else class="divide-y divide-default text-sm">
                             <div v-for="t in tags" :key="t.key" class="flex items-start justify-between gap-4 py-2">
-                                <div class="text-default opacity-70 shrink-0 w-[120px] break-all">{{ t.key }}</div>
+                                <div class="text-default opacity-70 shrink-0 w-[7.5rem] break-all">{{ t.key }}</div>
                                 <div class="text-default text-right flex-1 break-all">{{ t.value }}</div>
                             </div>
                         </div>
@@ -116,7 +205,7 @@
                         <div v-else class="divide-y divide-default text-sm">
                             <div v-for="[k, v] in metaEntries" :key="k"
                                 class="flex items-start justify-between gap-4 py-2">
-                                <div class="text-default opacity-70 shrink-0 w-[120px] break-all">{{ k }}</div>
+                                <div class="text-default opacity-70 shrink-0 w-[7.5rem] break-all">{{ k }}</div>
                                 <div class="text-default text-right flex-1 break-all">{{ v }}</div>
                             </div>
                         </div>
@@ -144,7 +233,9 @@ import { computed, ref, watch } from "vue";
 import type { Row, FileRow } from "../types";
 import type { TagKV } from "./TagsModal.vue";
 import { formatBytes, formatDate } from "../lib/helpers";
-import { statObject, getObjectTags, getObjectVersions, rollbackObjectVersion, deleteObjectVersion, downloadObjectVersion } from "../lib/s3Objects";
+import { statObject, getObjectTags, getObjectVersions, rollbackObjectVersion, deleteObjectVersion, downloadObjectVersion, getBucketObjectLock, getObjectLegalHold,
+     getObjectRetention,   putObjectLegalHold, putObjectRetention,
+} from "../lib/s3Objects";
 import ObjectVersionsModal from "./ObjectVersionsModal.vue";
 
 type Stat = {
@@ -153,8 +244,8 @@ type Stat = {
     etag: string | null;
     storageClass: string | null;
     metadata?: Record<string, string>;
-    legalHold?: "ON" | "OFF" | null;
-    retentionMode?: string | null;
+    legalHold: "ON" | "OFF" | null;
+    retentionMode: string | null;
     retainUntil?: string | null;
 };
 
@@ -207,6 +298,28 @@ const sizeText = computed(() => {
     return formatBytes(s);
 });
 
+const objectLock = ref<{ supported: boolean; enabled: boolean; reason?: string } | null>(null);
+const objectLockLoading = ref(false);
+const canEditObjectLock = computed(() => {
+  if (!props.row || props.row.type !== "file") return false;
+  const cap = objectLock.value;
+  return Boolean(cap?.supported && cap?.enabled);
+});
+
+const editingLegalHold = ref(false);
+const legalHoldBusy = ref(false);
+const legalHoldErr = ref("");
+
+const legalHoldDraft = ref<"ON" | "OFF">("OFF");
+
+/* Retention editor */
+const editingRetention = ref(false);
+const retentionBusy = ref(false);
+const retentionErr = ref("");
+const retentionModeDraft = ref<"GOVERNANCE" | "COMPLIANCE">("GOVERNANCE");
+const retentionUntilDraft = ref<string>(""); // ISO string in <input type="datetime-local">
+const retentionBypassDraft = ref(false);
+
 function relativeFromNow(iso: string) {
     const t = new Date(iso).getTime();
     if (!Number.isFinite(t)) return iso;
@@ -223,6 +336,27 @@ function relativeFromNow(iso: string) {
     return "just now";
 }
 
+function toDatetimeLocalValue(iso: string): string {
+  // Convert ISO -> "YYYY-MM-DDTHH:mm" for datetime-local
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mi = pad(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+}
+
+function fromDatetimeLocalValue(v: string): string | null {
+  // Interpret as local time and convert to ISO
+  if (!v) return null;
+  const d = new Date(v);
+  if (!Number.isFinite(d.getTime())) return null;
+  return d.toISOString();
+}
+
 const lastModifiedPretty = computed(() => {
     if (!props.row || props.row.type !== "file") return "—";
     const lm = meta.value?.lastModified ?? (props.row as any).lastModified ?? null;
@@ -230,24 +364,7 @@ const lastModifiedPretty = computed(() => {
     return `${relativeFromNow(lm)} (${formatDate(lm)})`;
 });
 
-const legalHoldText = computed(() => {
-    if (!props.row || props.row.type !== "file") return "—";
-    const v = meta.value?.legalHold;
-    if (v === "ON") return "On";
-    if (v === "OFF") return "Off";
-    return "Unknown";
-});
 
-const retentionText = computed(() => {
-    if (!props.row || props.row.type !== "file") return "—";
-    const mode = meta.value?.retentionMode ?? null;
-    const until = meta.value?.retainUntil ?? null;
-
-    if (!mode && !until) return "None";
-    if (mode && until) return `${mode} until ${formatDate(until)}`;
-    if (mode) return mode;
-    return until ? `Until ${formatDate(until)}` : "None";
-});
 
 /* Versions modal state */
 const versionsOpen = ref(false);
@@ -396,7 +513,19 @@ watch(
         if (!row) return;
         if (row.type !== "file") return;
 
-        await Promise.all([loadStat(row, myReq), loadTags(row, myReq)]);
+        await Promise.all([loadStat(row, myReq), loadTags(row, myReq), loadObjectLockInfo(row, myReq)]);
+        const m = meta.value  as Stat | null;;
+if (!m) return;
+
+legalHoldDraft.value = m.legalHold === "ON" ? "ON" : "OFF";
+
+const mode = (m.retentionMode ?? "").toUpperCase();
+retentionModeDraft.value = mode === "COMPLIANCE" ? "COMPLIANCE" : "GOVERNANCE";
+
+retentionUntilDraft.value = m.retainUntil ? toDatetimeLocalValue(m.retainUntil) : "";
+
+        
+
     },
     { immediate: true }
 );
@@ -460,6 +589,176 @@ async function onVersionAction(payload: {
         filename: props.row.name,
       });
     }
+  }
+}
+
+async function loadObjectLockInfo(r: FileRow, myReq: number) {
+  objectLockLoading.value = true;
+  try {
+    const bucketRes = await getBucketObjectLock({
+      connectionId: props.connectionId,
+      bucket: props.bucket,
+    });
+
+    if (reqId !== myReq) return;
+
+    if (bucketRes.isErr()) {
+      objectLock.value = { supported: false, enabled: false, reason: bucketRes.error.message };
+      // Clear per-object fields
+      meta.value = { ...(meta.value ?? { size: 0, lastModified: null, etag: null, storageClass: null }), legalHold: null, retentionMode: null, retainUntil: null };
+      return;
+    }
+
+    objectLock.value = bucketRes.value;
+
+    if (!bucketRes.value.supported || !bucketRes.value.enabled) {
+      // Don’t call per-object APIs (they’ll fail); show message instead.
+      meta.value = {
+        ...(meta.value ?? { size: 0, lastModified: null, etag: null, storageClass: null }),
+        legalHold: null,
+        retentionMode: null,
+        retainUntil: null,
+      };
+      return;
+    }
+
+    // Bucket supports & enabled: fetch per-object status (current version)
+    const [holdRes, retRes] = await Promise.all([
+      getObjectLegalHold({ connectionId: props.connectionId, bucket: props.bucket, key: r.key }),
+      getObjectRetention({ connectionId: props.connectionId, bucket: props.bucket, key: r.key }),
+    ]);
+
+    if (reqId !== myReq) return;
+
+    meta.value = {
+      ...(meta.value ?? { size: 0, lastModified: null, etag: null, storageClass: null }),
+      legalHold: holdRes.isOk() ? (holdRes.value.status as any) : null,
+      retentionMode: retRes.isOk() ? retRes.value.mode : null,
+      retainUntil: retRes.isOk() ? retRes.value.retainUntil : null,
+    };
+  } finally {
+    if (reqId === myReq) objectLockLoading.value = false;
+  }
+}
+const legalHoldText = computed(() => {
+  if (!props.row || props.row.type !== "file") return "—";
+
+  const cap = objectLock.value;
+  if (!cap) return "—";
+  if (!cap.supported) return "Not supported";
+  if (!cap.enabled) return "Not supported (bucket Object Lock disabled)";
+
+  const v = meta.value?.legalHold;
+  if (v === "ON") return "On";
+  if (v === "OFF") return "Off";
+  return "Off";
+});
+
+const retentionText = computed(() => {
+  if (!props.row || props.row.type !== "file") return "—";
+
+  const cap = objectLock.value;
+  if (!cap) return "—";
+  if (!cap.supported) return "Not supported";
+  if (!cap.enabled) return "Not supported (bucket Object Lock disabled)";
+
+  const mode = meta.value?.retentionMode ?? null;
+  const until = meta.value?.retainUntil ?? null;
+
+  if (!mode && !until) return "None";
+  if (mode && until) return `${mode} until ${formatDate(until)}`;
+  if (mode) return mode;
+  return until ? `Until ${formatDate(until)}` : "None";
+});
+
+function startEditLegalHold() {
+  legalHoldErr.value = "";
+  legalHoldDraft.value = meta.value?.legalHold === "ON" ? "ON" : "OFF";
+  editingLegalHold.value = true;
+}
+
+function cancelEditLegalHold() {
+  editingLegalHold.value = false;
+  legalHoldErr.value = "";
+}
+
+async function saveLegalHold() {
+  if (!props.row || props.row.type !== "file") return;
+
+  legalHoldErr.value = "";
+  legalHoldBusy.value = true;
+
+  try {
+    const res = await putObjectLegalHold({
+      connectionId: props.connectionId,
+      bucket: props.bucket,
+      key: props.row.key,
+      status: legalHoldDraft.value,
+    });
+
+    if (res.isErr()) {
+      legalHoldErr.value = res.error.message;
+      return;
+    }
+
+    editingLegalHold.value = false;
+
+    const myReq = ++reqId;
+    currentReq.value = myReq;
+    await loadObjectLockInfo(props.row, myReq);
+  } finally {
+    legalHoldBusy.value = false;
+  }
+}
+
+function startEditRetention() {
+  retentionErr.value = "";
+  const mode = (meta.value?.retentionMode ?? "").toUpperCase();
+  retentionModeDraft.value = mode === "COMPLIANCE" ? "COMPLIANCE" : "GOVERNANCE";
+  retentionUntilDraft.value = meta.value?.retainUntil ? toDatetimeLocalValue(meta.value.retainUntil) : "";
+  retentionBypassDraft.value = false;
+  editingRetention.value = true;
+}
+
+function cancelEditRetention() {
+  editingRetention.value = false;
+  retentionErr.value = "";
+}
+
+async function saveRetention() {
+  if (!props.row || props.row.type !== "file") return;
+
+  retentionErr.value = "";
+
+  const iso = fromDatetimeLocalValue(retentionUntilDraft.value);
+  if (!iso) {
+    retentionErr.value = "Please choose a valid Retain Until date/time.";
+    return;
+  }
+
+  retentionBusy.value = true;
+  try {
+    const res = await putObjectRetention({
+      connectionId: props.connectionId,
+      bucket: props.bucket,
+      key: props.row.key,
+      mode: retentionModeDraft.value,
+      retainUntil: iso,
+      bypassGovernance: retentionBypassDraft.value,
+    });
+
+    if (res.isErr()) {
+      retentionErr.value = res.error.message;
+      return;
+    }
+
+    editingRetention.value = false;
+
+    const myReq = ++reqId;
+    currentReq.value = myReq;
+    await loadObjectLockInfo(props.row, myReq);
+  } finally {
+    retentionBusy.value = false;
   }
 }
 

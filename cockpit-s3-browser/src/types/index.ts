@@ -214,3 +214,22 @@ export type GetObjectVersionsCliResult = {
   }>;
   error?: string;
 };
+
+
+export type Stat = {
+  size: number;
+lastModified: string | null;
+etag: string | null;
+storageClass: string | null;
+metadata?: Record<string, string>;
+legalHold: "ON" | "OFF" | null;
+retentionMode: string | null;
+retainUntil: string | null;
+};
+export type VersionItem = {
+  versionId: string | null;
+  isLatest: boolean;
+  lastModified: string | null;
+  size: number;
+  etag: string | null;
+};

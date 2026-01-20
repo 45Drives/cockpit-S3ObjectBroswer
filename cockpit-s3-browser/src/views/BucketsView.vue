@@ -1,6 +1,6 @@
 <template>
   <div class="w-full px-6 py-6">
-    <div class="mx-auto w-full max-w-6xl">
+    <div class="mx-auto w-full ">
       <div class="rounded-md border border-default bg-accent shadow-sm">
         <div class="border-b border-default px-4 py-3 flex items-center justify-between gap-3">
           <div class="flex items-start gap-3">

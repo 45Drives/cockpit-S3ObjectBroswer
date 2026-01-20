@@ -823,3 +823,166 @@ export function downloadObjectVersion(params: {
     server.downloadCommandOutput(pyCmd(args, "try"), filename);
   });
 }
+
+export function getBucketObjectLock(params: {
+  connectionId: string;
+  bucket: string;
+}): ResultAsync<
+  { supported: boolean; enabled: boolean; reason?: string; defaultRetention?: { mode?: string; days?: number; years?: number } },
+  ProcessError | SyntaxError
+> {
+  const args: string[] = ["get-bucket-object-lock", params.connectionId, params.bucket];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<any>(s))
+    .andThen((res) => {
+      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to get bucket object lock"));
+      return okAsync({
+        supported: Boolean(res.supported),
+        enabled: Boolean(res.enabled),
+        reason: res.reason != null ? String(res.reason) : undefined,
+        defaultRetention: res.defaultRetention ? {
+          mode: res.defaultRetention.mode != null ? String(res.defaultRetention.mode) : undefined,
+          days: res.defaultRetention.days != null ? Number(res.defaultRetention.days) : undefined,
+          years: res.defaultRetention.years != null ? Number(res.defaultRetention.years) : undefined,
+        } : undefined,
+      });
+    });
+}
+
+type LegalHoldStatus = "ON" | "OFF";
+function isLegalHoldStatus(x: unknown): x is LegalHoldStatus {
+  return x === "ON" || x === "OFF";
+}
+
+export function getObjectLegalHold(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  versionId?: string | null;
+}): ResultAsync<{ status: LegalHoldStatus | null }, ProcessError | SyntaxError> {
+  const args: string[] = ["get-object-legal-hold", params.connectionId, params.bucket, params.key];
+  if (params.versionId) args.push("--version-id", String(params.versionId));
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<any>(s))
+    .andThen((res) => {
+      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to get legal hold"));
+
+      const raw = res.status;
+      const status = isLegalHoldStatus(raw) ? raw : null;
+
+      return okAsync({ status });
+    });
+}
+
+
+export function getObjectRetention(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  versionId?: string | null;
+}): ResultAsync<{ mode: string | null; retainUntil: string | null }, ProcessError | SyntaxError> {
+  const args: string[] = ["get-object-retention", params.connectionId, params.bucket, params.key];
+  if (params.versionId) args.push("--version-id", String(params.versionId));
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<any>(s))
+    .andThen((res) => {
+      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to get retention"));
+      return okAsync({
+        mode: res.mode != null ? String(res.mode) : null,
+        retainUntil: (res.retainUntil ?? null) as string | null,
+      });
+    });
+}
+
+
+export function putObjectLegalHold(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  status: LegalHoldStatus; // "ON" | "OFF"
+  versionId?: string | null;
+}): ResultAsync<{ status: LegalHoldStatus }, ProcessError | SyntaxError> {
+  const args: string[] = [
+    "put-object-legal-hold",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    "--status",
+    params.status,
+  ];
+  if (params.versionId) args.push("--version-id", String(params.versionId));
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<any>(s))
+    .andThen((res) => {
+      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to set legal hold"));
+
+      const raw = res.status;
+      const status = isLegalHoldStatus(raw) ? raw : null;
+      if (!status) return errAsync(new SyntaxError("Invalid legal hold status from CLI"));
+
+      return okAsync({ status });
+    });
+}
+
+export type RetentionMode = "GOVERNANCE" | "COMPLIANCE";
+
+function isRetentionMode(v: any): v is RetentionMode {
+  return v === "GOVERNANCE" || v === "COMPLIANCE";
+}
+
+export function putObjectRetention(params: {
+  connectionId: string;
+  bucket: string;
+  key: string;
+  mode: RetentionMode;
+  retainUntil: string; // ISO timestamp
+  bypassGovernance?: boolean;
+  versionId?: string | null;
+}): ResultAsync<
+  { mode: RetentionMode; retainUntil: string; bypassGovernance: boolean },
+  ProcessError | SyntaxError
+> {
+  const args: string[] = [
+    "put-object-retention",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    "--mode",
+    params.mode,
+    "--retain-until",
+    params.retainUntil,
+  ];
+  if (params.versionId) args.push("--version-id", String(params.versionId));
+  if (params.bypassGovernance) args.push("--bypass-governance", "1");
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) => safeJsonParse<any>(s))
+    .andThen((res) => {
+      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to set retention"));
+
+      const rawMode = res.mode;
+      const mode = isRetentionMode(rawMode) ? rawMode : null;
+      if (!mode) return errAsync(new SyntaxError("Invalid retention mode from CLI"));
+
+      const retainUntil = res.retainUntil != null ? String(res.retainUntil) : null;
+      if (!retainUntil) return errAsync(new SyntaxError("Missing retainUntil from CLI"));
+
+      const bypassGovernance = Boolean(res.bypassGovernance);
+
+      return okAsync({ mode, retainUntil, bypassGovernance });
+    });
+}

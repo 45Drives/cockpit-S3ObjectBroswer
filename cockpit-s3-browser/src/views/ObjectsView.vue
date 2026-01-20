@@ -1,6 +1,6 @@
 <template>
     <div class="w-full px-6 py-6">
-        <div class="mx-auto w-full max-w-6xl">
+        <div class="mx-auto w-full ">
             <div class="rounded-md border border-default bg-accent shadow-sm">
                 <!-- header -->
                 <div class="border-b border-default px-4 py-3 flex items-center justify-between gap-3">
@@ -143,9 +143,9 @@
                     </div>
 
                     <!-- LIST + DETAILS: start at same height -->
-                    <div class="flex items-start gap-0">
+                    <div class="flex flex-nowrap items-start gap-0">
                         <!-- left: list -->
-                        <div class="flex-1 min-w-0 pr-0">
+                        <div :class="detailsOpen ? 'w-[70%] flex-none min-w-0 pr-0' : 'flex-1 min-w-0 pr-0'">
                             <!-- TABLE VIEW -->
                             <div v-if="viewMode === 'table'" class="rounded-md border border-default">
                                 <div class="bg-well text-left text-default w-full"
@@ -296,9 +296,14 @@
                             </div>
                         </div>
 
-                        <!-- right: details -->
-                        <ObjectDetailsPanel v-if="detailsOpen" class="shrink-0" :connectionId="connectionId"
-                            :bucket="bucket" :row="activeRow" @close="detailsOpen = false" />
+                        <div v-if="detailsOpen" class="w-[30%] flex-none min-w-0">
+    <ObjectDetailsPanel
+      :connectionId="connectionId"
+      :bucket="bucket"
+      :row="activeRow"
+      @close="detailsOpen = false"
+    />
+  </div>
                     </div>
                 </div>
             </div>
@@ -343,6 +348,7 @@ import { useDeletes } from "../operations/useDeletes";
 import TagsModal, { type TagKV } from "../components/TagsModal.vue";
 import { useTags } from "../operations/tags";
 import ObjectDetailsPanel from "../components/ObjectDetailsPanel.vue";
+
 
 
 const iconScroller = ref<any>(null);
