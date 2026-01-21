@@ -32,6 +32,55 @@ _ISO_RE = re.compile(
     r"(Z|[+-]\d{2}:\d{2})?$"
 )
 
+# Commands that write NON-JSON bytes to STDOUT (must not print JSON to stdout on failure)
+BINARY_STDOUT_CMDS = {
+  "download-object",
+  "download-prefix-targz",
+  "download-object-version",
+}
+
+#Commands that are NDJSON on STDOUT in some/most cases (streaming progress/result)
+NDJSON_STDOUT_CMDS = {
+  "delete-prefix",
+  "upload-stdin",
+  "rename-object",         
+  "change-storage-class",   
+}
+
+def _format_err(e: BaseException) -> str:
+  if isinstance(e, KeyboardInterrupt):
+    return "Canceled"
+  if isinstance(e, ClientError):
+    err = (getattr(e, "response", None) or {}).get("Error") or {}
+    code = err.get("Code") or "ClientError"
+    msg = err.get("Message") or str(e)
+    return f"{code}: {msg}"
+  s = str(e).strip()
+  return s if s else e.__class__.__name__
+
+def _emit_json_stdout(obj: Dict[str, Any]) -> None:
+  sys.stdout.write(json.dumps(obj) + "\n")
+  sys.stdout.flush()
+
+def _emit_ndjson(obj: Dict[str, Any]) -> None:
+  # identical format, but semantically "one line of NDJSON"
+  sys.stdout.write(json.dumps(obj) + "\n")
+  sys.stdout.flush()
+
+def _emit_json_stderr(obj: Dict[str, Any]) -> None:
+  sys.stderr.write(json.dumps(obj) + "\n")
+  sys.stderr.flush()
+
+def _wants_ndjson(cmd: str, argv: List[str]) -> bool:
+  if cmd in ("delete-prefix", "upload-stdin"):
+    return True
+  if cmd == "rename-object":
+    return "--stream" in argv
+  if cmd == "change-storage-class":
+    return True
+  return False
+
+
 def parse_iso8601_to_datetime(value: str) -> datetime:
     if value is None:
         raise ValueError("retain-until is required")
@@ -553,7 +602,7 @@ def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
       "errors": error_total,
       "error": str(e),
     })
-    raise
+    return
 
 def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
@@ -625,7 +674,8 @@ def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, arg
   except Exception as e:
     if stream and not emitted_result:
       emit({"type": "result", "ok": False, "src": src_key, "dst": dst_key, "size": size, "error": str(e)})
-    raise
+    return
+
 def read_exact(stream, n: int) -> bytes:
   chunks = []
   remaining = n
@@ -681,12 +731,10 @@ def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str
 
   except Exception as e:
     sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
-    raise
+    
 
 
 def cmd_copy_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: str, dst_prefix: str, argv: List[str]) -> None:
-
-
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
@@ -777,7 +825,7 @@ def cmd_copy_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: 
       "bytes": done_bytes,
       "totalBytes": total_bytes,
     }) + "\n")
-    raise
+    return
 
   except Exception as e:
     sys.stdout.write(json.dumps({
@@ -789,7 +837,7 @@ def cmd_copy_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: 
       "bytes": done_bytes,
       "totalBytes": total_bytes,
     }) + "\n")
-    raise
+    return
 
 def cmd_move_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: str, dst_prefix: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
@@ -817,7 +865,7 @@ def cmd_move_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: 
 
   keys: List[Dict[str, Any]] = []
   total_bytes = 0
-  for key, size, lm in iter_keys_under_prefix(client, bucket, src_p):
+  for key, size, lm in iter_keys_under_prefix(client, src_bucket, src_p):
     rel = key[len(src_p):] if key.startswith(src_p) else key
     dst_key = dst_p + rel
     keys.append({"src": key, "dst": dst_key, "size": int(size or 0)})
@@ -883,7 +931,7 @@ def cmd_move_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: 
       "bytes": done_bytes,
       "totalBytes": total_bytes,
     }) + "\n")
-    raise
+    return
 
   except Exception as e:
     sys.stdout.write(json.dumps({
@@ -895,7 +943,7 @@ def cmd_move_prefix(conn_id: str, src_bucket: str, src_prefix: str, dst_bucket: 
       "bytes": done_bytes,
       "totalBytes": total_bytes,
     }) + "\n")
-    raise
+    return
 
 
 def choose_upload_part_size(size: int, min_part: int = 8 * 1024 * 1024) -> int:
@@ -1012,8 +1060,6 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
       emit({"type": "result", "ok": True, "bucket": bucket, "key": key, "size": total_size})
       return
 
-
-
     part_size = choose_upload_part_size(total_size, min_part=8 * 1024 * 1024)
     total_parts = int(math.ceil(total_size / part_size)) if total_size > 0 else 1
 
@@ -1065,13 +1111,18 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
     )
 
     emit({"type": "result", "ok": True, "bucket": bucket, "key": key, "size": total_size})
+    return
 
   except KeyboardInterrupt:
+    abort()
     emit({"type": "result", "ok": False, "bucket": bucket, "key": key, "size": total_size, "error": "Canceled"})
-    raise
+    return
+
   except Exception as e:
+    abort()
     emit({"type": "result", "ok": False, "bucket": bucket, "key": key, "size": total_size, "error": str(e)})
-    raise
+    return
+
 
 def cmd_cancel_download_job(job_id: str) -> None:
   job_id = (job_id or "").strip()
@@ -1650,7 +1701,7 @@ def cmd_get_object_tags(conn_id: str, bucket: str, key: str) -> None:
       "key": key,
       "error": str(e),
     }) + "\n")
-    raise
+    return
 
 def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
@@ -2162,7 +2213,7 @@ def cmd_download_object_version(conn_id: str, bucket: str, key: str, version_id:
       "error": "Canceled",
       "state": "canceled",
     })
-    raise
+    raise SystemExit(0)
 
   except Exception as e:
     emit_err({
@@ -2189,7 +2240,7 @@ def cmd_download_object_version(conn_id: str, bucket: str, key: str, version_id:
       "error": str(e),
       "state": "failed",
     })
-    raise
+    raise SystemExit(1)
 
 def cmd_rollback_object_version(conn_id: str, bucket: str, key: str, version_id: str) -> None:
   record = read_json(cfg_path(conn_id))
@@ -2460,190 +2511,217 @@ def cmd_put_object_retention(conn_id: str, bucket: str, key: str, argv: List[str
 
 
 def main() -> None:
-  if len(sys.argv) < 2:
-    raise ValueError("Usage: s3browser-cli [list-buckets|list-objects] ...")
-  cmd = sys.argv[1]
+  cmd = None
+  try:
+    if len(sys.argv) < 2:
+      raise ValueError("Usage: s3browser-cli <command> ...")
 
-  if cmd == "list-buckets":
-    if len(sys.argv) < 3:
-      raise ValueError("Usage: s3browser-cli list-buckets <connectionId>")
-    cmd_list_buckets(sys.argv[2])
-    return
+    cmd = sys.argv[1]
 
-  if cmd == "list-objects":
-    if len(sys.argv) < 4:
-      raise ValueError("Usage: s3browser-cli list-objects <connectionId> <bucket> [--prefix P] [--delimiter /] [--max-keys N] [--continuation-token T]")
-    conn_id = sys.argv[2]
-    bucket = sys.argv[3]
-    cmd_list_objects(conn_id, bucket, sys.argv[4:])
-    return
+    # ---- your existing dispatch exactly as-is, but WITHOUT the final raises ----
+    if cmd == "list-buckets":
+      if len(sys.argv) < 3:
+        raise ValueError("Usage: s3browser-cli list-buckets <connectionId>")
+      cmd_list_buckets(sys.argv[2])
+      return
 
-  if cmd == "presign-get":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli presign-get <connectionId> <bucket> <key> [--expires SEC]")
-    conn_id = sys.argv[2]
-    bucket = sys.argv[3]
-    key = sys.argv[4]
-    cmd_presign_get(conn_id, bucket, key, sys.argv[5:])
-    return
+    if cmd == "list-objects":
+      if len(sys.argv) < 4:
+        raise ValueError("Usage: s3browser-cli list-objects <connectionId> <bucket> [--prefix P] [--delimiter /] [--max-keys N] [--continuation-token T]")
+      conn_id = sys.argv[2]
+      bucket = sys.argv[3]
+      cmd_list_objects(conn_id, bucket, sys.argv[4:])
+      return
 
-  if cmd == "delete-object":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli delete-object <connectionId> <bucket> <key>")
-    cmd_delete_object(sys.argv[2], sys.argv[3], sys.argv[4])
-    return
+    if cmd == "presign-get":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli presign-get <connectionId> <bucket> <key> [--expires SEC]")
+      conn_id = sys.argv[2]
+      bucket = sys.argv[3]
+      key = sys.argv[4]
+      cmd_presign_get(conn_id, bucket, key, sys.argv[5:])
+      return
 
-  if cmd == "delete-prefix":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli delete-prefix <connectionId> <bucket> <prefix>")
-    cmd_delete_prefix(sys.argv[2], sys.argv[3], sys.argv[4])
-    return
-  
-  if cmd == "rename-object":
-    if len(sys.argv) < 6:
-      raise ValueError("Usage: s3browser-cli rename-object <connectionId> <bucket> <srcKey> <dstKey> [--stream] [--concurrency N]")
-    cmd_rename_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
-    return
+    if cmd == "delete-object":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli delete-object <connectionId> <bucket> <key>")
+      cmd_delete_object(sys.argv[2], sys.argv[3], sys.argv[4])
+      return
 
-  if cmd == "upload-stdin":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli upload-stdin <connectionId> <bucket> <key> --size N [--content-type CT]")
-    cmd_upload_stdin(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
+    if cmd == "delete-prefix":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli delete-prefix <connectionId> <bucket> <prefix>")
+      cmd_delete_prefix(sys.argv[2], sys.argv[3], sys.argv[4])
+      return
 
-  if cmd == "download-prefix-targz":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli download-prefix-targz <connectionId> <bucket> <prefix> [--strip-components N]")
-    cmd_download_prefix_targz(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
+    if cmd == "rename-object":
+      if len(sys.argv) < 6:
+        raise ValueError("Usage: s3browser-cli rename-object <connectionId> <bucket> <srcKey> <dstKey> [--stream] [--concurrency N]")
+      cmd_rename_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+      return
 
-  if cmd == "download-object":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli download-object <connectionId> <bucket> <key> [--chunk N]")
-    cmd_download_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
+    if cmd == "upload-stdin":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli upload-stdin <connectionId> <bucket> <key> --size N [--content-type CT]")
+      cmd_upload_stdin(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
 
-  if cmd == "download-job-status":
-    if len(sys.argv) < 3:
-      raise ValueError("Usage: s3browser-cli download-job-status <jobId>")
-    cmd_download_job_status(sys.argv[2])
-    return
-  
-  if cmd == "copy-object":
-    if len(sys.argv) < 7:
-      raise ValueError("Usage: s3browser-cli copy-object <connectionId> <srcBucket> <srcKey> <dstBucket> <dstKey> [--concurrency N]")
-    cmd_copy_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
-    return
+    if cmd == "download-prefix-targz":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli download-prefix-targz <connectionId> <bucket> <prefix> [--strip-components N]")
+      cmd_download_prefix_targz(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
 
-  if cmd == "copy-prefix":
-    if len(sys.argv) < 7:
-      raise ValueError("Usage: s3browser-cli copy-prefix <connectionId> <srcBucket> <srcPrefix> <dstBucket> <dstPrefix> [--concurrency N]")
-    cmd_copy_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
-    return
+    if cmd == "download-object":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli download-object <connectionId> <bucket> <key> [--chunk N]")
+      cmd_download_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
 
+    if cmd == "download-job-status":
+      if len(sys.argv) < 3:
+        raise ValueError("Usage: s3browser-cli download-job-status <jobId>")
+      cmd_download_job_status(sys.argv[2])
+      return
 
-  if cmd == "move-prefix":
-    if len(sys.argv) < 7:
-      raise ValueError("Usage: s3browser-cli move-prefix <connectionId> <srcBucket> <srcPrefix> <dstBucket> <dstPrefix> [--concurrency N]")
-    cmd_move_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
-    return
-  if cmd == "stat-object":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli stat-object <connectionId> <bucket> <key>")
-    cmd_stat_object(sys.argv[2], sys.argv[3], sys.argv[4])
-    return
-  
-  if cmd == "put-object-tags":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli put-object-tags <connectionId> <bucket> <key> [--tag k=v ...] [--tags-json JSON]")
-    cmd_put_object_tags(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
+    if cmd == "copy-object":
+      if len(sys.argv) < 7:
+        raise ValueError("Usage: s3browser-cli copy-object <connectionId> <srcBucket> <srcKey> <dstBucket> <dstKey> [--concurrency N]")
+      cmd_copy_object(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
+      return
 
-  
-  if cmd == "get-object-tags":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli get-object-tags <connectionId> <bucket> <key>")
-    cmd_get_object_tags(sys.argv[2], sys.argv[3], sys.argv[4])
-    return
-  
-  if cmd == "change-storage-class":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli change-storage-class <connectionId> <bucket> <key> --storage-class CLASS [--force 1] [--concurrency N]")
-    cmd_change_storage_class(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
-  if cmd == "cancel-download-job":
-    if len(sys.argv) < 3:
-      raise ValueError("Usage: cancel-download-job <job_id>")
-    cmd_cancel_download_job(sys.argv[2])
-    return
-  
-  if cmd == "list-object-versions":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli list-object-versions <connectionId> <bucket> <key> [--max-keys N]")
-    conn_id = sys.argv[2]
-    bucket = sys.argv[3]
-    key = sys.argv[4]
-    argv = sys.argv[5:]
+    if cmd == "copy-prefix":
+      if len(sys.argv) < 7:
+        raise ValueError("Usage: s3browser-cli copy-prefix <connectionId> <srcBucket> <srcPrefix> <dstBucket> <dstPrefix> [--concurrency N]")
+      cmd_copy_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
+      return
 
-    max_keys = 200
-    try:
-      mk = get_flag_value(argv, "--max-keys")
-      if mk is not None and str(mk).strip() != "":
-        max_keys = int(mk)
-    except Exception:
+    if cmd == "move-prefix":
+      if len(sys.argv) < 7:
+        raise ValueError("Usage: s3browser-cli move-prefix <connectionId> <srcBucket> <srcPrefix> <dstBucket> <dstPrefix> [--concurrency N]")
+      cmd_move_prefix(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7:])
+      return
+
+    if cmd == "stat-object":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli stat-object <connectionId> <bucket> <key>")
+      cmd_stat_object(sys.argv[2], sys.argv[3], sys.argv[4])
+      return
+
+    if cmd == "put-object-tags":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli put-object-tags <connectionId> <bucket> <key> [--tag k=v ...] [--tags-json JSON]")
+      cmd_put_object_tags(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
+
+    if cmd == "get-object-tags":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli get-object-tags <connectionId> <bucket> <key>")
+      cmd_get_object_tags(sys.argv[2], sys.argv[3], sys.argv[4])
+      return
+
+    if cmd == "change-storage-class":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli change-storage-class <connectionId> <bucket> <key> --storage-class CLASS [--force 1] [--concurrency N]")
+      cmd_change_storage_class(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
+
+    if cmd == "cancel-download-job":
+      if len(sys.argv) < 3:
+        raise ValueError("Usage: cancel-download-job <job_id>")
+      cmd_cancel_download_job(sys.argv[2])
+      return
+
+    if cmd == "list-object-versions":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli list-object-versions <connectionId> <bucket> <key> [--max-keys N]")
+      conn_id = sys.argv[2]
+      bucket = sys.argv[3]
+      key = sys.argv[4]
+      argv = sys.argv[5:]
+
       max_keys = 200
+      try:
+        mk = get_flag_value(argv, "--max-keys")
+        if mk is not None and str(mk).strip() != "":
+          max_keys = int(mk)
+      except Exception:
+        max_keys = 200
 
-    cmd_list_object_versions(conn_id, bucket, key, max_keys=max_keys)
-    return
-  if cmd == "delete-object-version":
-    if len(sys.argv) < 6:
-      raise ValueError("Usage: delete-object-version <connectionId> <bucket> <key> <versionId>")
-    cmd_delete_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
-    return
+      cmd_list_object_versions(conn_id, bucket, key, max_keys=max_keys)
+      return
 
-  if cmd == "rollback-object-version":
-    if len(sys.argv) < 6:
-      raise ValueError("Usage: rollback-object-version <connectionId> <bucket> <key> <versionId>")
-    cmd_rollback_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
-    return
+    if cmd == "delete-object-version":
+      if len(sys.argv) < 6:
+        raise ValueError("Usage: delete-object-version <connectionId> <bucket> <key> <versionId>")
+      cmd_delete_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+      return
 
-  if cmd == "download-object-version":
-    if len(sys.argv) < 6:
-      raise ValueError("Usage: download-object-version <connectionId> <bucket> <key> <versionId> --job-id JOB [--chunk N]")
-    cmd_download_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
-    return
-  if cmd == "get-bucket-object-lock":
-    if len(sys.argv) < 4:
-      raise ValueError("Usage: s3browser-cli get-bucket-object-lock <connectionId> <bucket>")
-    cmd_get_bucket_object_lock(sys.argv[2], sys.argv[3])
-    return
+    if cmd == "rollback-object-version":
+      if len(sys.argv) < 6:
+        raise ValueError("Usage: rollback-object-version <connectionId> <bucket> <key> <versionId>")
+      cmd_rollback_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+      return
 
-  if cmd == "get-object-legal-hold":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli get-object-legal-hold <connectionId> <bucket> <key> [--version-id VID]")
-    cmd_get_object_legal_hold(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
+    if cmd == "download-object-version":
+      if len(sys.argv) < 6:
+        raise ValueError("Usage: download-object-version <connectionId> <bucket> <key> <versionId> --job-id JOB [--chunk N]")
+      cmd_download_object_version(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
+      return
 
-  if cmd == "get-object-retention":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli get-object-retention <connectionId> <bucket> <key> [--version-id VID]")
-    cmd_get_object_retention(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
-  
-  if cmd == "put-object-legal-hold":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli put-object-legal-hold <connectionId> <bucket> <key> --status (ON|OFF) [--version-id VID]")
-    cmd_put_object_legal_hold(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
-  
-  if cmd == "put-object-retention":
-    if len(sys.argv) < 5:
-      raise ValueError("Usage: s3browser-cli put-object-retention <connectionId> <bucket> <key> --mode (GOVERNANCE|COMPLIANCE) --retain-until ISO [--version-id VID] [--bypass-governance 1]")
-    cmd_put_object_retention(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
-    return
+    if cmd == "get-bucket-object-lock":
+      if len(sys.argv) < 4:
+        raise ValueError("Usage: s3browser-cli get-bucket-object-lock <connectionId> <bucket>")
+      cmd_get_bucket_object_lock(sys.argv[2], sys.argv[3])
+      return
 
+    if cmd == "get-object-legal-hold":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli get-object-legal-hold <connectionId> <bucket> <key> [--version-id VID]")
+      cmd_get_object_legal_hold(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
 
-  raise ValueError("Unknown command")
+    if cmd == "get-object-retention":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli get-object-retention <connectionId> <bucket> <key> [--version-id VID]")
+      cmd_get_object_retention(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
+
+    if cmd == "put-object-legal-hold":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli put-object-legal-hold <connectionId> <bucket> <key> --status (ON|OFF) [--version-id VID]")
+      cmd_put_object_legal_hold(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
+
+    if cmd == "put-object-retention":
+      if len(sys.argv) < 5:
+        raise ValueError("Usage: s3browser-cli put-object-retention <connectionId> <bucket> <key> --mode (GOVERNANCE|COMPLIANCE) --retain-until ISO [--version-id VID] [--bypass-governance 1]")
+      cmd_put_object_retention(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
+      return
+
+    # Unknown command -> convert to JSON error instead of raising
+    raise ValueError("Unknown command")
+
+  except BaseException as e:
+    # cmd may be None if failure happens before parsing
+    c = cmd or ""
+
+    msg = _format_err(e)
+
+    # For binary stdout commands, never write to stdout
+    if c in BINARY_STDOUT_CMDS:
+      _emit_json_stderr({"type": "result", "ok": False, "error": msg})
+      raise SystemExit(1)
+
+    # For NDJSON commands, emit a final result line
+    if _wants_ndjson(c, sys.argv[2:]):
+      _emit_ndjson({"type": "result", "ok": False, "error": msg})
+      raise SystemExit(0)
+
+    # Default: one-shot JSON on stdout
+    _emit_json_stdout({"ok": False, "error": msg})
+    raise SystemExit(0)
+
 
 if __name__ == "__main__":
   cmd0 = sys.argv[1] if len(sys.argv) > 1 else ""

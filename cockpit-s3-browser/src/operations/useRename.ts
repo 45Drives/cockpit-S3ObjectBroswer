@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import type { renameObjectStreamed as renameObjectStreamedFn } from "../lib/s3Objects";
 import { useTaskCenterStore } from "../stores/taskCenter";
+import { pushNotification, Notification } from '@45drives/houston-common-ui';
 
 type RenameProgress = { done: number; total: number; bytes: number; size: number };
 
@@ -109,15 +110,14 @@ export function useRename(deps: Deps) {
     if (!deps.connectionId.value || !deps.bucket.value) return;
     if (!srcKey || !dstKey) return;
     if (srcKey === dstKey) return;
-
+  
     deps.setError?.("");
     deps.setBusy?.(true);
-
-    // Create/replace the global TaskCenter entry for this rename
+  
     const id = `rename:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     currentTaskId.value = id;
     currentTaskName.value = `${srcKey} → ${dstKey}`;
-
+  
     taskCenter.upsert({
       id,
       kind: "rename",
@@ -132,8 +132,46 @@ export function useRename(deps: Deps) {
         dismiss: () => dismiss(),
       },
     });
-    
+  
+    let finalized = false;
+    const finalize = (state: "done" | "failed" | "canceled", msg?: string) => {
+      if (finalized) return;
+      finalized = true;
+  
+      // Clear inline progress UI (page-level)
+      renameProgress.value = null;
+      renameCancel.value = null;
+  
+      upsertTask(state, msg);
+  
+      if (state === "done") {
+        console.log(`[rename] completed ${srcKey} → ${dstKey}`);
+        pushNotification(new Notification('Rename completed',
+          `Rename completed ${srcKey} → ${dstKey}`,
+          'success', 5000));
+        deps.onRenamed?.(srcKey, dstKey);
+        return;
+      }
+  
+      const em = msg || (state === "canceled" ? "Rename canceled" : "Rename failed");
+      if (state === "canceled") {
+        console.log(`[rename] canceled ${srcKey} → ${dstKey}: ${em}`);
+        pushNotification(new Notification('Rename canceled',
+          `Rename canceled ${srcKey} → ${dstKey}`,
+          'error', 5000));
+      }
+      else{
 
+        console.error(`[rename] failed ${srcKey} → ${dstKey}: ${em}`);
+        pushNotification(new Notification('Rename failed',
+          `Rename failed ${srcKey} → ${dstKey}`,
+          'error', 5000));
+        
+      } 
+  
+      deps.setError?.(em);
+    };
+  
     const job = deps.renameObjectStreamed({
       connectionId: deps.connectionId.value,
       bucket: deps.bucket.value,
@@ -149,34 +187,31 @@ export function useRename(deps: Deps) {
             size: Number(ev.size ?? 0),
           };
           upsertTask("running");
-        } else if (ev.type === "progress") {
-          if (!renameProgress.value) {
-            renameProgress.value = { done: 0, total: 0, bytes: 0, size: 0 };
-          }
+          return;
+        }
+  
+        if (ev.type === "progress") {
+          if (!renameProgress.value) renameProgress.value = { done: 0, total: 0, bytes: 0, size: 0 };
           renameProgress.value.done = Number(ev.partsDone ?? renameProgress.value.done);
           renameProgress.value.total = Number(ev.totalParts ?? renameProgress.value.total);
           renameProgress.value.bytes = Number(ev.bytesCopied ?? renameProgress.value.bytes);
           renameProgress.value.size = Number(ev.size ?? renameProgress.value.size);
-
           upsertTask("running");
-        } else if (ev.type === "result") {
-          // Clear inline progress UI (page-level)
-          renameProgress.value = null;
-          renameCancel.value = null;
-
+          return;
+        }
+  
+        if (ev.type === "result") {
           if (ev.ok) {
-            upsertTask("done");
+            finalize("done");
           } else {
             const msg = ev.error || "Rename canceled/failed";
-            // Best-effort: classify cancel vs fail
             const canceled = msg.toLowerCase().includes("cancel");
-            upsertTask(canceled ? "canceled" : "failed", msg);
-            deps.setError?.(msg);
+            finalize(canceled ? "canceled" : "failed", msg);
           }
         }
       },
     });
-
+  
     renameCancel.value = () => {
       try {
         job.cancel();
@@ -184,24 +219,24 @@ export function useRename(deps: Deps) {
         // ignore
       }
     };
-
+  
     try {
       const res = await job.run;
+  
+      // If stream didn't send a final "result" event, finalize here.
       if (res.isErr()) {
         const msg = res.error.message || "Rename failed";
         const canceled = msg.toLowerCase().includes("cancel");
-        upsertTask(canceled ? "canceled" : "failed", msg);
-        deps.setError?.(msg);
+        finalize(canceled ? "canceled" : "failed", msg);
         return;
       }
-
-      // success
-      upsertTask("done");
-      deps.onRenamed?.(srcKey, dstKey);
+  
+      finalize("done");
     } finally {
       deps.setBusy?.(false);
     }
   }
+  
 
   return {
     renameProgress,

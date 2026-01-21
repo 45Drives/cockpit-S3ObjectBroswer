@@ -73,13 +73,6 @@
                         </div>
                     </div>
 
-                    <div v-if="uploadItems.length" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
-                        <div class="flex items-center justify-between gap-3">
-                            <div class="font-semibold">Upload queue: {{ uploadItems.length }}</div>
-                            <div v-if="overallPct != null" class="text-xs opacity-80">Overall: {{ overallPct }}%</div>
-                        </div>
-                    </div>
-
                     <div v-if="renameProgress" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
                         <div class="font-semibold">Renaming</div>
                         <button type="button"
@@ -342,11 +335,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import {
     listObjects, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus
-    , copyPrefix, movePrefix, copyObject, getObjectTags, putObjectTags, statObject, changeStorageClass, cancelDownloadJob,
-    getObjectVersions,
-    downloadObjectVersion,
-    deleteObjectVersion,
-    rollbackObjectVersion
+    , copyPrefix, movePrefix, copyObject, getObjectTags, putObjectTags, statObject, changeStorageClass, cancelDownloadJob, getObjectVersions,
+    downloadObjectVersion, deleteObjectVersion, rollbackObjectVersion
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
@@ -509,6 +499,8 @@ const downloads = useDownloads({
     downloadPrefixTarGz,
     getDownloadJobStatus,
     cancelDownloadJob,
+    downloadObjectVersion,
+
     setError: (m) => (error.value = m),
 
 });
@@ -581,6 +573,7 @@ const deletes = useDeletes({
     deletePrefixStreamed,
     deleteObject,
     refresh,
+    deleteObjectVersion,
 
     onDeleted: (it) => {
         if (it.type === "file") removeFileRowByKey(it.key);
@@ -662,8 +655,15 @@ const selectedRows = computed<Row[]>(() => {
 });
 
 function goBack() {
-    router.back();
+  router.push({
+    name: "Buckets",
+    query: {
+      connectionId: String(route.query.connectionId || ""),
+      connectionName: String(route.query.connectionName || ""),
+    },
+  });
 }
+
 
 function openPrefix(p: string) {
     router.push({
@@ -1094,10 +1094,7 @@ async function onMenuAction(action: MenuAction) {
 
         return;
     }
-
-
 }
-
 
 function confirmDeleteNow() {
     const items = pendingDeleteItems.value;
@@ -1483,41 +1480,48 @@ async function onVersionAction(payload: { action: "download" | "delete" | "rollb
         const vid = payload.versionIds[0];
         if (!vid) return;
 
-        await rollbackObjectVersion({
+        const res = await rollbackObjectVersion({
             connectionId: connectionId.value,
             bucket: bucket.value,
             key,
             versionId: vid,
         });
 
+        if (res.isOk()) {
+            const v = res.value;
+            console.log(`Rolled back ${v.key} in ${v.bucket} from version ${v.fromVersionId}`);
+        } else {
+            const e = res.error;
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error(`Rollback failed for ${key} (version ${vid}): ${msg}`, e);
+            // optional: return early so you don't reload if rollback failed
+            // return;
+        }
+
         await loadVersionsForKey(key, versionsName.value);
         return;
     }
 
+
     if (payload.action === "delete") {
-        for (const vid of payload.versionIds) {
-            await deleteObjectVersion({
-                connectionId: connectionId.value,
-                bucket: bucket.value,
-                key,
-                versionId: vid,
-            });
-        }
+        await deletes.deleteVersionsForKey({
+            key,
+            versionIds: payload.versionIds,
+            displayName: versionsName.value,
+        });
+
         await loadVersionsForKey(key, versionsName.value);
         return;
     }
 
     if (payload.action === "download") {
         for (const vid of payload.versionIds) {
-            const jobId = (globalThis.crypto as any)?.randomUUID?.() ?? String(Date.now());
-            await downloadObjectVersion({
-                connectionId: connectionId.value,
-                bucket: bucket.value,
+            await downloads.enqueueObjectVersionDownload({
                 key,
                 versionId: vid,
-                jobId,
                 filename: versionsName.value,
             });
+            await new Promise((r) => window.setTimeout(r, 250));
         }
     }
 }

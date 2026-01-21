@@ -14,6 +14,7 @@ import {
   folderNameFromPrefix,
   normalizePrefixNoLead,
 } from "../lib/helpers";
+import { pushNotification, Notification } from "@45drives/houston-common-ui";
 
 type Deps = {
   connectionId: { value: string };
@@ -185,6 +186,9 @@ export function useTransfers(deps: Deps) {
           state: "running",
           startedAt: Date.now(),
         });
+        const kindLabel = kind === "cut" ? "move" : "copy";
+        const srcLabel = `${p.srcBucket}:${p.srcKey}`;
+        const dstLabel = `${dstBucket}:${p.dstKey}`;
 
         const tIdx = transferJobs.value.findIndex((j) => j.id === jobId);
 
@@ -277,9 +281,24 @@ export function useTransfers(deps: Deps) {
             transferJobs.value[tIdx].state = "done";
             transferJobs.value[tIdx].finishedAt = Date.now();
           }
+          pushNotification(
+            new Notification(
+              "Transfer completed",
+              `Transfer ${kindLabel} ${p.itemType} completed: ${p.name} (${srcLabel} → ${dstLabel})`,
+              "success",
+              5000
+            )
+          );
         } catch (e: any) {
           const msg = e?.message || "Paste failed";
-
+          pushNotification(
+            new Notification(
+              "Transfer failed",
+              `Transfer ${kindLabel} ${p.itemType} failed: ${p.name} (${srcLabel} → ${dstLabel}) - ${msg}`,
+              "error",
+              5000
+            )
+          );
           p.step = "failed";
           p.error = msg;
           pasteItems.value = [...pasteItems.value];
@@ -312,7 +331,7 @@ export function useTransfers(deps: Deps) {
       transferJobs.value = transferJobs.value.filter((x) => x.id !== id);
       return;
     }
-  
+
     // pasteItems
     const p = pasteItems.value.find((x) => x.id === id);
     if (p) {
@@ -320,29 +339,31 @@ export function useTransfers(deps: Deps) {
       pasteItems.value = pasteItems.value.filter((x) => x.id !== id);
     }
   }
-  
+
   function cancelJob(id: string) {
     const j = transferJobs.value.find((x) => x.id === id);
     if (!j) return;
-  
+
     // only active jobs
     if (j.state !== "running" && j.state !== "canceling") return;
-  
+
     // mark canceling; actual operation may still finish in background
     j.state = "canceling";
     j.error = "Canceled";
     j.finishedAt = Date.now();
-  
+
     transferJobs.value = [...transferJobs.value];
-  
+
     // also try to cancel the matching paste item (if any)
-    const p = pasteItems.value.find((x) => x.name === j.name && x.step === "copying");
+    const p = pasteItems.value.find(
+      (x) => x.name === j.name && x.step === "copying"
+    );
     if (p) {
       p.step = "canceled";
       pasteItems.value = [...pasteItems.value];
     }
   }
-  
+
   return {
     // transfer jobs
     transferJobs,
@@ -358,6 +379,6 @@ export function useTransfers(deps: Deps) {
     // actions
     pasteHere,
     dismiss,
-    cancelJob
+    cancelJob,
   };
 }

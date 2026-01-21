@@ -4,6 +4,8 @@ import type { UploadItem } from "../types";
 import type { uploadObjectFromStdinStreamed as uploadObjectFromStdinStreamedFn } from "../lib/s3Objects";
 import { uid } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
+import { pushNotification, Notification } from '@45drives/houston-common-ui';
+
 
 type Deps = {
   connectionId: { value: string };
@@ -16,6 +18,7 @@ type Deps = {
   setError?: (msg: string) => void;
   onUploaded?: (key: string) => void;
 };
+
 
 export function useUploads(deps: Deps) {
   const taskCenter = useTaskCenterStore();
@@ -46,6 +49,41 @@ export function useUploads(deps: Deps) {
     if (!t) return null;
     return Math.max(0, Math.min(100, Math.floor((overallSent.value / t) * 100)));
   });
+
+  const notified = new Set<string>();
+
+function notify(u: UploadItem, state: "done" | "failed" | "canceled") {
+  if (notified.has(u.id)) return;
+  notified.add(u.id);
+
+  const bucket = deps.bucket.value;
+  const key = u.dstKey;
+  const name = u.file.name;
+
+  if (state === "done") {
+    pushNotification(
+      new Notification("Upload completed",`Uploaded ${name} to ${bucket}:${key}`,"success",5000
+      )
+    );
+    return;
+  }
+
+  if (state === "canceled") {
+    pushNotification(
+      new Notification("Upload canceled",`Canceled ${name} (${bucket}:${key})`,"error",5000
+      )
+    );
+    return;
+  }
+
+  // failed
+  const msg = u.error || "Upload failed";
+  pushNotification(
+    new Notification("Upload failed",`Failed ${name} (${bucket}:${key}) - ${msg}`,"error",5000
+    )
+  );
+}
+
 
   function chooseSafeConcurrency(files: File[]) {
     const sizes = files.map((f) => f.size || 0);
@@ -220,6 +258,7 @@ export function useUploads(deps: Deps) {
           u.canceled = true;
           u.status = "canceled";
           upsertTaskForItem(u);
+          notify(u, "canceled");
         }
       }
 
@@ -245,6 +284,7 @@ export function useUploads(deps: Deps) {
           if (!item.canceled) {
             item.status = "done";
             upsertTaskForItem(item);
+            notify(item, "done");
             deps.onUploaded?.(item.dstKey);
           } else {
             item.status = "canceled";
@@ -255,9 +295,12 @@ export function useUploads(deps: Deps) {
             item.status = "failed";
             item.error = e?.message || "Upload failed";
             upsertTaskForItem(item);
+            notify(item, "failed");
+
           } else {
             item.status = "canceled";
             upsertTaskForItem(item);
+            notify(item, "canceled");
           }
         }
       }
@@ -348,6 +391,7 @@ export function useUploads(deps: Deps) {
       it.canceled = true;
       it.status = "canceled";
       upsertTaskForItem(it);
+      notify(it, "canceled");
       return;
     }
 

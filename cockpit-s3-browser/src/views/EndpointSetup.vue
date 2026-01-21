@@ -84,7 +84,7 @@
                     </button>
 
                     <button type="button"
-                      class="inline-flex items-center justify-center btn-danger rounded-md border border-default px-3 py-1.5 text-sm font-semibold text-red-700 shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+                      class="inline-flex items-center justify-center btn-danger rounded-md border border-default px-3 py-1.5 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
                       :disabled="busy" @click="openDelete(c)">
                       Delete
                     </button>

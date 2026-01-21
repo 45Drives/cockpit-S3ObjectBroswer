@@ -6,8 +6,11 @@ import { useTaskCenterStore } from "../stores/taskCenter";
 import type {
   deleteObject as deleteObjectFn,
   deletePrefixStreamed as deletePrefixStreamedFn,
+  deleteObjectVersion as deleteObjectVersionFn,
 } from "../lib/s3Objects";
 import { uid } from "../lib/helpers";
+import { pushNotification, Notification } from '@45drives/houston-common-ui';
+
 
 type Deps = {
   connectionId: { value: string };
@@ -16,6 +19,8 @@ type Deps = {
   delStore: ReturnType<typeof useDeleteTasksStore>;
   deletePrefixStreamed: typeof deletePrefixStreamedFn;
   deleteObject: typeof deleteObjectFn;
+
+  deleteObjectVersion: typeof deleteObjectVersionFn; // add this
 
   refresh?: () => Promise<void> | void;
   onDeleted?: (
@@ -212,8 +217,79 @@ export function useDeletes(deps: Deps) {
       }
     }
   }
+  async function deleteVersionsForKey(opts: { key: string; versionIds: string[]; displayName?: string }) {
+    if (!deps.connectionId.value || !deps.bucket.value) return;
+    if (!opts.key || !opts.versionIds.length) return;
+  
+    const tcId = uid();
+    const name = opts.displayName || opts.key;
+    const total = opts.versionIds.length;
+  
+    upsertDeleteTask({
+      id: tcId,
+      name: `Delete ${total} version(s): ${name}`,
+      state: "running",
+      progressText: `0 / ${total}`,
+      dismiss: () => taskCenter.remove(tcId),
+    });
+  
+    let done = 0;
+  
+    for (const vid of opts.versionIds) {
+      const res = await deps.deleteObjectVersion({
+        connectionId: deps.connectionId.value,
+        bucket: deps.bucket.value,
+        key: opts.key,
+        versionId: vid,
+      });
+  
+      if (res.isErr()) {
+        const e = res.error;
+        const msg = e instanceof Error ? e.message : String(e);
+  
+        upsertDeleteTask({
+          id: tcId,
+          name: `Delete ${total} version(s): ${name}`,
+          state: "failed",
+          progressText: `Failed at ${done} / ${total}`,
+          error: msg,
+          dismiss: () => taskCenter.remove(tcId),
+        });
+  
+        console.error(`Failed to delete version ${vid} for ${opts.key}: ${msg}`, e);
+        pushNotification(new Notification('Failed Delete Version',
+          `Failed to delete version ${vid} for ${opts.key}: ${msg}`,
+          'error', 5000));
+        return;
+      }
+  
+      done += 1;
+      upsertDeleteTask({
+        id: tcId,
+        name: `Delete ${total} version(s): ${name}`,
+        state: "running",
+        progressText: `${done} / ${total}`,
+        dismiss: () => taskCenter.remove(tcId),
+      });
+    }
+  
+    upsertDeleteTask({
+      id: tcId,
+      name: `Delete ${total} version(s): ${name}`,
+      state: "done",
+      progressText: "Done",
+      dismiss: () => taskCenter.remove(tcId),
+    });
+  
+    console.log(`Deleted ${done} version(s) for ${opts.key}`);
+    pushNotification(new Notification('Version Deleted',
+      `Deleted ${done} version(s) for ${opts.key}`,
+      'success', 5000));
+  }
+  
 
   return {
+    deleteVersionsForKey,
     deleteBusy,
     isDeletingRow,
     deleteNow,

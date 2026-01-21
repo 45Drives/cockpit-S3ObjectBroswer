@@ -245,7 +245,7 @@ import type { Row, FileRow } from "../types";
 import type { TagKV } from "./TagsModal.vue";
 import { formatBytes, formatDate } from "../lib/helpers";
 import {
-  statObject, getObjectTags, getObjectVersions, rollbackObjectVersion, deleteObjectVersion, downloadObjectVersion, getBucketObjectLock, getObjectLegalHold,
+  statObject, getObjectTags, getObjectVersions, getBucketObjectLock, getObjectLegalHold,
   getObjectRetention, putObjectLegalHold, putObjectRetention,
 } from "../lib/s3Objects";
 

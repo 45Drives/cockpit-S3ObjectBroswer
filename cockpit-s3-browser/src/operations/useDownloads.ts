@@ -3,12 +3,14 @@ import { computed, onBeforeUnmount, ref } from "vue";
 import type { DownloadJob, DownloadState, Row, FolderRow, FileRow } from "../types";
 import type {
   downloadObject as downloadObjectFn,
+  downloadObjectVersion as downloadObjectVersionFn,
   downloadPrefixTarGz as downloadPrefixTarGzFn,
   getDownloadJobStatus as getDownloadJobStatusFn,
   cancelDownloadJob as cancelDownloadJobFn,
 } from "../lib/s3Objects";
 import { newJobId } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
+import { pushNotification, Notification } from '@45drives/houston-common-ui';
 
 type Deps = {
   connectionId: { value: string };
@@ -16,6 +18,7 @@ type Deps = {
 
   getDownloadJobStatus: typeof getDownloadJobStatusFn;
   downloadObject: typeof downloadObjectFn;
+  downloadObjectVersion: typeof downloadObjectVersionFn;
   downloadPrefixTarGz: typeof downloadPrefixTarGzFn;
   cancelDownloadJob: typeof cancelDownloadJobFn;
 
@@ -79,20 +82,59 @@ export function useDownloads(deps: Deps) {
       }
 
       for (const j of active) {
+        const prevState = j.state;
+      
         const res = await deps.getDownloadJobStatus({ jobId: j.id });
-        if (res.isErr()) continue;
-
+        if (res.isErr()) {
+          j.state = "failed";
+          j.error = res.error.message;
+          downloadJobs.value = [...downloadJobs.value];
+          syncTask(j);
+      
+          if (prevState !== "failed") {
+            console.error(`[download] failed ${j.name}: ${j.error}`);
+            pushNotification(new Notification('Download failed',
+              `Download failed ${j.name}: ${j.error}`,
+              'error', 5000));
+          }
+          continue;
+        }
+      
         const s = res.value;
-
+      
         if (typeof s.state === "string") j.state = s.state as DownloadState;
+      
+        // keep progress correct
         if (typeof s.bytes === "number") j.bytes = s.bytes;
         if (typeof s.totalBytes === "number") j.totalBytes = s.totalBytes;
+        else if (typeof s.size === "number") j.totalBytes = s.size;
+      
         if (typeof s.error === "string") j.error = s.error;
         if (typeof s.updatedAt === "number") j.updatedAt = s.updatedAt;
-
-        // keep TaskCenter in sync
+      
+        // Log only when we reach a final state (and only once)
+        if (j.state !== prevState) {
+          if (j.state === "done") {
+            console.log(`[download] completed ${j.name}`);
+            pushNotification(new Notification('Download completed',
+              `Download completed ${j.name}`,
+              'success', 5000));
+          } else if (j.state === "canceled") {
+            console.log(`[download] canceled ${j.name}`);
+            pushNotification(new Notification('Download Canceled',
+              `Download canceled ${j.name}`,
+              'error', 5000));
+          } else if (j.state === "failed") {
+            console.error(`[download] failed ${j.name}: ${j.error ?? "Unknown error"}`);
+            pushNotification(new Notification('Download failed',
+              `Download failed ${j.name}: ${j.error ?? "Unknown error"}`,
+              'error', 5000));
+          }
+        }
+      
         syncTask(j);
       }
+      
 
       // force UI update
       downloadJobs.value = [...downloadJobs.value];
@@ -196,6 +238,47 @@ export function useDownloads(deps: Deps) {
     }
   }
 
+  async function enqueueObjectVersionDownload(params: { key: string; versionId: string; filename?: string }) {
+    const jobId = newJobId();
+  
+    const base = params.filename || (params.key.split("/").pop() || "download");
+    const safeVid = (params.versionId || "").slice(0, 8) || "version";
+    const name = `${base}.v-${safeVid}`;
+  
+    const job: DownloadJob = {
+      id: jobId,
+      kind: "object-version",
+      name,
+      state: "running",
+      bytes: 0,
+      totalBytes: 0, // we’ll fill from job status (size)
+    };
+  
+    downloadJobs.value.unshift(job);
+    downloadJobs.value = [...downloadJobs.value];
+  
+    syncTask(job);
+    startPolling();
+  
+    const res = await deps.downloadObjectVersion({
+      connectionId: deps.connectionId.value,
+      bucket: deps.bucket.value,
+      key: params.key,
+      versionId: params.versionId,
+      jobId,
+      filename: base,
+    });
+  
+    if (res.isErr()) {
+      const msg = res.error.message;
+      markJobFailed(jobId, msg);
+      deps.setError?.(msg);
+      return;
+    }
+  }
+
+  
+
   async function cancelJob(jobId: string) {
     const j = downloadJobs.value.find((x) => x.id === jobId);
     if (!j) return;
@@ -263,6 +346,7 @@ export function useDownloads(deps: Deps) {
     stopPolling,
     downloadSelection,
     cancelJob,
+    enqueueObjectVersionDownload,
     dismiss,
   };
 }

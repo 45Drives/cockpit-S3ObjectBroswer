@@ -116,7 +116,7 @@ export type DownloadState = "running" | "done" | "failed" | "canceled" | "cancel
 
 export type DownloadJob = {
     id: string;           // jobId
-    kind: "object" | "prefix-targz";
+    kind: "object" | "prefix-targz" | "object-version" ;
     name: string;         // filename or prefix
     bytes?: number;
     totalBytes?: number;
