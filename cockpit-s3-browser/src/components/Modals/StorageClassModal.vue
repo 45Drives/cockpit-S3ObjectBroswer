@@ -2,7 +2,7 @@
     <div v-if="open" class="fixed inset-0 z-50">
         <div class="absolute inset-0 bg-black/40" @click="emit('close')" />
 
-        <div class="absolute inset-0 flex items-start justify-center overflow-auto p-6">
+        <div class="absolute inset-0 flex items-center justify-center overflow-auto p-6">
             <div class="w-full max-w-lg rounded-md border border-default bg-accent shadow-lg">
                 <div class="border-b border-default px-5 py-4">
                     <h2 class="text-base font-semibold text-default">Change storage class</h2>
@@ -45,7 +45,7 @@
 
                 <div class="flex justify-end gap-2 px-5 py-4 border-t border-default">
                     <button type="button"
-                        class="inline-flex items-center justify-center rounded-md border border-default bg-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
+                        class="inline-flex items-center justify-center btn-secondary rounded-md border border-default bg-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
                         :disabled="busy" @click="emit('close')">
                         Cancel
                     </button>

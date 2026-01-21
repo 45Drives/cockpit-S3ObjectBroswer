@@ -15,7 +15,7 @@
             <button type="button"
               class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
               :disabled="busy" @click="goBack">
-              Back
+              <ArrowUturnLeftIcon class="h-4 w-4"></ArrowUturnLeftIcon> Back
             </button>
 
             <button type="button"

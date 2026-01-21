@@ -13,7 +13,7 @@
             <template v-if="mode === 'objects'">
               <MenuItem v-slot="{ active }">
               <button type="button" class="block w-full px-4 py-2 text-left text-sm"
-                :class="active ? 'bg-accent text-default' : 'text-muted'" @click="doAction('download')">
+                :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('download')">
                 Download
               </button>
               </MenuItem>
@@ -22,14 +22,14 @@
 
               <MenuItem v-slot="{ active }">
               <button type="button" class="block w-full px-4 py-2 text-left text-sm"
-                :class="active ? 'bg-accent text-default' : 'text-muted'" @click="doAction('copy')">
+                :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('copy')">
                 Copy
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }">
               <button type="button" class="block w-full px-4 py-2 text-left text-sm"
-                :class="active ? 'bg-accent text-default' : 'text-muted'" @click="doAction('cut')">
+                :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('cut')">
                 Cut
               </button>
               </MenuItem>
@@ -37,10 +37,10 @@
               <MenuItem v-slot="{ active }" :disabled="!canPaste">
               <button type="button" class="block w-full px-4 py-2 text-left text-sm" :disabled="!canPaste" :class="[
                 !canPaste
-                  ? 'opacity-50 cursor-not-allowed text-muted'
+                  ? 'opacity-50 cursor-not-allowed text-default'
                   : active
                     ? 'bg-accent text-default'
-                    : 'text-muted',
+                    : 'text-default',
               ]" @click="canPaste && doAction('paste')">
                 Paste
               </button>
@@ -50,28 +50,28 @@
 
               <MenuItem v-slot="{ active }">
               <button type="button" class="block w-full px-4 py-2 text-left text-sm"
-                :class="active ? 'bg-accent text-default' : 'text-muted'" @click="doAction('rename')">
+                :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('rename')">
                 Rename
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }">
               <button type="button" class="block w-full px-4 py-2 text-left text-sm"
-                :class="active ? 'bg-accent text-default' : 'text-muted'" @click="doAction('delete')">
+                :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('delete')">
                 Delete
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }">
               <button type="button" class="block w-full px-4 py-2 text-left text-sm"
-                :class="active ? 'bg-accent text-default' : 'text-muted'" @click="doAction('tags')">
+                :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('tags')">
                 Edit object tags
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }">
               <button type="button" class="block w-full px-4 py-2 text-left text-sm"
-                :class="active ? 'bg-accent text-default' : 'text-muted'" @click="doAction('storageClass')">
+                :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('storageClass')">
                 Storage class
               </button>
               </MenuItem>

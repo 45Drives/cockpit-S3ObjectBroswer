@@ -13,7 +13,7 @@
                         <button type="button"
                             class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
                             :disabled="busy" @click="goBack">
-                            Back
+                         <ArrowUturnLeftIcon class="h-4 w-4"></ArrowUturnLeftIcon>   Back
                         </button>
 
                         <button type="button"
@@ -26,7 +26,7 @@
                             <button type="button"
                                 class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
                                 :disabled="busy || uploadBusy" @click="toggleUploadMenu">
-                                Upload
+                                <ArrowUpOnSquareIcon class="h-4 w-4"></ArrowUpOnSquareIcon> Upload
                             </button>
 
                             <div v-if="uploadMenuOpen"
@@ -337,7 +337,7 @@ import {
     downloadObjectVersion, deleteObjectVersion, rollbackObjectVersion
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
-import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
+import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon} from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu, { type MenuAction } from "../components/ObjectContextMenu.vue";
@@ -353,11 +353,11 @@ import { useUploads } from "../operations/useUploads";
 import { useTransfers } from "../operations/useTransfers";
 import { useRename } from "../operations/useRename";
 import { useDeletes } from "../operations/useDeletes";
-import TagsModal, { type TagKV } from "../components/TagsModal.vue";
+import TagsModal, { type TagKV } from "../components/Modals/TagsModal.vue";
 import { useTags } from "../operations/tags";
 import ObjectDetailsPanel from "../components/ObjectDetailsPanel.vue";
 import ObjectVersionsList from "../components/ObjectVersionsList.vue";
-import StorageClassModal from "../components/StorageClassModal.vue";
+import StorageClassModal from "../components/Modals/StorageClassModal.vue";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 
 const iconScroller = ref<any>(null);

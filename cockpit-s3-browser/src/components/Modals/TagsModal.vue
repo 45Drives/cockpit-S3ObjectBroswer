@@ -4,16 +4,12 @@
             <div class="absolute inset-0 bg-black/40" @click="emitClose"></div>
 
             <div class="absolute inset-0 flex items-center justify-center p-4">
-                <div class="w-full max-w-xl overflow-hidden rounded-lg border border-default bg-default shadow-lg">
+                <div class="w-full max-w-xl overflow-hidden rounded-lg border border-default bg-accent shadow-lg">
                     <div class="flex items-center justify-between border-b border-default px-4 py-3">
                         <div class="min-w-0">
                             <div class="truncate text-sm font-semibold text-default">Tags</div>
                             <div class="truncate text-xs text-muted">{{ title }}</div>
                         </div>
-
-                        <button type="button" class="text-sm text-muted hover:text-default" @click="emitClose">
-                            Close
-                        </button>
                     </div>
 
                     <div class="px-4 py-3">
@@ -32,17 +28,18 @@
                                     class="w-1/2 rounded border border-default bg-default px-2 py-1 text-sm text-default outline-none"
                                     placeholder="Value" v-model="t.value" />
                                 <button type="button"
-                                    class="rounded border border-default px-2 py-1 text-sm text-muted hover:text-default"
+                                    class=" px-2 py-1 bg-red text-sm  hover:text-default"
                                     @click="removeRow(idx)" title="Remove">
-                                    Remove
+                                    <TrashIcon class="h-4 w-4"></TrashIcon>
+
                                 </button>
                             </div>
 
                             <div class="pt-2">
                                 <button type="button"
-                                    class="rounded border border-default px-3 py-1.5 text-sm text-default hover:bg-accent"
+                                    class="rounded border border-default px-3 py-1.5 text-sm btn-secondary text-default hover:bg-accent"
                                     @click="addRow()">
-                                    Add tag
+                                    <PlusIcon class="h-4 w-4"></PlusIcon>
                                 </button>
                             </div>
 
@@ -54,13 +51,13 @@
 
                     <div class="flex items-center justify-end gap-2 border-t border-default px-4 py-3">
                         <button type="button"
-                            class="rounded border border-default px-3 py-1.5 text-sm text-default hover:bg-accent"
+                            class="rounded border border-default font-semibold px-3 py-1.5 btn-secondary text-sm text-default hover:bg-accent"
                             @click="emitClose">
                             Cancel
                         </button>
 
                         <button type="button"
-                            class="rounded bg-accent px-3 py-1.5 text-sm text-default disabled:opacity-50"
+                            class="rounded bg-accent px-3 py-1.5 text-sm text-default btn-primary font-semibold disabled:opacity-50"
                             :disabled="busy || saving" @click="save">
                             Save
                         </button>
@@ -73,6 +70,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { PlusIcon, TrashIcon } from "@heroicons/vue/20/solid";
 
 export type TagKV = { key: string; value: string };
 

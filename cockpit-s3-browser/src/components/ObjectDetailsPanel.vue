@@ -226,8 +226,8 @@
 
             <div v-else class="divide-y divide-default text-sm">
               <div v-for="[k, v] in metaEntries" :key="k" class="flex items-start justify-between gap-4 py-2">
-                <div class="text-default opacity-70 shrink-0 w-[7.5rem] break-all">{{ k }}</div>
-                <div class="text-default text-right flex-1 break-all">{{ v }}</div>
+                <div class="text-default opacity-70 shrink-0 w-[7.5rem] break-all font-semibold">{{ k }}</div>
+                <div class="text-default text-right flex-1 break-all font-semibold">{{ v }}</div>
               </div>
             </div>
           </section>
@@ -242,7 +242,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import type { Row, FileRow } from "../types";
-import type { TagKV } from "./TagsModal.vue";
+import type { TagKV } from "./Modals/TagsModal.vue";
 import { formatBytes, formatDate } from "../lib/helpers";
 import {
   statObject, getObjectTags, getObjectVersions, getBucketObjectLock, getObjectLegalHold,
