@@ -13,7 +13,7 @@
                         <button type="button"
                             class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
                             :disabled="busy" @click="goBack">
-                         <ArrowUturnLeftIcon class="h-4 w-4"></ArrowUturnLeftIcon>   Back
+                            <ArrowUturnLeftIcon class="h-4 w-4"></ArrowUturnLeftIcon> Back
                         </button>
 
                         <button type="button"
@@ -172,7 +172,11 @@
                                                 @contextmenu.prevent.stop="openMenu($event, r, index)">
                                                 <div class="px-3 py-2 text-default min-w-0">
                                                     <div class="flex items-center gap-2 min-w-0">
-                                                        <span class="shrink-0 opacity-80 w-4 h-4"></span>
+                                                        <span class="shrink-0 opacity-80 w-4 h-4">
+                                                            <FolderIcon v-if="iconForRow(r) === 'folder'"
+                                                                class="h-4 w-4"></FolderIcon>
+                                                            <DocumentIcon v-else class="h-4 w-4"></DocumentIcon>
+                                                        </span>
 
                                                         <div class="min-w-0 flex items-center gap-2">
                                                             <button v-if="r.type === 'folder'" type="button"
@@ -211,7 +215,7 @@
 
                                                 <div class="px-3 py-2 text-default min-w-0 truncate">
                                                     <span v-if="r.type === 'file'">{{ formatDate(r.lastModified)
-                                                    }}</span>
+                                                        }}</span>
                                                     <span v-else>—</span>
                                                 </div>
 
@@ -238,23 +242,9 @@
                                             @contextmenu.prevent.stop="openMenu($event, r, index)">
                                             <div class="flex flex-col items-center gap-2 h-full">
                                                 <span class="shrink-0 opacity-80 flex justify-center">
-                                                    <svg v-if="iconForRow(r) === 'folder'" class="w-8 h-8"
-                                                        viewBox="0 0 24 24" fill="none"
-                                                        xmlns="http://www.w3.org/2000/svg" stroke-width="1.8"
-                                                        stroke="currentColor">
-                                                        <path
-                                                            d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-11Z" />
-                                                    </svg>
-
-                                                    <svg v-else class="w-8 h-8" viewBox="0 0 24 24" fill="none"
-                                                        xmlns="http://www.w3.org/2000/svg" stroke-width="1.8"
-                                                        stroke="currentColor">
-                                                        <path
-                                                            d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
-                                                        <path d="M8 7h8" />
-                                                        <path d="M8 11h8" />
-                                                        <path d="M8 15h5" />
-                                                    </svg>
+                                                    <FolderIcon v-if="iconForRow(r) === 'folder'" class="h-8 w-8">
+                                                    </FolderIcon>
+                                                    <DocumentIcon v-else class="h-8 w-8"></DocumentIcon>
                                                 </span>
 
                                                 <div class="w-full text-center min-w-0">
@@ -300,12 +290,16 @@
                         </template>
                         <div v-if="detailsOpen" class="w-[30%] flex-none min-w-0">
 
-                            <ObjectDetailsPanel :connectionId="connectionId" :bucket="bucket" :row="detailsRow"
-                                :versionId="mode === 'versions' && selectedVersionCount === 1 ? activeVersionId : null"
-                                :inVersionsMode="mode === 'versions'" :selectionSummary="detailsSelectionSummary"
-                                @close="detailsOpen = false"
-                                @openVersions="(p) => activeRow && activeRow.type === 'file' && openVersionsModeForFile(activeRow)"
-                                @backToObjects="exitVersionsMode()" />
+                            <ObjectDetailsPanel
+  ref="detailsRef"
+  :connectionId="connectionId"
+  :bucket="bucket"
+  :row="detailsRow"
+  :versionId="mode === 'versions' && selectedVersionCount === 1 ? activeVersionId : null"
+  :inVersionsMode="mode === 'versions'"
+  :selectionSummary="detailsSelectionSummary"
+  @close="detailsOpen = false"
+/>
                         </div>
                     </div>
                 </div>
@@ -337,7 +331,7 @@ import {
     downloadObjectVersion, deleteObjectVersion, rollbackObjectVersion
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
-import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon} from "@heroicons/vue/20/solid";
+import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu, { type MenuAction } from "../components/ObjectContextMenu.vue";
@@ -405,7 +399,7 @@ const activeVersionId = computed<string | null>(() => {
     return one || null;
 });
 const delStore = useDeleteTasksStore();
-
+const detailsRef = ref<{ refreshTags: () => Promise<void> } | null>(null);
 const versionsMenuEnabled = computed(() => {
     const n = selectedVersionIds.value.size;
     return {
@@ -1373,73 +1367,21 @@ function removeFolderRowByPrefix(pfx: string) {
 }
 
 
+
 async function onSaveTags(payload: { tags: TagKV[] }) {
     const key = tagsKey.value;
     if (!key) return;
 
-    await tags.applyObjectTags({
-        key,
-        tags: payload.tags,
-    });
+    await tags.applyObjectTags({ key, tags: payload.tags });
 
     tagsInitial.value = [...tags.currentTags.value];
     tagsOpen.value = false;
+
+    const r = detailsRow.value;
+    if (r?.type === "file" && r.key === key) {
+        await detailsRef.value?.refreshTags();
+    }
 }
-
-const allTasks = computed(() => {
-    const tasks: UiTask[] = [];
-
-    // downloads
-    for (const j of downloads.downloadJobs.value) {
-        tasks.push({
-            id: j.id,
-            kind: "download",
-            name: j.name,
-            state: j.state,
-            progressText:
-                j.totalBytes && j.bytes != null ? `${formatBytes(j.bytes)} / ${formatBytes(j.totalBytes)}` : undefined,
-            error: j.error || undefined,
-        });
-    }
-
-    // uploads
-    for (const u of uploads.uploadItems.value) {
-        tasks.push({
-            id: u.id,
-            kind: "upload",
-            name: u.file.name,
-            state: u.status as any,
-            progressText: u.status === "uploading" ? `${formatBytes(u.bytes)} / ${formatBytes(u.file.size)}` : undefined,
-            error: u.error || undefined,
-        });
-    }
-
-    // transfers (copy/move) from transfers.transferJobs
-    for (const t of transfers.transferJobs.value) {
-        tasks.push({
-            id: t.id,
-            kind: t.kind === "copy" ? "copy" : "move",
-            name: t.name,
-            state: t.state as any,
-            progressText: undefined,
-            error: t.error || undefined,
-        });
-    }
-
-    // deletes from delete store
-    for (const d of delStore.list) {
-        tasks.push({
-            id: d.id,
-            kind: "delete",
-            name: d.name,
-            state: d.busy ? "running" : (d.error ? "failed" : "done"),
-            progressText: d.progress,
-            error: d.error || undefined,
-        });
-    }
-
-    return tasks;
-});
 
 async function loadVersionsForKey(key: string, name: string) {
     versionsLoading.value = true;

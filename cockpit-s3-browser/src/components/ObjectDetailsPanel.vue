@@ -755,5 +755,16 @@ function emitOpenVersions() {
   emit("openVersions", { key: props.row.key, name: props.row.name });
 }
 
+defineExpose({
+  refreshTags,
+});
+async function refreshTags() {
+  if (!props.row || props.row.type !== "file") return;
+
+  const myReq = ++reqId;
+  currentReq.value = myReq;
+
+  await loadTags(props.row, myReq);
+}
 
 </script>
