@@ -114,7 +114,8 @@
                     <!-- path/search bar -->
                     <div class="mb-3 flex items-center gap-2">
                         <button type="button"
-                            class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
+                            class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm
+                             hover:opacity-90 active:opacity-80 disabled:opacity-60 disabled:opacity-60 disabled:cursor-not-allowed disabled:text-muted disabled:border-default disabled:bg-default"
                             :disabled="busy || !(prefix || '').length" @click="goUp()" title="Up one folder">
                             <ArrowUpIcon class="h-4 w-4"></ArrowUpIcon>
                         </button>
@@ -144,174 +145,189 @@
 
                     <!-- LIST + DETAILS: start at same height -->
                     <div class="flex flex-nowrap items-start gap-0">
+
                         <!-- left: list -->
-                        <div :class="detailsOpen ? 'w-[70%] flex-none min-w-0 pr-0' : 'flex-1 min-w-0 pr-0'">
-                            <!-- TABLE VIEW -->
-                            <div v-if="viewMode === 'table'" class="rounded-md border border-default">
-                                <div class="bg-well text-left text-default w-full"
-                                    :style="colsStyle + 'scrollbar-gutter: stable;'">
-                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Name
+                        <ObjectVersionsList v-if="mode === 'versions'" :busy="versionsLoading" :err="versionsErr"
+                            :items="versionRows" :selectedVersionIds="selectedVersionIds"
+                            @select="(ids) => (selectedVersionIds = ids)" @contextmenu="onVersionsContextMenu" />
+                        <template v-else>
+                            <div :class="detailsOpen ? 'w-[70%] flex-none min-w-0 pr-0' : 'flex-1 min-w-0 pr-0'">
+                                <!-- TABLE VIEW -->
+                                <div v-if="viewMode === 'table'" class="rounded-md border border-default">
+                                    <div class="bg-well text-left text-default w-full"
+                                        :style="colsStyle + 'scrollbar-gutter: stable;'">
+                                        <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                                            Name
+                                        </div>
+                                        <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                                            Type
+                                        </div>
+                                        <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                                            Size
+                                        </div>
+                                        <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                                            Last
+                                            modified</div>
+                                        <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                                            Storage class</div>
                                     </div>
-                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Type
-                                    </div>
-                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Size
-                                    </div>
-                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">Last
-                                        modified</div>
-                                    <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
-                                        Storage class</div>
-                                </div>
 
-                                <div class="w-full" @contextmenu="openMenuAtPoint">
-                                    <RecycleScroller class="w-full overflow-y-auto h-[80vh]"
-                                        style="scrollbar-gutter: stable; height: 80vh;" :items="virtualRows"
-                                        :item-size="56" key-field="__key" v-slot="{ item: r, index }">
-                                        <div class="w-full hover:bg-default border-b border-default cursor-pointer outline-none"
-                                            :style="colsStyle + 'align-items:center; height:56px;'"
-                                            :class="selectedIds.has(rowId(r)) ? 'bg-well' : ''"
-                                            @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
-                                            @keydown.enter.prevent="onRowDblClick(r)"
-                                            @contextmenu.prevent.stop="openMenu($event, r, index)">
-                                            <div class="px-3 py-2 text-default min-w-0">
-                                                <div class="flex items-center gap-2 min-w-0">
-                                                    <span class="shrink-0 opacity-80 w-4 h-4"></span>
+                                    <div class="w-full" @contextmenu="openMenuAtPoint">
+                                        <RecycleScroller class="w-full overflow-y-auto h-[80vh]"
+                                            style="scrollbar-gutter: stable; height: 80vh;" :items="virtualRows"
+                                            :item-size="56" key-field="__key" v-slot="{ item: r, index }">
+                                            <div class="w-full hover:bg-default border-b border-default cursor-pointer outline-none"
+                                                :style="colsStyle + 'align-items:center; height:56px;'"
+                                                :class="selectedIds.has(rowId(r)) ? 'bg-well' : ''"
+                                                @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
+                                                @keydown.enter.prevent="onRowDblClick(r)"
+                                                @contextmenu.prevent.stop="openMenu($event, r, index)">
+                                                <div class="px-3 py-2 text-default min-w-0">
+                                                    <div class="flex items-center gap-2 min-w-0">
+                                                        <span class="shrink-0 opacity-80 w-4 h-4"></span>
 
-                                                    <div class="min-w-0 flex items-center gap-2">
-                                                        <button v-if="r.type === 'folder'" type="button"
-                                                            class="font-semibold text-default hover:opacity-90 truncate min-w-0"
-                                                            :disabled="busy || isDeletingRow(r)"
-                                                            @click.stop="onRowClick($event, r, index)"
-                                                            @dblclick.stop.prevent="openPrefix(r.prefix)"
-                                                            @keydown.enter.stop.prevent="openPrefix(r.prefix)"
-                                                            @contextmenu.stop.prevent="openMenu($event, r, index)">
-                                                            {{ r.name }}/
-                                                        </button>
+                                                        <div class="min-w-0 flex items-center gap-2">
+                                                            <button v-if="r.type === 'folder'" type="button"
+                                                                class="font-semibold text-default hover:opacity-90 truncate min-w-0"
+                                                                :disabled="busy || isDeletingRow(r)"
+                                                                @click.stop="onRowClick($event, r, index)"
+                                                                @dblclick.stop.prevent="openPrefix(r.prefix)"
+                                                                @keydown.enter.stop.prevent="openPrefix(r.prefix)"
+                                                                @contextmenu.stop.prevent="openMenu($event, r, index)">
+                                                                {{ r.name }}/
+                                                            </button>
 
-                                                        <div v-else class="min-w-0">
-                                                            <div class="text-default text-sm truncate" :title="r.key">{{
-                                                                r.name }}</div>
+                                                            <div v-else class="min-w-0">
+                                                                <div class="text-default text-sm truncate"
+                                                                    :title="r.key">{{
+                                                                        r.name }}</div>
+                                                            </div>
+
+                                                            <span v-if="isDeletingRow(r)"
+                                                                class="text-xs rounded-full border border-default px-2 py-0.5 opacity-80">
+                                                                Deleting…
+                                                            </span>
                                                         </div>
-
-                                                        <span v-if="isDeletingRow(r)"
-                                                            class="text-xs rounded-full border border-default px-2 py-0.5 opacity-80">
-                                                            Deleting…
-                                                        </span>
                                                     </div>
                                                 </div>
-                                            </div>
 
-                                            <div class="px-3 py-2 text-default min-w-0 truncate">
-                                                <span v-if="r.type === 'file'">{{ r.fileType || "—" }}</span>
-                                                <span v-else>folder</span>
-                                            </div>
+                                                <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                    <span v-if="r.type === 'file'">{{ r.fileType || "—" }}</span>
+                                                    <span v-else>folder</span>
+                                                </div>
 
-                                            <div class="px-3 py-2 text-default min-w-0 truncate">
-                                                <span v-if="r.type === 'file'">{{ formatBytes(r.size) }}</span>
-                                                <span v-else>—</span>
-                                            </div>
+                                                <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                    <span v-if="r.type === 'file'">{{ formatBytes(r.size) }}</span>
+                                                    <span v-else>—</span>
+                                                </div>
 
-                                            <div class="px-3 py-2 text-default min-w-0 truncate">
-                                                <span v-if="r.type === 'file'">{{ formatDate(r.lastModified) }}</span>
-                                                <span v-else>—</span>
-                                            </div>
+                                                <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                    <span v-if="r.type === 'file'">{{ formatDate(r.lastModified)
+                                                    }}</span>
+                                                    <span v-else>—</span>
+                                                </div>
 
-                                            <div class="px-3 py-2 text-default min-w-0 truncate">
-                                                <span v-if="r.type === 'file'">{{ r.storageClass || "—" }}</span>
-                                                <span v-else>—</span>
+                                                <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                    <span v-if="r.type === 'file'">{{ r.storageClass || "—" }}</span>
+                                                    <span v-else>—</span>
+                                                </div>
                                             </div>
-                                        </div>
+                                        </RecycleScroller>
+                                    </div>
+                                </div>
+
+                                <!-- ICON VIEW -->
+                                <div v-else class="rounded-md border border-default overflow-y-scroll"
+                                    @contextmenu="openMenuAtPoint">
+                                    <RecycleScroller ref="iconScroller" class="w-full overflow-y-auto p-4"
+                                        style="height: 80vh; scrollbar-gutter: stable;" :items="virtualRows"
+                                        :grid-items="gridItems" :item-size="120" :item-secondary-size="150"
+                                        key-field="__key" v-slot="{ item: r, index }">
+                                        <button type="button"
+                                            class="w-full h-full rounded-md  mt-4 p-3 text-left hover:opacity-90 active:opacity-80"
+                                            :class="selectedIds.has(rowId(r)) ? 'ring-2 ring-default' : ''"
+                                            @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
+                                            @contextmenu.prevent.stop="openMenu($event, r, index)">
+                                            <div class="flex flex-col items-center gap-2 h-full">
+                                                <span class="shrink-0 opacity-80 flex justify-center">
+                                                    <svg v-if="iconForRow(r) === 'folder'" class="w-8 h-8"
+                                                        viewBox="0 0 24 24" fill="none"
+                                                        xmlns="http://www.w3.org/2000/svg" stroke-width="1.8"
+                                                        stroke="currentColor">
+                                                        <path
+                                                            d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-11Z" />
+                                                    </svg>
+
+                                                    <svg v-else class="w-8 h-8" viewBox="0 0 24 24" fill="none"
+                                                        xmlns="http://www.w3.org/2000/svg" stroke-width="1.8"
+                                                        stroke="currentColor">
+                                                        <path
+                                                            d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+                                                        <path d="M8 7h8" />
+                                                        <path d="M8 11h8" />
+                                                        <path d="M8 15h5" />
+                                                    </svg>
+                                                </span>
+
+                                                <div class="w-full text-center min-w-0">
+                                                    <div class="min-w-0 w-full text-default text-sm leading-snug line-clamp-2"
+                                                        style="display:block; max-width:98%; white-space:nowrap; overflow:hidden !important; text-overflow:ellipsis;"
+                                                        :title="r.type === 'folder' ? (r.name + '/') : r.name">
+                                                        {{ r.type === "folder" ? (r.name + "/") : r.name }}
+                                                    </div>
+
+                                                    <div v-if="r.type === 'file'"
+                                                        class="text-xs text-default mt-1 truncate"
+                                                        :title="`${r.fileType || '—'} · ${formatBytes(r.size)}`">
+                                                        {{ r.fileType || "—" }} · {{ formatBytes(r.size) }}
+                                                    </div>
+                                                </div>
+
+                                                <div v-if="isDeletingRow(r)"
+                                                    class="text-xs mt-1 rounded-full border border-default px-2 py-0.5 opacity-80">
+                                                    Deleting…
+                                                </div>
+                                            </div>
+                                        </button>
                                     </RecycleScroller>
                                 </div>
-                            </div>
 
-                            <!-- ICON VIEW -->
-                            <div v-else class="rounded-md border border-default overflow-y-scroll"
-                                @contextmenu="openMenuAtPoint">
-                                <RecycleScroller ref="iconScroller" class="w-full overflow-y-auto p-4"
-                                    style="height: 80vh; scrollbar-gutter: stable;" :items="virtualRows"
-                                    :grid-items="gridItems" :item-size="120" :item-secondary-size="150"
-                                    key-field="__key" v-slot="{ item: r, index }">
+                                <div class="mt-3 flex items-center justify-between">
+                                    <div class="text-md font-semibold text-default">
+                                        Loaded: <span class="text-default">{{ virtualRows.length }}</span>
+                                    </div>
+
                                     <button type="button"
-                                        class="w-full h-full rounded-md border border-default bg-default p-3 text-left hover:opacity-90 active:opacity-80"
-                                        :class="selectedIds.has(rowId(r)) ? 'ring-2 ring-default' : ''"
-                                        @click="onRowClick($event, r, index)" @dblclick="onRowDblClick(r)"
-                                        @contextmenu.prevent.stop="openMenu($event, r, index)">
-                                        <div class="flex flex-col items-center gap-2 h-full">
-                                            <span class="shrink-0 opacity-80 flex justify-center">
-                                                <svg v-if="iconForRow(r) === 'folder'" class="w-8 h-8"
-                                                    viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
-                                                    stroke-width="1.8" stroke="currentColor">
-                                                    <path
-                                                        d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2h7.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-11Z" />
-                                                </svg>
-
-                                                <svg v-else class="w-8 h-8" viewBox="0 0 24 24" fill="none"
-                                                    xmlns="http://www.w3.org/2000/svg" stroke-width="1.8"
-                                                    stroke="currentColor">
-                                                    <path
-                                                        d="M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
-                                                    <path d="M8 7h8" />
-                                                    <path d="M8 11h8" />
-                                                    <path d="M8 15h5" />
-                                                </svg>
-                                            </span>
-
-                                            <div class="w-full text-center min-w-0">
-                                                <div class="min-w-0 w-full text-default text-sm leading-snug line-clamp-2"
-                                                    style="display:block; max-width:98%; white-space:nowrap; overflow:hidden !important; text-overflow:ellipsis;"
-                                                    :title="r.type === 'folder' ? (r.name + '/') : r.name">
-                                                    {{ r.type === "folder" ? (r.name + "/") : r.name }}
-                                                </div>
-
-                                                <div v-if="r.type === 'file'" class="text-xs text-default mt-1 truncate"
-                                                    :title="`${r.fileType || '—'} · ${formatBytes(r.size)}`">
-                                                    {{ r.fileType || "—" }} · {{ formatBytes(r.size) }}
-                                                </div>
-                                            </div>
-
-                                            <div v-if="isDeletingRow(r)"
-                                                class="text-xs mt-1 rounded-full border border-default px-2 py-0.5 opacity-80">
-                                                Deleting…
-                                            </div>
-                                        </div>
+                                        class="inline-flex items-center justify-center rounded-md border border-default bg-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
+                                        :disabled="busy" @click="toggleView()">
+                                        {{ viewMode === "table" ? "Icon view" : "Table view" }}
                                     </button>
-                                </RecycleScroller>
-                            </div>
 
-                            <div class="mt-3 flex items-center justify-between">
-                                <div class="text-xs text-default">
-                                    Loaded: <span class="text-default">{{ virtualRows.length }}</span>
-                                </div>
-
-                                <button type="button"
-                                    class="inline-flex items-center justify-center rounded-md border border-default bg-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
-                                    :disabled="busy" @click="toggleView()">
-                                    {{ viewMode === "table" ? "Icon view" : "Table view" }}
-                                </button>
-
-                                <div class="text-xs text-default">
-                                    <span v-if="prefetching">Loading items…</span>
-                                    <span v-else>All items loaded</span>
+                                    <div class="text-md font-semibold text-default">
+                                        <span v-if="prefetching">Loading items…</span>
+                                        <span v-else>All items loaded</span>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-
+                        </template>
                         <div v-if="detailsOpen" class="w-[30%] flex-none min-w-0">
-    <ObjectDetailsPanel
-      :connectionId="connectionId"
-      :bucket="bucket"
-      :row="activeRow"
-      @close="detailsOpen = false"
-    />
-  </div>
+
+                            <ObjectDetailsPanel :connectionId="connectionId" :bucket="bucket" :row="detailsRow"
+                                :versionId="mode === 'versions' && selectedVersionCount === 1 ? activeVersionId : null"
+                                :inVersionsMode="mode === 'versions'" :selectionSummary="detailsSelectionSummary"
+                                @close="detailsOpen = false"
+                                @openVersions="(p) => activeRow && activeRow.type === 'file' && openVersionsModeForFile(activeRow)"
+                                @backToObjects="exitVersionsMode()" />
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <ObjectContextMenu :open="menuOpen" :pos="menuPos" :canPaste="canPasteHere" @close="menuOpen = false"
-        @action="onMenuAction" />
+    <ObjectContextMenu :open="menuOpen" :pos="menuPos" :mode="menuMode" :canPaste="mode !== 'versions' && canPasteHere"
+        :enabled="mode === 'versions' ? versionsMenuEnabled : {}" @close="menuOpen = false" @action="onMenuAction" />
+
 
     <ConfirmDeleteModal :open="deleteOpen" :kind="pendingDeleteKind" :name="pendingDeleteName" :busy="deleteBusy"
         :progressText="deleteBusy ? 'Deleting…' : ''" @cancel="cancelDelete" @confirm="confirmDeleteNow" />
@@ -326,7 +342,11 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRoute, useRouter } from "vue-router";
 import {
     listObjects, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus
-    , copyPrefix, movePrefix, copyObject, getObjectTags, putObjectTags, statObject, changeStorageClass, cancelDownloadJob
+    , copyPrefix, movePrefix, copyObject, getObjectTags, putObjectTags, statObject, changeStorageClass, cancelDownloadJob,
+    getObjectVersions,
+    downloadObjectVersion,
+    deleteObjectVersion,
+    rollbackObjectVersion
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
 import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon } from "@heroicons/vue/20/solid";
@@ -339,7 +359,7 @@ import {
     formatBytes, formatDate, normalizePrefix, guessFileTypeFromKey, fileExt,
     isSystemFile, isTextFile, isApplicationFile, nameFromKey, nameFromPrefix,
 } from "../lib/helpers";
-import { DeleteKind, FileRow, FolderRow, Row, UiTask, ViewMode } from "../types";
+import { DeleteKind, FileRow, FolderRow, Row, UiTask, VersionRow, ViewMode } from "../types";
 import { useDownloads } from "../operations/useDownloads";
 import { useUploads } from "../operations/useUploads";
 import { useTransfers } from "../operations/useTransfers";
@@ -348,7 +368,7 @@ import { useDeletes } from "../operations/useDeletes";
 import TagsModal, { type TagKV } from "../components/TagsModal.vue";
 import { useTags } from "../operations/tags";
 import ObjectDetailsPanel from "../components/ObjectDetailsPanel.vue";
-
+import ObjectVersionsList from "../components/ObjectVersionsList.vue";
 
 
 const iconScroller = ref<any>(null);
@@ -380,8 +400,31 @@ onBeforeUnmount(() => {
 });
 
 
+const menuMode = computed(() => (mode.value === "versions" ? "versions" : "objects"));
+const mode = ref<"objects" | "versions">("objects");
+const lastObjectSelectionId = ref<string | null>(null);
+const versionsKey = ref<string>("");          // object key whose versions we are viewing
+const versionsName = ref<string>("");         // display name (basename)
+const versionsLoading = ref(false);
+const versionsErr = ref("");
+const versionRows = ref<VersionRow[]>([]);
+const versionsFileRow = ref<FileRow | null>(null);
 
+const selectedVersionIds = ref<Set<string>>(new Set());
+const activeVersionId = computed<string | null>(() => {
+    const one = [...selectedVersionIds.value][0];
+    return one || null;
+});
 const delStore = useDeleteTasksStore();
+
+const versionsMenuEnabled = computed(() => {
+    const n = selectedVersionIds.value.size;
+    return {
+        download: n > 0,
+        delete: n > 0,
+        rollback: n === 1,
+    } as Partial<Record<MenuAction, boolean>>;
+});
 
 
 // confirm modal pending target (separate from tasks)
@@ -424,10 +467,12 @@ const selectedIds = ref<Set<string>>(new Set());
 const anchorIndex = ref<number | null>(null);
 const clip = useClipboardStore();
 const detailsOpen = ref(true);
-
+const selectedObjectCount = computed(() => selectedRows.value.length);
+const selectedVersionCount = computed(() => selectedVersionIds.value.size);
 const canPasteHere = computed(() =>
     clip.canPaste(connectionId.value)
 );
+
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
 
@@ -435,6 +480,26 @@ const continuationToken = ref<string | null>(null);
 const hasMore = ref(false);
 let runId = 0;
 const deleteOpen = ref(false);
+
+const detailsSelectionSummary = computed(() => {
+    if (mode.value === "versions") {
+        const n = selectedVersionCount.value;
+        return n === 1 ? null : { mode: "versions" as const, count: n };
+    }
+    const n = selectedObjectCount.value;
+    return n === 1 ? null : { mode: "objects" as const, count: n };
+});
+
+
+const detailsRow = computed<Row | null>(() => {
+    if (mode.value === "versions") {
+        // Show the underlying object’s details only when exactly one version is selected.
+        return selectedVersionCount.value === 1 ? (versionsFileRow.value as any) : null;
+    }
+
+    return selectedObjectCount.value === 1 ? activeRow.value : null;
+});
+
 
 
 const downloads = useDownloads({
@@ -854,6 +919,24 @@ function openMenu(e: MouseEvent, r: Row, index: number) {
 
 
 async function onMenuAction(action: MenuAction) {
+    if (mode.value === "versions") {
+        const ids = [...selectedVersionIds.value];
+
+        if (action === "download") {
+            await onVersionAction({ action: "download", versionIds: ids });
+            return;
+        }
+        if (action === "delete") {
+            await onVersionAction({ action: "delete", versionIds: ids });
+            return;
+        }
+        if (action === "rollback") {
+            await onVersionAction({ action: "rollback", versionIds: ids });
+            return;
+        }
+        return;
+    }
+
     const r = menuRow.value;
     if (action !== "paste" && !r) return;
 
@@ -1102,6 +1185,8 @@ function onRowDblClick(r: Row) {
 watch([connectionId, bucket, prefix], () => {
     selectedIds.value = new Set();
     anchorIndex.value = null;
+    exitVersionsMode();
+
 });
 
 function effectiveSelection(): Row[] {
@@ -1329,9 +1414,151 @@ const allTasks = computed(() => {
     return tasks;
 });
 
+async function loadVersionsForKey(key: string, name: string) {
+    versionsLoading.value = true;
+    versionsErr.value = "";
+    versionRows.value = [];
+    selectedVersionIds.value = new Set();
+
+    try {
+        const res = await getObjectVersions({
+            connectionId: connectionId.value,
+            bucket: bucket.value,
+            key,
+            maxKeys: 500,
+        });
+
+        if (res.isErr()) {
+            versionsErr.value = res.error.message;
+            return;
+        }
+
+        const items: VersionRow[] = (res.value.versions ?? [])
+            .map((v: any) => ({
+                kind: "version" as const,
+                __key: `v:${v.versionId ?? ""}:${v.lastModified ?? ""}:${v.etag ?? ""}:${String(v.size ?? 0)}`,
+                key,
+                name,
+                versionId: String(v.versionId ?? ""),
+                isLatest: Boolean(v.isLatest),
+                lastModified: v.lastModified ?? null,
+                size: Number(v.size ?? 0),
+                etag: v.etag ?? null,
+                storageClass: v.storageClass ?? null,
+            }))
+            .filter((v) => Boolean(v.versionId)); // versions mode needs a real versionId
+
+        versionRows.value = items;
+
+        // default selection: latest if present else first
+        const latest = items.find((x) => x.isLatest) ?? items[0];
+        if (latest) selectedVersionIds.value = new Set([latest.versionId]);
+    } finally {
+        versionsLoading.value = false;
+    }
+}
+
+
+
 const activeRow = computed<Row | null>(() => {
     const sel = selectedRows.value;
     return sel.length === 1 ? sel[0] : null;
 });
+
+const leftItems = computed(() => {
+    return mode.value === "versions" ? versionRows.value : virtualRows.value;
+});
+
+const leftKeyField = computed(() => (mode.value === "versions" ? "__key" : "__key"));
+
+function isVersionRow(x: any): x is VersionRow {
+    return x && x.kind === "version";
+}
+
+async function onVersionAction(payload: { action: "download" | "delete" | "rollback"; versionIds: string[] }) {
+    const key = versionsKey.value;
+    if (!key) return;
+
+    if (payload.action === "rollback") {
+        const vid = payload.versionIds[0];
+        if (!vid) return;
+
+        await rollbackObjectVersion({
+            connectionId: connectionId.value,
+            bucket: bucket.value,
+            key,
+            versionId: vid,
+        });
+
+        await loadVersionsForKey(key, versionsName.value);
+        return;
+    }
+
+    if (payload.action === "delete") {
+        for (const vid of payload.versionIds) {
+            await deleteObjectVersion({
+                connectionId: connectionId.value,
+                bucket: bucket.value,
+                key,
+                versionId: vid,
+            });
+        }
+        await loadVersionsForKey(key, versionsName.value);
+        return;
+    }
+
+    if (payload.action === "download") {
+        for (const vid of payload.versionIds) {
+            const jobId = (globalThis.crypto as any)?.randomUUID?.() ?? String(Date.now());
+            await downloadObjectVersion({
+                connectionId: connectionId.value,
+                bucket: bucket.value,
+                key,
+                versionId: vid,
+                jobId,
+                filename: versionsName.value,
+            });
+        }
+    }
+}
+
+function onVersionsContextMenu(payload: { pos: { x: number; y: number }; versionId: string | null }) {
+    // Open shared context menu in versions mode
+    menuOpen.value = true;
+    menuPos.value = payload.pos;
+    menuRow.value = null; // objects-mode row holder; not used here
+}
+
+function enterVersionsModeForFile(file: FileRow) {
+    lastObjectSelectionId.value = rowId(file);
+}
+
+async function openVersionsModeForFile(file: FileRow) {
+    enterVersionsModeForFile(file);
+
+    versionsFileRow.value = file; // add this
+
+    mode.value = "versions";
+    versionsKey.value = file.key;
+    versionsName.value = file.name;
+    detailsOpen.value = true;
+
+    await loadVersionsForKey(file.key, file.name);
+}
+
+
+function exitVersionsMode() {
+    mode.value = "objects";
+    versionsKey.value = "";
+    versionsName.value = "";
+    versionsErr.value = "";
+    versionRows.value = [];
+    selectedVersionIds.value = new Set();
+    versionsFileRow.value = null; // add this
+
+    if (lastObjectSelectionId.value) {
+        selectedIds.value = new Set([lastObjectSelectionId.value]);
+    }
+}
 
 </script>

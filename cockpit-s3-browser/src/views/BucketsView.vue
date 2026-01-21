@@ -19,7 +19,7 @@
           <button type="button"
             class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
             :disabled="busy" @click="refresh">
-            Refresh
+            <ArrowPathIcon class="h-4 w-4"></ArrowPathIcon>
           </button>
         </div>
 
@@ -30,8 +30,8 @@
 
           <div class="mb-3 flex items-center gap-3">
             <div class="relative w-full">
-              <div class="pointer-events-none absolute left-3 top-6">
-                <MagnifyingGlassIcon class="h-4 w-4 text-default" />
+              <div class="pointer-events-none absolute left-3 top-2">
+                <MagnifyingGlassIcon class="h-6 w-6 text-default"  :stroke-width="2.5" />
               </div>
 
               <input v-model.trim="query" type="text" placeholder="Search buckets..."
@@ -82,7 +82,7 @@
                 <tr v-for="b in filteredBuckets" :key="b.name" class="text-center hover:bg-default/20">
                   <td class="px-3 py-2 text-default font-medium border-b border-default">
                     <div class="flex">
-                      <div class="w-1/2 text-right flex justify-end">
+                      <div class="w-1/2 text-right flex justify-end items-center">
                         <ArchiveBoxIcon class="h-4 w-4 icon-default justify-self-end shrink-0" />
 
                       </div>
@@ -120,7 +120,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { listBuckets } from "../lib/s3Buckets";
 import type { BucketSummary } from "../types";
-import { ArchiveBoxIcon, MagnifyingGlassIcon } from "@heroicons/vue/20/solid";
+import { ArchiveBoxIcon, MagnifyingGlassIcon,ArrowPathIcon } from "@heroicons/vue/20/solid";
 
 
 const route = useRoute();

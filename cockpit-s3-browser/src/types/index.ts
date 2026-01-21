@@ -233,3 +233,17 @@ export type VersionItem = {
   size: number;
   etag: string | null;
 };
+
+
+export type VersionRow = {
+  kind: "version";
+  __key: string;
+  key: string;
+  name: string;
+  versionId: string;
+  isLatest: boolean;
+  lastModified: string | null;
+  size: number;
+  etag: string | null;
+  storageClass: string | null;
+};

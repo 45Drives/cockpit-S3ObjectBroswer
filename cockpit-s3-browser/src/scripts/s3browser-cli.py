@@ -1957,14 +1957,33 @@ def cmd_delete_object_version(conn_id: str, bucket: str, key: str, version_id: s
     sys.stdout.write(json.dumps({"ok": False, "error": "Missing versionId"}) + "\n")
     return
 
-  client.delete_object(Bucket=bucket, Key=key, VersionId=version_id)
-
-  sys.stdout.write(json.dumps({
-    "ok": True,
-    "bucket": bucket,
-    "key": key,
-    "versionId": version_id,
-  }) + "\n")
+  try:
+    client.delete_object(Bucket=bucket, Key=key, VersionId=version_id)
+    sys.stdout.write(json.dumps({
+      "ok": True,
+      "bucket": bucket,
+      "key": key,
+      "versionId": version_id,
+    }) + "\n")
+  except ClientError as e:
+    err = (e.response or {}).get("Error") or {}
+    code = err.get("Code") or "ClientError"
+    msg = err.get("Message") or str(e)
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "bucket": bucket,
+      "key": key,
+      "versionId": version_id,
+      "error": f"{code}: {msg}",
+    }) + "\n")
+  except Exception as e:
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "bucket": bucket,
+      "key": key,
+      "versionId": version_id,
+      "error": str(e) or e.__class__.__name__,
+    }) + "\n")
 
 def cmd_download_object_version(conn_id: str, bucket: str, key: str, version_id: str, argv: List[str]) -> None:
   job_id = get_job_id(argv)
