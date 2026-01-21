@@ -17,7 +17,6 @@ import "@45drives/houston-common-ui/style.css";
 import "@45drives/houston-common-css/src/index.css";
 
 import { HoustonAppContainer } from "@45drives/houston-common-ui";
-import DeleteTasksDropdown from "./components/DeleteTasksDropdown.vue";
 import TaskCenter from "./components/TaskCenter.vue";
 import TaskProgressController from "./components/TaskProgressController.vue";
 

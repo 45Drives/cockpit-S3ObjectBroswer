@@ -47,11 +47,6 @@
 
                 <!-- body -->
                 <div class="p-4">
-                    <!-- status blocks (same as before) -->
-                    <div v-if="error" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
-                        {{ error }}
-                    </div>
-
                     <div v-if="downloadBusy" class="mb-3 rounded-md border border-yellow-300 bg-default p-3 text-sm">
                         <div class="font-semibold">Download in progress</div>
                         <div class="opacity-80">Do not close or refresh this tab.</div>
@@ -327,6 +322,9 @@
 
     <TagsModal :open="tagsOpen" :busy="tags.tagsBusy.value" :title="tagsTitle" :tags="tagsInitial"
         @close="tagsOpen = false" @save="onSaveTags" />
+    <StorageClassModal :open="storageClassModal.open" :busy="busy" :current="storageClassModal.current"
+        :keyLabel="storageClassModal.key" @close="closeStorageClassModal" @submit="applyStorageClass" />
+
 </template>
 
 
@@ -359,7 +357,8 @@ import TagsModal, { type TagKV } from "../components/TagsModal.vue";
 import { useTags } from "../operations/tags";
 import ObjectDetailsPanel from "../components/ObjectDetailsPanel.vue";
 import ObjectVersionsList from "../components/ObjectVersionsList.vue";
-
+import StorageClassModal from "../components/StorageClassModal.vue";
+import { pushNotification, Notification } from "@45drives/houston-common-ui";
 
 const iconScroller = ref<any>(null);
 const gridItems = ref(1);
@@ -500,9 +499,6 @@ const downloads = useDownloads({
     getDownloadJobStatus,
     cancelDownloadJob,
     downloadObjectVersion,
-
-    setError: (m) => (error.value = m),
-
 });
 
 const downloadJobs = downloads.downloadJobs;
@@ -515,14 +511,11 @@ const uploads = useUploads({
     prefix,
     uploadObjectFromStdinStreamed,
     refresh,
-    setError: (m) => (error.value = m),
     onUploaded: (key) => upsertFileRowByKey(key),
 
 });
 
 const uploadBusy = uploads.uploadBusy;
-const uploadItems = uploads.uploadItems;
-const overallPct = uploads.overallPct;
 
 const transfers = useTransfers({
     connectionId,
@@ -533,7 +526,6 @@ const transfers = useTransfers({
     copyPrefix,
     movePrefix,
     renameObjectStreamed,
-    setError: (m) => (error.value = m),
     setBusy: (b) => (busy.value = b),
 
     onCreated: (it) => {
@@ -556,7 +548,6 @@ const renamer = useRename({
     connectionId,
     bucket,
     renameObjectStreamed,
-    setError: (m) => (error.value = m),
     setBusy: (b) => (busy.value = b),
     onRenamed: (srcKey, dstKey) => updateRowAfterRename(srcKey, dstKey),
 });
@@ -590,13 +581,62 @@ const tags = useTags({
     bucket,
     getObjectTags,
     putObjectTags,
-    setError: (m) => (error.value = m),
 });
 
 const tagsOpen = ref(false);
 const tagsKey = ref<string>("");
 const tagsTitle = ref<string>("");
 const tagsInitial = ref<TagKV[]>([]);
+
+const storageClassModal = ref({
+    open: false,
+    key: "",
+    current: "" as string | null,
+});
+
+function openStorageClassModal(file: { key: string; storageClass?: string | null }) {
+    storageClassModal.value.open = true;
+    storageClassModal.value.key = file.key;
+    storageClassModal.value.current = file.storageClass ?? "STANDARD";
+}
+
+function closeStorageClassModal() {
+    storageClassModal.value.open = false;
+}
+async function applyStorageClass(next: string) {
+    const key = storageClassModal.value.key;
+    if (!key) return;
+
+    busy.value = true;
+    try {
+        const res = await changeStorageClass({
+            connectionId: connectionId.value,
+            bucket: bucket.value,
+            key,
+            storageClass: next.trim(),
+            concurrency: 6,
+            force: true,
+        });
+
+        if (res.isErr()) {
+            error.value = res.error.message;
+            pushNotification(
+                new Notification(
+                    "Storage classe Failed",
+                    `Unable to changethe storage class of object ${error.value}`,
+                    "error",
+                    5000
+                ))
+            return;
+        }
+
+        await upsertFileRowByKey(key);
+        closeStorageClassModal();
+    } finally {
+        busy.value = false;
+        menuOpen.value = false;
+    }
+}
 
 
 
@@ -646,7 +686,6 @@ function rowId(r: Row) {
 function activateRow(r: Row) {
     if (isDeletingRow(r)) return;
     if (r.type === "folder") openPrefix(r.prefix);
-    else openFile(r);
 }
 
 const selectedRows = computed<Row[]>(() => {
@@ -655,13 +694,13 @@ const selectedRows = computed<Row[]>(() => {
 });
 
 function goBack() {
-  router.push({
-    name: "Buckets",
-    query: {
-      connectionId: String(route.query.connectionId || ""),
-      connectionName: String(route.query.connectionName || ""),
-    },
-  });
+    router.push({
+        name: "Buckets",
+        query: {
+            connectionId: String(route.query.connectionId || ""),
+            connectionName: String(route.query.connectionName || ""),
+        },
+    });
 }
 
 
@@ -722,6 +761,13 @@ async function fetchPage(reset: boolean) {
     if (!connectionId.value || !bucket.value) {
         resetLists();
         error.value = "Missing connectionId or bucket.";
+        pushNotification(
+            new Notification(
+                "Error",
+                `Missing connectionId or bucket.`,
+                "error",
+                5000
+            ))
         return;
     }
 
@@ -750,6 +796,13 @@ async function fetchPage(reset: boolean) {
         if (res.isErr()) {
             if (reset) resetLists();
             error.value = res.error.message;
+            pushNotification(
+                new Notification(
+                    "Error",
+                    `${error.value}`,
+                    "error",
+                    5000
+                ))
             return;
         }
 
@@ -806,6 +859,13 @@ watch(
         if (!connectionId.value || !bucket.value) {
             resetLists();
             error.value = "Missing connectionId or bucket.";
+            pushNotification(
+                new Notification(
+                    "Error",
+                    `Missing connectionId or bucket.`,
+                    "error",
+                    5000
+                ))
             return;
         }
 
@@ -852,15 +912,6 @@ function goUp() {
         },
     });
 }
-
-function openFile(r: FileRow) {
-    // placeholder: later you can implement download / preview
-    // for now do nothing or log
-    // console.log("open file", r.key);
-}
-
-
-
 
 watch(
     () => prefix.value,
@@ -982,6 +1033,13 @@ async function onMenuAction(action: MenuAction) {
         const files = items.filter(isFileRow);
         if (files.length !== 1 || items.length !== 1) {
             error.value = "Select a single file to rename.";
+            pushNotification(
+                new Notification(
+                    "Not Allowed",
+                    `Select a single file to rename.`,
+                    "error",
+                    5000
+                ))
             return;
         }
 
@@ -1009,7 +1067,10 @@ async function onMenuAction(action: MenuAction) {
             cleaned.includes("/../") ||
             cleaned.endsWith("/..")
         ) {
-            error.value = "Invalid name.";
+            pushNotification(
+                new Notification("Not allowed ", `Invalid name`, "success", 5000
+                )
+            );
             return;
         }
 
@@ -1032,14 +1093,17 @@ async function onMenuAction(action: MenuAction) {
     if (action === "tags") {
         const items = effectiveSelection();
         if (items.length !== 1) {
-            error.value = "Select a single item to edit tags.";
+            pushNotification(new Notification("Not allowed", 'Select a single item to edit tags.',
+                'error', 5000));
+
             return;
         }
 
         const it = items[0];
 
         if (it.type === "folder") {
-            error.value = "Folders (prefixes) cannot be tagged. Only objects can be tagged.";
+            pushNotification(new Notification("Not allowed", 'Folders (prefixes) cannot be tagged. Only objects can be tagged',
+                'error', 5000));
             return;
         }
 
@@ -1056,44 +1120,15 @@ async function onMenuAction(action: MenuAction) {
         const items = effectiveSelection();
         const files = items.filter(isFileRow);
         if (files.length !== 1 || items.length !== 1) {
-            error.value = "Select a single file to change storage class.";
+            pushNotification(new Notification("Not allowed", 'Select a single file to change storage class.',
+                'error', 5000));
             return;
         }
 
-        const f = files[0];
-
-        const next = window.prompt(
-            "Storage class (e.g. STANDARD, STANDARD_IA, ONEZONE_IA, INTELLIGENT_TIERING, GLACIER, DEEP_ARCHIVE):",
-            f.storageClass || "STANDARD"
-        );
-        if (!next) return;
-
-        busy.value = true;
-        try {
-            const res = await changeStorageClass({
-                connectionId: connectionId.value,
-                bucket: bucket.value,
-                key: f.key,
-                storageClass: next.trim(),
-                concurrency: 6,
-                force: true,
-            });
-
-            if (res.isErr()) {
-                error.value = res.error.message;
-                return;
-            }
-
-            // Update the row so the table column changes immediately
-            // (statObject will re-head and patch size/lm/storageClass)
-            await upsertFileRowByKey(f.key);
-        } finally {
-            busy.value = false;
-            menuOpen.value = false;
-        }
-
+        openStorageClassModal(files[0]);
         return;
     }
+
 }
 
 function confirmDeleteNow() {
@@ -1148,9 +1183,6 @@ function onRowClick(e: MouseEvent, r: Row, index: number) {
 
     // Shift-click: range selection
     if (isShift && anchorIndex.value != null) {
-        // Windows Explorer behavior:
-        // - Shift alone replaces selection with range
-        // - Ctrl/Cmd + Shift adds range
         selectRange(anchorIndex.value, index, !isToggle);
         return;
     }
@@ -1242,8 +1274,6 @@ onBeforeUnmount(() => {
     window.removeEventListener("beforeunload", onBeforeUnload);
 
 });
-
-
 
 function selectionToClipItems(items: Row[]) {
     return items.map((it) =>
@@ -1462,15 +1492,6 @@ const activeRow = computed<Row | null>(() => {
     return sel.length === 1 ? sel[0] : null;
 });
 
-const leftItems = computed(() => {
-    return mode.value === "versions" ? versionRows.value : virtualRows.value;
-});
-
-const leftKeyField = computed(() => (mode.value === "versions" ? "__key" : "__key"));
-
-function isVersionRow(x: any): x is VersionRow {
-    return x && x.kind === "version";
-}
 
 async function onVersionAction(payload: { action: "download" | "delete" | "rollback"; versionIds: string[] }) {
     const key = versionsKey.value;
@@ -1549,7 +1570,6 @@ async function openVersionsModeForFile(file: FileRow) {
 
     await loadVersionsForKey(file.key, file.name);
 }
-
 
 function exitVersionsMode() {
     mode.value = "objects";

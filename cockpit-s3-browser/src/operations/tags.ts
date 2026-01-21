@@ -15,8 +15,6 @@ type Deps = {
 
   getObjectTags: typeof getObjectTagsFn;
   putObjectTags: typeof putObjectTagsFn;
-
-  setError?: (msg: string) => void;
 };
 
 export function useTags(deps: Deps) {
@@ -62,7 +60,6 @@ export function useTags(deps: Deps) {
       });
       if (res.isErr()) {
         const msg = res.error.message;
-        deps.setError?.(msg);
         return;
       }
       currentTags.value = Array.isArray(res.value.tags) ? res.value.tags : [];
@@ -91,7 +88,6 @@ export function useTags(deps: Deps) {
 
       if (res.isErr()) {
         const msg = res.error.message;
-        deps.setError?.(msg);
         return;
       }
 
@@ -102,8 +98,6 @@ export function useTags(deps: Deps) {
       tagsBusy.value = false;
     }
   }
-
-
 
   // - Files: apply to each file key.
   // - Folders: optional behavior. Most UIs either:
@@ -136,8 +130,6 @@ export function useTags(deps: Deps) {
 
         if (res.isErr()) {
           const msg = res.error.message;
-          deps.setError?.(msg);
-          // continue with others (best-effort)
         }
 
         await new Promise((r) => window.setTimeout(r, 100));
@@ -161,7 +153,6 @@ export function useTags(deps: Deps) {
 
           if (res.isErr()) {
             const msg = res.error.message;
-            deps.setError?.(msg);
           }
 
           await new Promise((r) => window.setTimeout(r, 100));

@@ -80,6 +80,20 @@ def _wants_ndjson(cmd: str, argv: List[str]) -> bool:
     return True
   return False
 
+def _client_error_info(e: ClientError) -> Dict[str, Any]:
+  resp = getattr(e, "response", None) or {}
+  err = (resp.get("Error") or {})
+  meta = (resp.get("ResponseMetadata") or {})
+
+  code = err.get("Code")
+  msg = err.get("Message")
+  return {
+    "s3Code": (str(code) if code is not None else None),
+    "s3Message": (str(msg) if msg is not None else None),
+    "httpStatus": meta.get("HTTPStatusCode"),
+    "requestId": meta.get("RequestId"),
+  }
+
 
 def parse_iso8601_to_datetime(value: str) -> datetime:
     if value is None:
@@ -1717,56 +1731,50 @@ def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str
     concurrency = int(conc_raw)
   except ValueError:
     raise ValueError("Invalid --concurrency")
-  if concurrency < 1:
-    concurrency = 1
-  if concurrency > 32:
-    concurrency = 32
+  concurrency = max(1, min(32, concurrency))
 
   force = (get_flag_value(argv, "--force", "0") or "0").strip() in ("1", "true", "yes", "on")
 
   canceled = {"yes": False}
-
   def abort():
     canceled["yes"] = True
-
   install_cancel_handler(abort)
-
-  head = client.head_object(Bucket=bucket, Key=key)
-  size = int(head.get("ContentLength") or 0)
-  lm = head.get("LastModified")
-  cur_sc = head.get("StorageClass")  # may be None
-
-  # If already set and not forcing, short-circuit
-  if (not force) and cur_sc and str(cur_sc) == storage_class:
-    sys.stdout.write(json.dumps({
-      "ok": True,
-      "bucket": bucket,
-      "key": key,
-      "changed": False,
-      "requestedStorageClass": storage_class,
-      "storageClass": cur_sc,
-      "size": size,
-      "lastModified": (lm.isoformat() if lm else None),
-    }) + "\n")
-    return
-
-  if canceled["yes"]:
-    # print and return (do not raise -> avoid double JSON)
-    sys.stdout.write(json.dumps({
-      "ok": False,
-      "error": "Canceled",
-      "bucket": bucket,
-      "key": key,
-      "requestedStorageClass": storage_class,
-      "storageClass": (str(cur_sc) if cur_sc else None),
-      "size": size,
-      "lastModified": (lm.isoformat() if lm else None),
-    }) + "\n")
-    return
 
   MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
 
   try:
+    head = client.head_object(Bucket=bucket, Key=key)
+    size = int(head.get("ContentLength") or 0)
+    lm = head.get("LastModified")
+    cur_sc = head.get("StorageClass")  # may be None
+
+    if (not force) and cur_sc and str(cur_sc) == storage_class:
+      sys.stdout.write(json.dumps({
+        "ok": True,
+        "bucket": bucket,
+        "key": key,
+        "changed": False,
+        "requestedStorageClass": storage_class,
+        "storageClass": cur_sc,
+        "size": size,
+        "lastModified": (lm.isoformat() if lm else None),
+      }) + "\n")
+      return
+
+    if canceled["yes"]:
+      sys.stdout.write(json.dumps({
+        "ok": False,
+        "type": "result",
+        "error": "Canceled",
+        "bucket": bucket,
+        "key": key,
+        "requestedStorageClass": storage_class,
+        "storageClass": (str(cur_sc) if cur_sc else None),
+        "size": size,
+        "lastModified": (lm.isoformat() if lm else None),
+      }) + "\n")
+      return
+
     if size >= MULTIPART_THRESHOLD:
       def emit(_obj: Dict[str, Any]) -> None:
         emit_ndjson(_obj)
@@ -1861,14 +1869,12 @@ def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str
             parts.append(fut.result())
 
         parts.sort(key=lambda p: int(p["PartNumber"]))
-
         client.complete_multipart_upload(
           Bucket=bucket,
           Key=key,
           UploadId=upload_id,
           MultipartUpload={"Parts": parts},
         )
-
       except Exception as e:
         abort_mpu()
         raise e
@@ -1889,7 +1895,6 @@ def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str
       })
       return
 
-    # Small/medium: single self-copy with StorageClass
     copy_args: Dict[str, Any] = {
       "Bucket": bucket,
       "Key": key,
@@ -1920,33 +1925,49 @@ def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str
     }) + "\n")
     return
 
-  except KeyboardInterrupt:
-    # IMPORTANT: do not re-raise; print once and return
+  except ClientError as e:
+    info = _client_error_info(e)
+    code = info.get("s3Code") or "Error"
+    msg = (info.get("s3Message") or "").strip() or None
+
+    if code in ("InvalidArgument", "InvalidStorageClass"):
+      err_msg = f'Storage class "{storage_class}" is not supported or not allowed by your s3 provider.'
+    else:
+      err_msg = msg or str(e)
+
     sys.stdout.write(json.dumps({
       "ok": False,
+      "type": "result",
+      "error": err_msg,
+      "bucket": bucket,
+      "key": key,
+      "requestedStorageClass": storage_class,
+      **info,
+    }) + "\n")
+    return
+
+  except KeyboardInterrupt:
+    sys.stdout.write(json.dumps({
+      "ok": False,
+      "type": "result",
       "error": "Canceled",
       "bucket": bucket,
       "key": key,
       "requestedStorageClass": storage_class,
-      "storageClass": (str(cur_sc) if cur_sc else None),
-      "size": size,
-      "lastModified": (lm.isoformat() if lm else None),
     }) + "\n")
     return
 
   except Exception as e:
-    # IMPORTANT: do not re-raise; print once and return
     sys.stdout.write(json.dumps({
       "ok": False,
+      "type": "result",
       "error": str(e),
       "bucket": bucket,
       "key": key,
       "requestedStorageClass": storage_class,
-      "storageClass": (str(cur_sc) if cur_sc else None),
-      "size": size,
-      "lastModified": (lm.isoformat() if lm else None),
     }) + "\n")
     return
+
 
 def cmd_list_object_versions(conn_id: str, bucket: str, key: str, max_keys: int = 200) -> None:
   record = read_json(cfg_path(conn_id))

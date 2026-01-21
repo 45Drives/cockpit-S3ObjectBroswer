@@ -15,7 +15,6 @@ type Deps = {
   uploadObjectFromStdinStreamed: typeof uploadObjectFromStdinStreamedFn;
 
   refresh?: () => Promise<void> | void;
-  setError?: (msg: string) => void;
   onUploaded?: (key: string) => void;
 };
 
@@ -238,7 +237,6 @@ function notify(u: UploadItem, state: "done" | "failed" | "canceled") {
 
   async function uploadManyWithPool(limit: number) {
     uploadBusy.value = true;
-    deps.setError?.("");
     uploadProgress.value = null;
     uploadCancel.value = null;
 

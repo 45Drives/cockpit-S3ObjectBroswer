@@ -225,9 +225,6 @@ function pctFor(t: TaskRecord): number | null {
     return null;
 }
 
-
-
-
 onBeforeUnmount(() => {
     open.value = false;
 });

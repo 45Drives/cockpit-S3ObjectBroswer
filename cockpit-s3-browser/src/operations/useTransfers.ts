@@ -29,7 +29,6 @@ type Deps = {
   renameObjectStreamed: typeof renameObjectStreamedFn;
 
   refresh?: () => Promise<void> | void;
-  setError?: (msg: string) => void;
   setBusy?: (busy: boolean) => void;
   onCreated?: (
     item: { type: "file"; key: string } | { type: "folder"; prefix: string }
@@ -107,7 +106,6 @@ export function useTransfers(deps: Deps) {
     const kind = deps.clip.kind; // "copy" | "cut"
     const srcItems = [...deps.clip.items];
 
-    deps.setError?.("");
     deps.setBusy?.(true);
 
     try {
@@ -149,7 +147,14 @@ export function useTransfers(deps: Deps) {
             it.bucket === dstBucket &&
             isPasteIntoSelfPrefix(srcPrefix, dstPrefix)
           ) {
-            deps.setError?.(`Cannot move "${folderName}" into itself.`);
+            pushNotification(
+              new Notification(
+                "Not Allowed",
+                `Cannot move "${folderName}" into itself.`,
+                "error",
+                5000
+              )
+            );
             return;
           }
 
@@ -309,7 +314,6 @@ export function useTransfers(deps: Deps) {
             transferJobs.value[tIdx].finishedAt = Date.now();
           }
 
-          deps.setError?.(msg);
           return;
         }
       }
