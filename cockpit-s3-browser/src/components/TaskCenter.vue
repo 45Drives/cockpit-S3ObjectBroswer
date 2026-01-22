@@ -54,26 +54,25 @@
                                 </span>
                                 {{ t.name }}
                             </div>
-                            <div class="mt-1 text-sm text-default">
-                                {{ t.progressText || stateLabel(t.state) }}
-                            </div>
+
                             <div v-if="pctFor(t) != null" class="mt-2">
-  <div class="h-4 w-full rounded bg-well overflow-hidden">
-    <div class="h-4 bg-secondary transition-[width] duration-200" :style="{ width: pctFor(t) + '%' }"></div>
-  </div>
+                                <div class="h-4 w-full rounded bg-well overflow-hidden">
+                                    <div class="h-4 bg-secondary transition-[width] duration-200"
+                                        :style="{ width: pctFor(t) + '%' }"></div>
+                                </div>
 
-  <div
-    v-if="typeof t.progressCurrent === 'number' && typeof t.progressTotal === 'number' && t.progressTotal > 0"
-    class="mt-1 flex items-center justify-between text-xs opacity-80"
-  >
-    <span>{{ formatBytes(t.progressCurrent) }} / {{ formatBytes(t.progressTotal) }}</span>
-    <span>{{ pctFor(t) }}%</span>
-  </div>
-</div>
+                                <div v-if="typeof t.progressCurrent === 'number' && typeof t.progressTotal === 'number' && t.progressTotal > 0"
+                                    class="mt-1 flex items-center justify-between text-xs opacity-80">
+                                    <span>{{ formatBytes(t.progressCurrent) }} / {{ formatBytes(t.progressTotal)
+                                        }}</span>
+                                    <span>{{ pctFor(t) }}%</span>
+                                </div>
 
-
-
-
+                                <div v-if="t.progressText" class="mt-1 text-xs opacity-80 truncate"
+                                    :title="t.progressText">
+                                    {{ t.progressText }}
+                                </div>
+                            </div>
 
                             <div v-if="t.error" class="mt-1 text-xs text-red-700">
                                 {{ t.error }}

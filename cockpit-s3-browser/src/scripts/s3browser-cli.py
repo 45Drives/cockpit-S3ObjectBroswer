@@ -1205,10 +1205,13 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
   except ValueError:
     strip_components = 0
 
-  # Progress must go to STDERR only. STDOUT must be the tar.gz bytes only.
+  # Progress must go to STDERR only. STDOUT must be tar.gz bytes only.
   def emit_err(obj: Dict[str, Any]) -> None:
-    sys.stderr.write(json.dumps(obj) + "\n")
-    sys.stderr.flush()
+    try:
+      sys.stderr.write(json.dumps(obj) + "\n")
+      sys.stderr.flush()
+    except Exception:
+      pass
 
   canceled = {"yes": False}
 
@@ -1217,14 +1220,60 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
 
   install_cancel_handler(abort)
 
-  # Collect keys first so we can emit totals
+  # Create job file immediately so UI polling never hits "Job not found"
+  write_job(job_id, {
+    "type": "start",
+    "ok": True,
+    "kind": "prefix-targz",
+    "pid": os.getpid(),
+    "bucket": bucket,
+    "prefix": p,
+    "files": 0,
+    "fileIndex": 0,
+    "bytes": 0,
+    "totalBytes": 0,
+    "state": "running",
+    "phase": "scanning",
+    "updatedAt": int(time.time() * 1000),
+  })
+
+  # Collect keys first so we can compute totals
   keys: List[Dict[str, Any]] = []
   total_bytes = 0
-  for key, size, lm in iter_keys_under_prefix(client, bucket, p):
-    keys.append({"key": key, "size": int(size or 0), "lastModified": lm})
-    total_bytes += int(size or 0)
+  scanned = 0
 
-  # Emit start to STDERR + write start job file
+  # Throttle scan-phase job writes
+  last_scan_emit = 0.0
+
+  for key, size, lm in iter_keys_under_prefix(client, bucket, p):
+    if canceled["yes"]:
+      raise KeyboardInterrupt("Canceled")
+
+    sz = int(size or 0)
+    keys.append({"key": key, "size": sz, "lastModified": lm})
+    total_bytes += sz
+    scanned += 1
+
+    now = time.time()
+    if scanned % 250 == 0 and (now - last_scan_emit) >= 0.25:
+      last_scan_emit = now
+      write_job(job_id, {
+        "type": "progress",
+        "ok": True,
+        "kind": "prefix-targz",
+        "pid": os.getpid(),
+        "bucket": bucket,
+        "prefix": p,
+        "files": scanned,
+        "fileIndex": 0,
+        "bytes": 0,
+        "totalBytes": total_bytes,
+        "state": "running",
+        "phase": "scanning",
+        "updatedAt": int(now * 1000),
+      })
+
+  # Emit start to STDERR and finalize totals into the job file
   emit_err({
     "type": "start",
     "ok": True,
@@ -1243,15 +1292,92 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
     "bucket": bucket,
     "prefix": p,
     "files": len(keys),
+    "fileIndex": 0,
+    "bytes": 0,
     "totalBytes": total_bytes,
     "state": "running",
+    "phase": "streaming",
+    "updatedAt": int(time.time() * 1000),
   })
-
 
   out = sys.stdout.buffer  # tar.gz stream destination
 
-  sent_bytes = 0
-  file_index = 0
+  # Streaming counters (mutable so nested code can update safely)
+  prog = {
+    "sent": 0,
+    "fileIndex": 0,
+    "lastEmitT": 0.0,
+    "lastEmitB": 0,
+  }
+
+  READ_CHUNK = 8 * 1024 * 1024   # cap reads so progress updates during huge objects
+  EMIT_EVERY_SEC = 0.25          # 4 updates/sec
+  EMIT_EVERY_BYTES = 16 * 1024 * 1024  # or every 16 MiB, whichever comes first
+
+  def maybe_emit_progress(current_key: str) -> None:
+    now = time.time()
+    if (now - prog["lastEmitT"]) < EMIT_EVERY_SEC and (prog["sent"] - prog["lastEmitB"]) < EMIT_EVERY_BYTES:
+      return
+
+    prog["lastEmitT"] = now
+    prog["lastEmitB"] = prog["sent"]
+
+    # Job file is what getDownloadJobStatus reads
+    write_job(job_id, {
+      "type": "progress",
+      "ok": True,
+      "kind": "prefix-targz",
+      "pid": os.getpid(),
+      "bucket": bucket,
+      "prefix": p,
+      "fileIndex": prog["fileIndex"],
+      "files": len(keys),
+      "bytes": prog["sent"],
+      "totalBytes": total_bytes,
+      "key": current_key,
+      "state": "running",
+      "phase": "streaming",
+      "updatedAt": int(now * 1000),
+    })
+
+    # Optional: also mirror to stderr (safe but can be noisy). Keep it throttled by this function.
+    emit_err({
+      "type": "progress",
+      "ok": True,
+      "jobId": job_id,
+      "fileIndex": prog["fileIndex"],
+      "files": len(keys),
+      "bytes": prog["sent"],
+      "totalBytes": total_bytes,
+      "key": current_key,
+    })
+
+  class CountingReader:
+    def __init__(self, body, key: str):
+      self.body = body
+      self.key = key
+
+    def read(self, n: int = -1):
+      if canceled["yes"]:
+        raise KeyboardInterrupt("Canceled")
+
+      # tarfile may request huge reads; cap them so we can emit progress during big files
+      if n is None or n < 0:
+        n = READ_CHUNK
+      else:
+        n = min(n, READ_CHUNK)
+
+      b = self.body.read(n)
+      if b:
+        prog["sent"] += len(b)
+        maybe_emit_progress(self.key)
+      return b
+
+    def close(self):
+      try:
+        self.body.close()
+      except Exception:
+        pass
 
   try:
     # Stream tar.gz directly (no buffering full archive)
@@ -1282,11 +1408,12 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
         obj = client.get_object(Bucket=bucket, Key=key)
         body = obj["Body"]  # streaming file-like object
 
+        reader = CountingReader(body, key)
+
         try:
-          # Build tar header first
+          # Build tar header
           ti = tarfile.TarInfo(name=arcname)
           ti.size = size
-
           try:
             if lm is not None:
               ti.mtime = int(lm.timestamp())
@@ -1295,51 +1422,25 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
           except Exception:
             ti.mtime = int(time.time())
 
-          # Add file content (streamed)
-          tar.addfile(ti, fileobj=body)
+          # Count this file as "current file index" before streaming it
+          prog["fileIndex"] += 1
+          maybe_emit_progress(key)
+
+          # Stream file content; CountingReader updates prog["sent"] continuously
+          tar.addfile(ti, fileobj=reader)
+
+          # Ensure a final tick right after file completes
+          maybe_emit_progress(key)
 
         finally:
-          # Always close the streaming body
-          try:
-            body.close()
-          except Exception:
-            pass
-
-        file_index += 1
-        sent_bytes += size
-
-        emit_err({
-          "type": "progress",
-          "ok": True,
-          "jobId": job_id,
-          "fileIndex": file_index,
-          "files": len(keys),
-          "bytes": sent_bytes,
-          "totalBytes": total_bytes,
-          "key": key,
-        })
-
-        write_job(job_id, {
-          "type": "progress",
-          "ok": True,
-          "kind": "prefix-targz",
-          "pid": os.getpid(),
-          "bucket": bucket,
-          "prefix": p,
-          "fileIndex": file_index,
-          "files": len(keys),
-          "bytes": sent_bytes,
-          "totalBytes": total_bytes,
-          "key": key,
-          "state": "running",
-        })
+          reader.close()
 
     emit_err({
       "type": "result",
       "ok": True,
       "jobId": job_id,
       "files": len(keys),
-      "bytes": sent_bytes,
+      "bytes": prog["sent"],
       "totalBytes": total_bytes,
     })
 
@@ -1351,10 +1452,37 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
       "bucket": bucket,
       "prefix": p,
       "files": len(keys),
-      "bytes": sent_bytes,
+      "fileIndex": prog["fileIndex"],
+      "bytes": prog["sent"],
       "totalBytes": total_bytes,
       "state": "done",
+      "phase": "streaming",
+      "updatedAt": int(time.time() * 1000),
     })
+
+  except BrokenPipeError:
+    # Browser canceled / channel closed mid-stream.
+    # Mark canceled best-effort and exit cleanly.
+    try:
+      write_job(job_id, {
+        "type": "result",
+        "ok": False,
+        "kind": "prefix-targz",
+        "pid": os.getpid(),
+        "bucket": bucket,
+        "prefix": p,
+        "files": len(keys),
+        "fileIndex": prog["fileIndex"],
+        "bytes": prog["sent"],
+        "totalBytes": total_bytes,
+        "error": "BrokenPipe",
+        "state": "canceled",
+        "phase": "streaming",
+        "updatedAt": int(time.time() * 1000),
+      })
+    except Exception:
+      pass
+    raise SystemExit(0)
 
   except KeyboardInterrupt:
     emit_err({"type": "result", "ok": False, "jobId": job_id, "error": "Canceled"})
@@ -1366,10 +1494,14 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
       "pid": os.getpid(),
       "bucket": bucket,
       "prefix": p,
-      "bytes": sent_bytes,
+      "files": len(keys),
+      "fileIndex": prog["fileIndex"],
+      "bytes": prog["sent"],
       "totalBytes": total_bytes,
       "error": "Canceled",
       "state": "canceled",
+      "phase": "streaming",
+      "updatedAt": int(time.time() * 1000),
     })
     raise
 
@@ -1383,13 +1515,16 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
       "pid": os.getpid(),
       "bucket": bucket,
       "prefix": p,
-      "bytes": sent_bytes,
+      "files": len(keys),
+      "fileIndex": prog["fileIndex"],
+      "bytes": prog["sent"],
       "totalBytes": total_bytes,
       "error": str(e),
       "state": "failed",
+      "phase": "streaming",
+      "updatedAt": int(time.time() * 1000),
     })
     raise
-
 
 def cmd_download_object(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
   job_id = get_job_id(argv)

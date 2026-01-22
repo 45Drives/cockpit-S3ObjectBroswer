@@ -14,7 +14,7 @@ import type {
   getDownloadJobStatus as getDownloadJobStatusFn,
   cancelDownloadJob as cancelDownloadJobFn,
 } from "../lib/s3Objects";
-import { newJobId } from "../lib/helpers";
+import { newJobId, formatBytes } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 
@@ -29,30 +29,130 @@ type Deps = {
   cancelDownloadJob: typeof cancelDownloadJobFn;
 };
 
+type RateStats = {
+  lastT: number;
+  lastB: number;
+  rateAvg: number | null; // bytes/sec
+  etaSec: number | null;  // seconds
+};
+
+function toNum(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function formatBytesPerSec(bps: number) {
+  if (!Number.isFinite(bps) || bps <= 0) return "—";
+  const units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"];
+  let u = 0;
+  let v = bps;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u++;
+  }
+  return `${v.toFixed(u === 0 ? 0 : 1)} ${units[u]}`;
+}
+
+function formatEta(sec: number) {
+  if (!Number.isFinite(sec) || sec <= 0) return "—";
+  const s = Math.floor(sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${r}s`;
+  return `${r}s`;
+}
+
 export function useDownloads(deps: Deps) {
   const taskCenter = useTaskCenterStore();
 
   const downloadJobs = ref<DownloadJob[]>([]);
   const downloadBusy = computed(() =>
-    downloadJobs.value.some(
-      (j) => j.state === "running" || j.state === "canceling"
-    )
+    downloadJobs.value.some((j) => j.state === "running" || j.state === "canceling")
   );
 
+  // Non-overlapping poll loop
   let pollTimer: number | null = null;
+  let pollRunning = false;
+
+  // Grace window for "job not found" races
+  const jobStartAt = new Map<string, number>();
+
+  // Rate/ETA per job
+  const rateStats = new Map<string, RateStats>();
 
   function stopPolling() {
-    if (pollTimer == null) return;
-    window.clearInterval(pollTimer);
+    if (pollTimer != null) window.clearTimeout(pollTimer);
     pollTimer = null;
+  }
+
+  function schedulePoll(delayMs: number) {
+    stopPolling();
+    pollTimer = window.setTimeout(pollOnce, delayMs);
+  }
+
+  function startPolling() {
+    schedulePoll(500);
+  }
+
+  function updateRateAndEta(jobId: string, currentBytes: number, totalBytes: number) {
+    const now = performance.now();
+    const st = rateStats.get(jobId);
+
+    if (!st) {
+      rateStats.set(jobId, { lastT: now, lastB: currentBytes, rateAvg: null, etaSec: null });
+      return;
+    }
+
+    const dtMs = now - st.lastT;
+    const db = currentBytes - st.lastB;
+
+    st.lastT = now;
+    st.lastB = currentBytes;
+
+    if (dtMs <= 0 || db < 0) return;
+
+    const rate = (1000 * db) / dtMs; // bytes/sec
+    const alpha = 0.125;
+    st.rateAvg = st.rateAvg == null ? rate : alpha * rate + (1 - alpha) * st.rateAvg;
+
+    if (st.rateAvg && st.rateAvg > 1 && totalBytes > 0) {
+      st.etaSec = (totalBytes - currentBytes) / st.rateAvg;
+    } else {
+      st.etaSec = null;
+    }
+  }
+
+  function progressTextForJob(j: DownloadJob) {
+    const cur = typeof j.bytes === "number" ? j.bytes : null;
+    const tot =
+      typeof j.totalBytes === "number" && j.totalBytes > 0 ? j.totalBytes : null;
+
+    const st = rateStats.get(j.id);
+    const rateTxt = st?.rateAvg ? formatBytesPerSec(st.rateAvg) : "—";
+    const etaTxt = st?.etaSec ? formatEta(st.etaSec) : "—";
+
+    if (cur != null && tot != null) {
+      return `${rateTxt} • ETA ${etaTxt}`;
+    }
+    if (cur != null) {
+      return ` ${rateTxt} • ETA ${etaTxt}`;
+    }
+    return undefined;
   }
 
   function syncTask(j: DownloadJob) {
     const cur = typeof j.bytes === "number" ? j.bytes : null;
     const tot =
-      typeof j.totalBytes === "number" && j.totalBytes > 0
-        ? j.totalBytes
-        : null;
+      typeof j.totalBytes === "number" && j.totalBytes > 0 ? j.totalBytes : null;
+
+    const pct =
+      cur != null && tot != null && tot > 0 ? Math.round((cur * 100) / tot) : null;
 
     taskCenter.upsert({
       id: j.id,
@@ -62,10 +162,10 @@ export function useDownloads(deps: Deps) {
 
       progressCurrent: cur,
       progressTotal: tot,
-      progressPct:
-        cur != null && tot != null ? Math.round((cur * 100) / tot) : null,
+      progressPct: pct,
 
-      progressText: cur != null && tot != null ? `${cur} / ${tot}` : undefined,
+      // includes rate + ETA (TaskCenter must render it)
+      progressText: progressTextForJob(j),
 
       error: j.error || undefined,
       actions: {
@@ -75,10 +175,14 @@ export function useDownloads(deps: Deps) {
     });
   }
 
-  function startPolling() {
-    if (pollTimer != null) return;
+  async function pollOnce() {
+    if (pollRunning) {
+      schedulePoll(500);
+      return;
+    }
+    pollRunning = true;
 
-    pollTimer = window.setInterval(async () => {
+    try {
       const active = downloadJobs.value.filter(
         (j) => j.state === "running" || j.state === "canceling"
       );
@@ -88,14 +192,32 @@ export function useDownloads(deps: Deps) {
         return;
       }
 
-      for (const j of active) {
+      const results = await Promise.all(
+        active.map(async (j) => {
+          const res = await deps.getDownloadJobStatus({ jobId: j.id });
+          return { j, res };
+        })
+      );
+
+      for (const { j, res } of results) {
         const prevState = j.state;
 
-        const res = await deps.getDownloadJobStatus({ jobId: j.id });
         if (res.isErr()) {
+          const msg = res.error.message || "Unknown error";
+          const started = jobStartAt.get(j.id) ?? Date.now();
+          const ageMs = Date.now() - started;
+
+          const lower = msg.toLowerCase();
+          const looksNotFound =
+            lower.includes("job not found") || lower.includes("not found");
+
+          if (looksNotFound && ageMs < 4000) {
+            // don’t fail yet; backend might not have created the job file
+            continue;
+          }
+
           j.state = "failed";
-          j.error = res.error.message;
-          downloadJobs.value = [...downloadJobs.value];
+          j.error = msg;
           syncTask(j);
 
           if (prevState !== "failed") {
@@ -112,19 +234,26 @@ export function useDownloads(deps: Deps) {
           continue;
         }
 
-        const s = res.value;
+        const s: any = res.value;
 
         if (typeof s.state === "string") j.state = s.state as DownloadState;
 
-        // keep progress correct
-        if (typeof s.bytes === "number") j.bytes = s.bytes;
-        if (typeof s.totalBytes === "number") j.totalBytes = s.totalBytes;
-        else if (typeof s.size === "number") j.totalBytes = s.size;
+        const newBytes = toNum(s.bytes);
+        if (newBytes != null) j.bytes = newBytes;
+
+        const tb = toNum(s.totalBytes);
+        const sz = toNum(s.size);
+        if (tb != null) j.totalBytes = tb;
+        else if (sz != null) j.totalBytes = sz;
 
         if (typeof s.error === "string") j.error = s.error;
-        if (typeof s.updatedAt === "number") j.updatedAt = s.updatedAt;
 
-        // Log only when we reach a final state (and only once)
+        // update rate+eta when we have numbers
+        if (typeof j.bytes === "number") {
+          const total = typeof j.totalBytes === "number" ? j.totalBytes : 0;
+          updateRateAndEta(j.id, j.bytes, total);
+        }
+
         if (j.state !== prevState) {
           if (j.state === "done") {
             console.log(`[download] completed ${j.name}`);
@@ -136,6 +265,8 @@ export function useDownloads(deps: Deps) {
                 5000
               )
             );
+            jobStartAt.delete(j.id);
+            rateStats.delete(j.id);
           } else if (j.state === "canceled") {
             console.log(`[download] canceled ${j.name}`);
             pushNotification(
@@ -146,10 +277,10 @@ export function useDownloads(deps: Deps) {
                 5000
               )
             );
+            jobStartAt.delete(j.id);
+            rateStats.delete(j.id);
           } else if (j.state === "failed") {
-            console.error(
-              `[download] failed ${j.name}: ${j.error ?? "Unknown error"}`
-            );
+            console.error(`[download] failed ${j.name}: ${j.error ?? "Unknown error"}`);
             pushNotification(
               new Notification(
                 "Download failed",
@@ -158,15 +289,24 @@ export function useDownloads(deps: Deps) {
                 5000
               )
             );
+            jobStartAt.delete(j.id);
+            rateStats.delete(j.id);
           }
         }
 
         syncTask(j);
       }
 
-      // force UI update
       downloadJobs.value = [...downloadJobs.value];
-    }, 500);
+    } finally {
+      pollRunning = false;
+
+      if (downloadJobs.value.some((j) => j.state === "running" || j.state === "canceling")) {
+        schedulePoll(500);
+      } else {
+        stopPolling();
+      }
+    }
   }
 
   function markJobFailed(jobId: string, msg: string) {
@@ -176,14 +316,8 @@ export function useDownloads(deps: Deps) {
     j.error = msg;
     downloadJobs.value = [...downloadJobs.value];
     syncTask(j);
-  }
-
-  function markJobCanceled(jobId: string) {
-    const j = downloadJobs.value.find((x) => x.id === jobId);
-    if (!j) return;
-    j.state = "canceled";
-    downloadJobs.value = [...downloadJobs.value];
-    syncTask(j);
+    jobStartAt.delete(jobId);
+    rateStats.delete(jobId);
   }
 
   function isFileRow(r: Row): r is FileRow {
@@ -196,6 +330,7 @@ export function useDownloads(deps: Deps) {
 
   async function enqueueFolderDownload(d: FolderRow) {
     const jobId = newJobId();
+    jobStartAt.set(jobId, Date.now());
 
     const job: DownloadJob = {
       id: jobId,
@@ -209,9 +344,7 @@ export function useDownloads(deps: Deps) {
     downloadJobs.value.unshift(job);
     downloadJobs.value = [...downloadJobs.value];
 
-    // register in TaskCenter
     syncTask(job);
-
     startPolling();
 
     const res = await deps.downloadPrefixTarGz({
@@ -223,14 +356,14 @@ export function useDownloads(deps: Deps) {
     });
 
     if (res.isErr()) {
-      const msg = res.error.message;
-      markJobFailed(jobId, msg);
+      markJobFailed(jobId, res.error.message);
       return;
     }
   }
 
   async function enqueueFileDownload(f: FileRow) {
     const jobId = newJobId();
+    jobStartAt.set(jobId, Date.now());
 
     const job: DownloadJob = {
       id: jobId,
@@ -244,9 +377,7 @@ export function useDownloads(deps: Deps) {
     downloadJobs.value.unshift(job);
     downloadJobs.value = [...downloadJobs.value];
 
-    // register in TaskCenter
     syncTask(job);
-
     startPolling();
 
     const res = await deps.downloadObject({
@@ -258,8 +389,7 @@ export function useDownloads(deps: Deps) {
     });
 
     if (res.isErr()) {
-      const msg = res.error.message;
-      markJobFailed(jobId, msg);
+      markJobFailed(jobId, res.error.message);
       return;
     }
   }
@@ -270,6 +400,7 @@ export function useDownloads(deps: Deps) {
     filename?: string;
   }) {
     const jobId = newJobId();
+    jobStartAt.set(jobId, Date.now());
 
     const base = params.filename || params.key.split("/").pop() || "download";
     const safeVid = (params.versionId || "").slice(0, 8) || "version";
@@ -281,7 +412,7 @@ export function useDownloads(deps: Deps) {
       name,
       state: "running",
       bytes: 0,
-      totalBytes: 0, // we’ll fill from job status (size)
+      totalBytes: 0,
     };
 
     downloadJobs.value.unshift(job);
@@ -300,8 +431,7 @@ export function useDownloads(deps: Deps) {
     });
 
     if (res.isErr()) {
-      const msg = res.error.message;
-      markJobFailed(jobId, msg);
+      markJobFailed(jobId, res.error.message);
       return;
     }
   }
@@ -354,11 +484,12 @@ export function useDownloads(deps: Deps) {
     const j = downloadJobs.value.find((x) => x.id === jobId);
     if (!j) return;
 
-    // don’t allow dismiss while active
     if (j.state === "running" || j.state === "canceling") return;
 
     downloadJobs.value = downloadJobs.value.filter((x) => x.id !== jobId);
     taskCenter.remove(jobId);
+    jobStartAt.delete(jobId);
+    rateStats.delete(jobId);
   }
 
   onBeforeUnmount(() => {

@@ -7,12 +7,18 @@
             <div class="flex items-center gap-3 w-full">
               <!-- Left: search -->
               <div class="flex-1 max-w-md">
-                <input v-model.trim="search" type="text" placeholder="Search connections..."
-                  class="block w-full rounded-md border border-default  px-3 py-2 text-sm  shadow-sm placeholder:text-default input-textlike bg-default text-default" />
+                <div class="relative w-full">
+                  <MagnifyingGlassIcon
+                    class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+
+                  <input v-model.trim="search" type="text" placeholder="Search connections..."
+                    class="block w-full rounded-md border border-default px-3 py-2 pl-9 text-sm shadow-sm placeholder:text-default input-textlike bg-default text-default" />
+                </div>
               </div>
 
               <!-- Right: actions -->
               <div class="ml-auto flex items-center gap-2">
+                <TaskCenter></TaskCenter>
 
                 <button type="button"
                   class="inline-flex items-center justify-center btn-primary rounded-md  px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
@@ -74,19 +80,19 @@
                     <button type="button"
                       class="inline-flex btn-primary items-center justify-center rounded-md border border-default  px-3 py-1.5 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
                       :disabled="busy" @click="connect(c)">
-                      Connect
+                      Connect <LinkIcon class="ml-1 h-4 w-4"></LinkIcon>
                     </button>
 
                     <button type="button"
                       class="inline-flex items-center justify-center btn-secondary rounded-md border border-default px-3 py-1.5 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
                       :disabled="busy" @click="openEdit(c.id)">
-                      Edit
+                      Edit <PencilSquareIcon class="ml-1 h-4 w-4"></PencilSquareIcon>
                     </button>
 
                     <button type="button"
                       class="inline-flex items-center justify-center btn-danger rounded-md border border-default px-3 py-1.5 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
                       :disabled="busy" @click="openDelete(c)">
-                      Delete
+                      Delete <TrashIcon class="ml-1 h-4 w-4"></TrashIcon>
                     </button>
                   </div>
                 </td>
@@ -148,8 +154,10 @@
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { ConnectionSummary } from "../types";
-import { deleteConnection, getConnection, listConnections, touchLastUsed } from "../lib/endpointConnection";
+import { deleteConnection, listConnections, touchLastUsed } from "../lib/endpointConnection";
 import ConnectionModal from "./endpoints/EndpointConnectionModal.vue";
+import { MagnifyingGlassIcon, LinkIcon, PencilSquareIcon, TrashIcon } from "@heroicons/vue/20/solid";
+import TaskCenter from "../components/TaskCenter.vue";
 
 const router = useRouter();
 
@@ -273,8 +281,6 @@ async function connect(c: ConnectionSummary) {
     busy.value = false;
   }
 }
-
-
 
 function openDelete(item: ConnectionSummary) {
   confirmDelete.open = true;

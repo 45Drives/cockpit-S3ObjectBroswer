@@ -26,19 +26,19 @@
                         <div class="relative" ref="uploadMenuRef">
                             <button type="button"
                                 class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
-                                :disabled="busy || uploadBusy" @click="toggleUploadMenu">
+                                :disabled="busy " @click="toggleUploadMenu">
                                 <ArrowUpOnSquareIcon class="h-4 w-4"></ArrowUpOnSquareIcon> Upload
                             </button>
 
                             <div v-if="uploadMenuOpen"
                                 class="absolute right-0 mt-2 w-44 rounded-md border border-default bg-default shadow-lg z-[9999]">
                                 <button type="button" class="w-full text-left px-3 py-2 text-sm hover:bg-well"
-                                    :disabled="busy || uploadBusy" @click="chooseUpload('files')">
+                                    :disabled="busy " @click="chooseUpload('files')">
                                     Files…
                                 </button>
 
                                 <button type="button" class="w-full text-left px-3 py-2 text-sm hover:bg-well"
-                                    :disabled="busy || uploadBusy" @click="chooseUpload('folder')">
+                                    :disabled="busy " @click="chooseUpload('folder')">
                                     Folder…
                                 </button>
                             </div>
@@ -500,11 +500,6 @@ const renamer = useRename({
     setBusy: (b) => (busy.value = b),
     onRenamed: (srcKey, dstKey) => updateRowAfterRename(srcKey, dstKey),
 });
-
-const renameProgress = renamer.renameProgress;
-const renameStatusText = renamer.renameStatusText;
-const renamePct = renamer.renamePct;
-const renameCancel = renamer.renameCancel;
 
 const deletes = useDeletes({
     connectionId,
