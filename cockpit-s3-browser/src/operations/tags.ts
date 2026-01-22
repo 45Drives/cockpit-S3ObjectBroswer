@@ -8,6 +8,7 @@ import type {
 
 type TagKV = { key: string; value: string };
 type TagMap = Record<string, string>;
+type VersionId = string | null | undefined;
 
 type Deps = {
   connectionId: { value: string };
@@ -49,7 +50,7 @@ export function useTags(deps: Deps) {
     return Object.entries(m).map(([key, value]) => ({ key, value }));
   }
 
-  async function loadObjectTags(key: string) {
+  async function loadObjectTags(key: string, versionId?: VersionId) {
     if (!hasConn.value) return;
     tagsBusy.value = true;
     try {
@@ -57,40 +58,38 @@ export function useTags(deps: Deps) {
         connectionId: deps.connectionId.value,
         bucket: deps.bucket.value,
         key,
+        versionId: versionId ?? null,
       });
-      if (res.isErr()) {
-        const msg = res.error.message;
-        return;
-      }
+  
+      if (res.isErr()) return;
+  
       currentTags.value = Array.isArray(res.value.tags) ? res.value.tags : [];
     } finally {
       tagsBusy.value = false;
     }
   }
-
+  
   async function applyObjectTags(opts: {
     key: string;
+    versionId?: VersionId;
     tags: TagMap | TagKV[];
   }) {
     if (!hasConn.value) return;
-    const tagMap: TagMap = Array.isArray(opts.tags)
-      ? toTagMap(opts.tags)
-      : opts.tags;
-
+  
+    const tagMap: TagMap = Array.isArray(opts.tags) ? toTagMap(opts.tags) : opts.tags;
+  
     tagsBusy.value = true;
     try {
       const res = await deps.putObjectTags({
         connectionId: deps.connectionId.value,
         bucket: deps.bucket.value,
         key: opts.key,
+        versionId: opts.versionId ?? null,
         tags: tagMap,
       });
-
-      if (res.isErr()) {
-        const msg = res.error.message;
-        return;
-      }
-
+  
+      if (res.isErr()) return;
+  
       if (opts.key && Array.isArray(res.value.tags)) {
         currentTags.value = res.value.tags;
       }
@@ -98,12 +97,6 @@ export function useTags(deps: Deps) {
       tagsBusy.value = false;
     }
   }
-
-  // - Files: apply to each file key.
-  // - Folders: optional behavior. Most UIs either:
-  //   (A) disallow tagging folders (since S3 folders aren't real objects), OR
-  //   (B) tag the "folder marker" object if it exists (key ends with "/").
-  // This implementation chooses (B) ONLY if FolderRow has a markerKey, otherwise it skips.
   async function applyTagsToSelection(opts: {
     items: Row[];
     tags: TagMap | TagKV[];

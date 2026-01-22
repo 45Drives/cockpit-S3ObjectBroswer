@@ -1626,6 +1626,8 @@ def cmd_put_object_tags(conn_id: str, bucket: str, key: str, argv: List[str]) ->
   cfg = record.get("config") or {}
   client = make_client(cfg)
 
+  version_id = (get_flag_value(argv, "--version-id", "") or "").strip() or None
+
   # Collect tags from repeated --tag key=value
   tag_args = _get_repeat_flags(argv, "--tag")
 
@@ -1645,7 +1647,6 @@ def cmd_put_object_tags(conn_id: str, bucket: str, key: str, argv: List[str]) ->
 
     if isinstance(data, dict):
       for k, v in data.items():
-        # allow explicit empty value, but skip nulls
         if v is None:
           continue
         kk = str(k).strip()
@@ -1664,31 +1665,40 @@ def cmd_put_object_tags(conn_id: str, bucket: str, key: str, argv: List[str]) ->
     else:
       raise ValueError("Invalid --tags-json (expected object or list)")
 
-  # Since UI sends the complete list, allow empty tagset to mean "remove all tags"
   tagset = [{"Key": k, "Value": v} for k, v in final_tags.items()]
 
-  client.put_object_tagging(
-    Bucket=bucket,
-    Key=key,
-    Tagging={"TagSet": tagset},
-  )
+  req = {
+    "Bucket": bucket,
+    "Key": key,
+    "Tagging": {"TagSet": tagset},
+  }
+  if version_id:
+    req["VersionId"] = version_id
+
+  client.put_object_tagging(**req)
 
   sys.stdout.write(json.dumps({
     "ok": True,
     "bucket": bucket,
     "key": key,
+    "versionId": version_id,
     "tags": [{"key": k, "value": v} for k, v in final_tags.items()],
   }) + "\n")
 
 
-
-def cmd_get_object_tags(conn_id: str, bucket: str, key: str) -> None:
+def cmd_get_object_tags(conn_id: str, bucket: str, key: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
 
+  version_id = (get_flag_value(argv, "--version-id", "") or "").strip() or None
+
   try:
-    res = client.get_object_tagging(Bucket=bucket, Key=key)
+    req = {"Bucket": bucket, "Key": key}
+    if version_id:
+      req["VersionId"] = version_id
+
+    res = client.get_object_tagging(**req)
     tagset = res.get("TagSet") or []
 
     tags = []
@@ -1705,6 +1715,7 @@ def cmd_get_object_tags(conn_id: str, bucket: str, key: str) -> None:
       "ok": True,
       "bucket": bucket,
       "key": key,
+      "versionId": version_id,
       "tags": tags,
     }) + "\n")
 
@@ -1713,6 +1724,7 @@ def cmd_get_object_tags(conn_id: str, bucket: str, key: str) -> None:
       "ok": False,
       "bucket": bucket,
       "key": key,
+      "versionId": version_id,
       "error": str(e),
     }) + "\n")
     return
@@ -2631,15 +2643,17 @@ def main() -> None:
 
     if cmd == "put-object-tags":
       if len(sys.argv) < 5:
-        raise ValueError("Usage: s3browser-cli put-object-tags <connectionId> <bucket> <key> [--tag k=v ...] [--tags-json JSON]")
+        raise ValueError("Usage: s3browser-cli put-object-tags <connectionId> <bucket> <key> [--version-id VID] [--tag k=v ...] [--tags-json JSON]")
       cmd_put_object_tags(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
       return
 
+
     if cmd == "get-object-tags":
       if len(sys.argv) < 5:
-        raise ValueError("Usage: s3browser-cli get-object-tags <connectionId> <bucket> <key>")
-      cmd_get_object_tags(sys.argv[2], sys.argv[3], sys.argv[4])
+        raise ValueError("Usage: s3browser-cli get-object-tags <connectionId> <bucket> <key> [--version-id VID]")
+      cmd_get_object_tags(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
       return
+
 
     if cmd == "change-storage-class":
       if len(sys.argv) < 5:

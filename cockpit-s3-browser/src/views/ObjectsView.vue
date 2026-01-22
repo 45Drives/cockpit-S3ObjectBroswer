@@ -10,10 +10,11 @@
                     </div>
 
                     <div class="flex items-center gap-2">
+                    <TaskCenter></TaskCenter>
                         <button type="button"
                             class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
                             :disabled="busy" @click="goBack">
-                            <ArrowUturnLeftIcon class="h-4 w-4"></ArrowUturnLeftIcon> Back
+                            <ArrowUturnLeftIcon class="h-4 w-4 mr-1"></ArrowUturnLeftIcon> Back
                         </button>
 
                         <button type="button"
@@ -47,57 +48,6 @@
 
                 <!-- body -->
                 <div class="p-4">
-                    <div v-if="downloadBusy" class="mb-3 rounded-md border border-yellow-300 bg-default p-3 text-sm">
-                        <div class="font-semibold">Download in progress</div>
-                        <div class="opacity-80">Do not close or refresh this tab.</div>
-
-                        <div class="mt-2 space-y-1 text-xs">
-                            <div v-for="j in downloadJobs" :key="j.id">
-                                <span class="font-semibold">{{ j.name }}</span>
-                                <span class="opacity-80"> — {{ j.state }}</span>
-                                <span v-if="j.totalBytes && j.bytes != null" class="opacity-80">
-                                    ({{ formatBytes(j.bytes) }} / {{ formatBytes(j.totalBytes) }})
-                                </span>
-                                <span v-if="j.error" class="text-red-700"> — {{ j.error }}</span>
-                                <button v-if="j.state === 'running' || j.state === 'canceling'" type="button"
-                                    class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold"
-                                    :disabled="j.state === 'canceling'" @click="downloads.cancelJob(j.id)">
-                                    {{ j.state === 'canceling' ? "Canceling…" : "Cancel" }}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div v-if="renameProgress" class="mb-3 rounded-md border border-default bg-default p-3 text-sm">
-                        <div class="font-semibold">Renaming</div>
-                        <button type="button"
-                            class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold"
-                            :disabled="!renameCancel" @click="cancelRename">
-                            Cancel
-                        </button>
-                        <div class="mt-1">{{ renameStatusText }}</div>
-
-                        <div v-if="renamePct != null" class="mt-2">
-                            <div class="h-2 w-full rounded bg-well overflow-hidden">
-                                <div class="h-2 bg-default" :style="{ width: renamePct + '%' }"></div>
-                            </div>
-                            <div class="mt-1 text-xs opacity-80">{{ renamePct }}%</div>
-                        </div>
-                    </div>
-
-                    <div v-if="transferBusy" class="mb-3 rounded-md border border-yellow-300 bg-default p-3 text-sm">
-                        <div class="font-semibold">Transfer in progress</div>
-                        <div class="opacity-80">Do not close or refresh this tab.</div>
-
-                        <div class="mt-2 space-y-1 text-xs">
-                            <div v-for="j in transferJobs" :key="j.id">
-                                <span class="font-semibold">{{ j.kind.toUpperCase() }}</span>
-                                <span class="opacity-80"> — {{ j.name }}</span>
-                                <span class="opacity-80"> — {{ j.state }}</span>
-                                <span v-if="j.error" class="text-red-700"> — {{ j.error }}</span>
-                            </div>
-                        </div>
-                    </div>
 
                     <!-- path/search bar -->
                     <div class="mb-3 flex items-center gap-2">
@@ -118,15 +68,21 @@
                             <button type="button"
                                 class="inline-flex items-center btn-secondary justify-center rounded-md border border-default bg-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
                                 :disabled="busy" @click="goToPath()">
-                                <ArrowRightEndOnRectangleIcon class="h-4 w-4"></ArrowRightEndOnRectangleIcon>
+                                <ArrowRightStartOnRectangleIcon class="h-4 w-4"></ArrowRightStartOnRectangleIcon>
                             </button>
                         </div>
 
                         <div class="flex items-center gap-2 w-[20%] min-w-0">
-                            <input v-model.trim="search" type="text"
-                                class="w-full min-w-0 rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none"
-                                placeholder="Search..." :disabled="busy && virtualRows.length === 0" />
+                            <div class="relative w-full min-w-0">
+                                <MagnifyingGlassIcon
+                                    class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
+
+                                <input v-model.trim="search" type="text"
+                                    class="w-full min-w-0 rounded-md border border-default bg-default px-3 py-2 pl-9 text-sm text-default shadow-sm focus:outline-none"
+                                    placeholder="Search..." :disabled="busy && virtualRows.length === 0" />
+                            </div>
                         </div>
+
 
                         <div class="flex-1"></div>
                     </div>
@@ -215,7 +171,7 @@
 
                                                 <div class="px-3 py-2 text-default min-w-0 truncate">
                                                     <span v-if="r.type === 'file'">{{ formatDate(r.lastModified)
-                                                        }}</span>
+                                                    }}</span>
                                                     <span v-else>—</span>
                                                 </div>
 
@@ -289,17 +245,13 @@
                             </div>
                         </template>
                         <div v-if="detailsOpen" class="w-[30%] flex-none min-w-0">
-
-                            <ObjectDetailsPanel
-  ref="detailsRef"
-  :connectionId="connectionId"
-  :bucket="bucket"
-  :row="detailsRow"
-  :versionId="mode === 'versions' && selectedVersionCount === 1 ? activeVersionId : null"
-  :inVersionsMode="mode === 'versions'"
-  :selectionSummary="detailsSelectionSummary"
-  @close="detailsOpen = false"
-/>
+                            <ObjectDetailsPanel ref="detailsRef" :connectionId="connectionId" :bucket="bucket"
+                                :row="detailsRow"
+                                :versionId="mode === 'versions' && selectedVersionCount === 1 ? activeVersionId : null"
+                                :inVersionsMode="mode === 'versions'" :selectionSummary="detailsSelectionSummary"
+                                @close="detailsOpen = false"
+                                @openVersions="(p) => activeRow && activeRow.type === 'file' && openVersionsModeForFile(activeRow)"
+                                @backToObjects="exitVersionsMode()" />
                         </div>
                     </div>
                 </div>
@@ -331,7 +283,7 @@ import {
     downloadObjectVersion, deleteObjectVersion, rollbackObjectVersion
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
-import { ArrowRightEndOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassCircleIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon } from "@heroicons/vue/20/solid";
+import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu, { type MenuAction } from "../components/ObjectContextMenu.vue";
@@ -353,6 +305,7 @@ import ObjectDetailsPanel from "../components/ObjectDetailsPanel.vue";
 import ObjectVersionsList from "../components/ObjectVersionsList.vue";
 import StorageClassModal from "../components/Modals/StorageClassModal.vue";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
+import TaskCenter from "../components/TaskCenter.vue";
 
 const iconScroller = ref<any>(null);
 const gridItems = ref(1);
@@ -406,8 +359,10 @@ const versionsMenuEnabled = computed(() => {
         download: n > 0,
         delete: n > 0,
         rollback: n === 1,
+        tags: n === 1,
     } as Partial<Record<MenuAction, boolean>>;
 });
+
 
 
 // confirm modal pending target (separate from tasks)
@@ -455,7 +410,7 @@ const selectedVersionCount = computed(() => selectedVersionIds.value.size);
 const canPasteHere = computed(() =>
     clip.canPaste(connectionId.value)
 );
-
+const tagsVersionId = ref<string | null>(null);
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
 
@@ -979,6 +934,20 @@ async function onMenuAction(action: MenuAction) {
             await onVersionAction({ action: "rollback", versionIds: ids });
             return;
         }
+        if (action === "tags") {
+            if (ids.length !== 1) return;
+
+            const vid = ids[0];
+
+            tagsKey.value = versionsKey.value;
+            tagsVersionId.value = vid;
+            tagsTitle.value = `${versionsKey.value} (version ${vid})`;
+
+            await tags.loadObjectTags(tagsKey.value, vid);
+            tagsInitial.value = [...tags.currentTags.value];
+            tagsOpen.value = true;
+            return;
+        }
         return;
     }
 
@@ -1083,32 +1052,29 @@ async function onMenuAction(action: MenuAction) {
         await transfers.pasteHere();
         return;
     }
-
     if (action === "tags") {
         const items = effectiveSelection();
         if (items.length !== 1) {
-            pushNotification(new Notification("Not allowed", 'Select a single item to edit tags.',
-                'error', 5000));
-
+            pushNotification(new Notification("Not allowed", "Select a single item to edit tags.", "error", 5000));
             return;
         }
 
         const it = items[0];
-
         if (it.type === "folder") {
-            pushNotification(new Notification("Not allowed", 'Folders (prefixes) cannot be tagged. Only objects can be tagged',
-                'error', 5000));
+            pushNotification(new Notification("Not allowed", "Folders (prefixes) cannot be tagged. Only objects can be tagged", "error", 5000));
             return;
         }
 
-        // file
         tagsKey.value = it.key;
+        tagsVersionId.value = null;          // important
         tagsTitle.value = it.key;
-        await tags.loadObjectTags(it.key);
+
+        await tags.loadObjectTags(it.key);   // latest
         tagsInitial.value = [...tags.currentTags.value];
         tagsOpen.value = true;
         return;
     }
+
 
     if (action === "storageClass") {
         const items = effectiveSelection();
@@ -1372,7 +1338,11 @@ async function onSaveTags(payload: { tags: TagKV[] }) {
     const key = tagsKey.value;
     if (!key) return;
 
-    await tags.applyObjectTags({ key, tags: payload.tags });
+    await tags.applyObjectTags({
+        key,
+        versionId: tagsVersionId.value, // null means latest
+        tags: payload.tags,
+    });
 
     tagsInitial.value = [...tags.currentTags.value];
     tagsOpen.value = false;
@@ -1457,8 +1427,6 @@ async function onVersionAction(payload: { action: "download" | "delete" | "rollb
             const e = res.error;
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`Rollback failed for ${key} (version ${vid}): ${msg}`, e);
-            // optional: return early so you don't reload if rollback failed
-            // return;
         }
 
         await loadVersionsForKey(key, versionsName.value);
@@ -1520,7 +1488,8 @@ function exitVersionsMode() {
     versionsErr.value = "";
     versionRows.value = [];
     selectedVersionIds.value = new Set();
-    versionsFileRow.value = null; // add this
+    versionsFileRow.value = null;
+    tagsVersionId.value = null;
 
     if (lastObjectSelectionId.value) {
         selectedIds.value = new Set([lastObjectSelectionId.value]);

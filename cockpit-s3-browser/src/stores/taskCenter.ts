@@ -45,9 +45,18 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
   }
 
   function cancel(id: string) {
-    const t = items.value.find((x) => x.id === id);
-    t?.actions?.cancel?.();
+    const i = items.value.findIndex((x) => x.id === id);
+    if (i < 0) return;
+  
+    const t = items.value[i];
+  
+    if (t.state === "running") {
+      items.value[i] = { ...t, state: "canceling" };
+    }
+  
+    t.actions?.cancel?.();
   }
+    
 
   function dismiss(id: string) {
     const t = items.value.find((x) => x.id === id);

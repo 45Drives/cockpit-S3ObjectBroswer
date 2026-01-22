@@ -11,65 +11,56 @@
       </div>
 
       <div class="flex items-center gap-2">
-        <button
-  v-if="showBackToObjects"
-  type="button"
-  class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-2 py-1.5 text-sm font-semibold text-default"
-  @click="emitBackToObjects"
->
-  Back
-</button>
-
-
-<button
-  type="button"
-  class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-2 py-1.5 text-sm font-semibold
-         disabled:opacity-60 disabled:cursor-not-allowed disabled:text-muted disabled:border-default"
-  :disabled="!isFile || Boolean(versionId) || isMultiSelected"
-  @click="emitOpenVersions"
->
-  Versions
-</button>
+        <div class="flex items-center gap-2">
+          <button type="button" class="inline-flex items-center justify-center rounded-md border border-default px-2 py-1.5 text-sm font-semibold
+           btn-secondary" :class="{
+            'btn-primary': !showBackToObjects,
+            'disabled:opacity-60 disabled:cursor-not-allowed disabled:text-default disabled:border-default': !showBackToObjects,
+          }" :disabled="!showBackToObjects && (!isFile || Boolean(versionId) || isMultiSelected)"
+            @click="showBackToObjects ? emitBackToObjects() : emitOpenVersions()">
+            <DocumentDuplicateIcon class="h-4 w-4"></DocumentDuplicateIcon> {{ showBackToObjects ? 'Hide versions' :
+            'Versions' }}
+          </button>
+        </div>
 
 
 
         <button type="button"
           class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-2 py-1.5 text-sm font-semibold text-default"
           @click="$emit('close')">
-          Close
+          Close <ArrowRightEndOnRectangleIcon class="h-4 w-4"></ArrowRightEndOnRectangleIcon>
         </button>
       </div>
     </div>
 
     <!-- Body (fills remaining height + scrolls) -->
     <div class="p-4 flex-1 min-h-0 overflow-y-auto">
-      <div
-  v-if="showSelectionSummary"
-  class="text-sm text-default"
->
-  <div class="rounded-md border border-default bg-default p-3">
-    <div class="text-sm font-semibold text-default">
-      {{ selectionSummaryTitle }}
-    </div>
-    <div class="text-xs text-default opacity-70 mt-1">
-      {{ selectionSummaryHint }}
-    </div>
-  </div>
-</div>
-<div v-else-if="!row" class="text-sm text-default opacity-80">
-  Select an item to see its properties.
-</div>
+      <div v-if="showSelectionSummary" class="text-sm text-default">
+        <div class="rounded-md border border-default bg-default p-3">
+          <div class="text-sm font-semibold text-default">
+            {{ selectionSummaryTitle }}
+          </div>
+          <div class="text-xs text-default opacity-70 mt-1">
+            {{ selectionSummaryHint }}
+          </div>
+        </div>
+      </div>
+      <div v-else-if="!row" class="text-sm text-default opacity-80">
+        Select an item to see its properties.
+      </div>
 
-<template v-else>
-  <div v-if="err" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
-    {{ err }}
-  </div>
+      <template v-else>
+        <div v-if="err" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
+          {{ err }}
+        </div>
 
         <div class="flex flex-col gap-6">
           <!-- PROPERTIES -->
           <section class="rounded-md border border-default bg-default p-3">
             <div class="flex items-center justify-between gap-2 mb-2">
-              <div class="text-sm font-semibold text-default opacity-80">Properties</div>
+              <div class="text-sm flex items-center font-semibold text-default opacity-80">Properties
+                <AdjustmentsHorizontalIcon class="h-4 w-4 ml-1"></AdjustmentsHorizontalIcon>
+              </div>
               <div v-if="loading" class="text-xs text-default opacity-70">Loading…</div>
             </div>
 
@@ -173,16 +164,16 @@
                 </div>
               </div>
               <div v-if="isFile" class="flex items-start justify-between gap-4 py-2">
-  <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Version</div>
-  <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">
-    <div v-if="versionId">
-      {{ versionId }}
-    </div>
-    <div v-else class="opacity-70">
-      Latest
-    </div>
-  </div>
-</div>
+                <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Version</div>
+                <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">
+                  <div v-if="versionId">
+                    {{ versionId }}
+                  </div>
+                  <div v-else class="opacity-70">
+                    Latest
+                  </div>
+                </div>
+              </div>
 
 
             </div>
@@ -191,7 +182,9 @@
           <!-- TAGS -->
           <section class="rounded-md border  border-default bg-default p-3">
             <div class="flex items-center justify-between gap-2 mb-2">
-              <div class="text-sm font-semibold text-default opacity-80">Tags</div>
+              <div class="text-sm flex items-center font-semibold text-default opacity-80">Tags <TagIcon
+                  class="w-4 h-4 ml-1"></TagIcon>
+              </div>
               <div v-if="tagsLoading" class="text-xs text-default opacity-70">Loading…</div>
             </div>
 
@@ -214,7 +207,9 @@
           <!-- METADATA -->
           <section class="rounded-md border border-default bg-default p-3">
             <div class="flex items-center justify-between gap-2 mb-2">
-              <div class="text-sm font-semibold text-default opacity-80">Metadata</div>
+              <div class="text-sm font-semibold items-center text-default opacity-80 flex">Metadata
+                <InformationCircleIcon class="h-4 w-4 ml-1"></InformationCircleIcon>
+              </div>
               <div v-if="metaLoading" class="text-xs text-default opacity-70">Loading…</div>
             </div>
 
@@ -248,7 +243,7 @@ import {
   statObject, getObjectTags, getObjectVersions, getBucketObjectLock, getObjectLegalHold,
   getObjectRetention, putObjectLegalHold, putObjectRetention,
 } from "../lib/s3Objects";
-
+import { TagIcon, DocumentDuplicateIcon, InformationCircleIcon, AdjustmentsHorizontalIcon, ArrowRightEndOnRectangleIcon } from "@heroicons/vue/20/solid";
 type Stat = {
   size: number;
   lastModified: string | null;
@@ -317,7 +312,7 @@ const tagsLoading = ref(false);
 
 const meta = ref<Stat | null>(null);
 const tags = ref<TagKV[]>([]);
-  const isMultiSelected = computed(() => (props.selectionSummary?.count ?? 0) > 1);
+const isMultiSelected = computed(() => (props.selectionSummary?.count ?? 0) > 1);
 
 const metaEntries = computed<[string, string][]>(() => {
   const m = meta.value?.metadata || {};
@@ -482,6 +477,7 @@ async function loadTags(r: FileRow, myReq: number) {
       connectionId: props.connectionId,
       bucket: props.bucket,
       key: r.key,
+      versionId: props.versionId ?? null,
     });
 
     if (reqId !== myReq) return;
@@ -608,8 +604,8 @@ async function loadObjectLockInfo(r: FileRow, myReq: number) {
 
     // Bucket supports & enabled: fetch per-object status 
     const [holdRes, retRes] = await Promise.all([
-      getObjectLegalHold({ connectionId: props.connectionId, bucket: props.bucket, key: r.key ,versionId: versionId.value,}),
-      getObjectRetention({ connectionId: props.connectionId, bucket: props.bucket, key: r.key,versionId: versionId.value, }),
+      getObjectLegalHold({ connectionId: props.connectionId, bucket: props.bucket, key: r.key, versionId: versionId.value, }),
+      getObjectRetention({ connectionId: props.connectionId, bucket: props.bucket, key: r.key, versionId: versionId.value, }),
     ]);
 
     if (reqId !== myReq) return;
@@ -673,13 +669,13 @@ async function saveLegalHold() {
   legalHoldBusy.value = true;
 
   try {
-    const res =  await putObjectLegalHold({
-  connectionId: props.connectionId,
-  bucket: props.bucket,
-  key: props.row.key,
-  versionId: versionId.value,
-  status: legalHoldDraft.value,
-});
+    const res = await putObjectLegalHold({
+      connectionId: props.connectionId,
+      bucket: props.bucket,
+      key: props.row.key,
+      versionId: versionId.value,
+      status: legalHoldDraft.value,
+    });
 
     if (res.isErr()) {
       legalHoldErr.value = res.error.message;
@@ -724,14 +720,14 @@ async function saveRetention() {
   retentionBusy.value = true;
   try {
     const res = await putObjectRetention({
-  connectionId: props.connectionId,
-  bucket: props.bucket,
-  key: props.row.key,
-  versionId: versionId.value,
-  mode: retentionModeDraft.value,
-  retainUntil: iso,
-  bypassGovernance: retentionBypassDraft.value,
-});
+      connectionId: props.connectionId,
+      bucket: props.bucket,
+      key: props.row.key,
+      versionId: versionId.value,
+      mode: retentionModeDraft.value,
+      retainUntil: iso,
+      bypassGovernance: retentionBypassDraft.value,
+    });
 
 
     if (res.isErr()) {

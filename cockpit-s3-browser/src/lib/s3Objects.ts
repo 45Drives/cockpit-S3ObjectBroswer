@@ -251,14 +251,15 @@ export function renameObjectStreamed(params: {
   });
 
   const cancel = () => {
-    try {
-      (proc as any).kill?.("SIGTERM");
-      (proc as any).terminate?.();
-      (proc as any).signal?.("SIGTERM");
-    } catch {
-      // ignore
-    }
+    try { (proc as any).kill?.("SIGTERM"); } catch {}
+    try { (proc as any).terminate?.(); } catch {}
+    try { (proc as any).signal?.("SIGTERM"); } catch {}
+
+    window.setTimeout(() => {
+      try { (proc as any).kill?.("SIGKILL"); } catch {}
+    }, 500);
   };
+
 
   return { run, cancel };
 }
@@ -355,15 +356,18 @@ export function uploadObjectFromStdinStreamed(params: {
   };
 
   const cancel = () => {
-    try {
-      (proc as any).kill?.("SIGTERM");
-      return;
-    } catch {}
-    try {
-      (proc as any).terminate?.();
-      return;
-    } catch {}
+    try { (proc as any).closeStdin?.(); } catch {}
+    try { (proc as any).end?.(); } catch {}
+
+    try { (proc as any).kill?.("SIGTERM"); } catch {}
+    try { (proc as any).terminate?.(); } catch {}
+    try { (proc as any).signal?.("SIGTERM"); } catch {}
+
+    window.setTimeout(() => {
+      try { (proc as any).kill?.("SIGKILL"); } catch {}
+    }, 500);
   };
+
 
   return { writeChunk, end, cancel, run };
 }
@@ -584,8 +588,13 @@ export function getObjectTags(params: {
   connectionId: string;
   bucket: string;
   key: string;
+  versionId?: string | null;
 }): ResultAsync<{ tags: TagKV[] }, ProcessError | SyntaxError> {
   const args: string[] = ["get-object-tags", params.connectionId, params.bucket, params.key];
+
+  if (params.versionId) {
+    args.push("--version-id", String(params.versionId));
+  }
 
   return server
     .execute(pyCmd(args, "try"))
@@ -614,6 +623,7 @@ export function putObjectTags(params: {
   bucket: string;
   key: string;
   tags: TagMap;
+  versionId?: string | null;
 }): ResultAsync<{ bucket: string; key: string; tags: TagKV[] }, ProcessError | SyntaxError> {
   const args: string[] = [
     "put-object-tags",
@@ -623,6 +633,10 @@ export function putObjectTags(params: {
     "--tags-json",
     JSON.stringify(params.tags ?? {}),
   ];
+
+  if (params.versionId) {
+    args.push("--version-id", String(params.versionId));
+  }
 
   return server
     .execute(pyCmd(args, "try"))

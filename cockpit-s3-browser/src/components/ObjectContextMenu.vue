@@ -1,4 +1,3 @@
-<!-- src/components/ObjectContextMenu.vue -->
 <template>
   <Teleport to="body">
     <div v-if="open" class="fixed inset-0 z-[9999]">
@@ -12,67 +11,76 @@
             <!-- OBJECTS MODE -->
             <template v-if="mode === 'objects'">
               <MenuItem v-slot="{ active }">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm"
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
                 :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('download')">
-                Download
+                <ArrowDownOnSquareIcon class="h-4 w-4" />
+                <span>Download</span>
               </button>
               </MenuItem>
 
               <div class="my-1 h-px bg-default"></div>
 
               <MenuItem v-slot="{ active }">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm"
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
                 :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('copy')">
-                Copy
+                <ClipboardIcon class="h-4 w-4" />
+                <span>Copy</span>
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm"
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
                 :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('cut')">
-                Cut
+                <ScissorsIcon class="h-4 w-4" />
+                <span>Cut</span>
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }" :disabled="!canPaste">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm" :disabled="!canPaste" :class="[
-                !canPaste
-                  ? 'opacity-50 cursor-not-allowed text-default'
-                  : active
-                    ? 'bg-accent text-default'
-                    : 'text-default',
-              ]" @click="canPaste && doAction('paste')">
-                Paste
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                :disabled="!canPaste" :class="[
+                  !canPaste
+                    ? 'opacity-50 cursor-not-allowed text-default'
+                    : active
+                      ? 'bg-accent text-default'
+                      : 'text-default',
+                ]" @click="canPaste && doAction('paste')">
+                <ClipboardDocumentIcon class="h-4 w-4" />
+                <span>Paste</span>
               </button>
               </MenuItem>
 
               <div class="my-1 h-px bg-default"></div>
 
               <MenuItem v-slot="{ active }">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm"
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
                 :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('rename')">
-                Rename
+                <PencilSquareIcon class="h-4 w-4" />
+                <span>Rename</span>
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm"
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
                 :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('delete')">
-                Delete
+                <TrashIcon class="h-4 w-4" />
+                <span>Delete</span>
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm"
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
                 :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('tags')">
-                Edit object tags
+                <TagIcon class="h-4 w-4" />
+                <span>Edit object tags</span>
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm"
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
                 :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('storageClass')">
-                Storage class
+                <CircleStackIcon class="h-4 w-4" />
+                <span>Storage class</span>
               </button>
               </MenuItem>
             </template>
@@ -80,25 +88,40 @@
             <!-- VERSIONS MODE -->
             <template v-else>
               <MenuItem v-slot="{ active }" :disabled="!isEnabled('download')">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm" :disabled="!isEnabled('download')"
-                :class="btnClass(active, isEnabled('download'))" @click="isEnabled('download') && doAction('download')">
-                Download
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                :disabled="!isEnabled('download')" :class="btnClass(active, isEnabled('download'))"
+                @click="isEnabled('download') && doAction('download')">
+                <ArrowDownOnSquareIcon class="h-4 w-4" />
+                <span>Download</span>
               </button>
               </MenuItem>
 
               <MenuItem v-slot="{ active }" :disabled="!isEnabled('rollback')">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm" :disabled="!isEnabled('rollback')"
-                :class="btnClass(active, isEnabled('rollback'))" @click="isEnabled('rollback') && doAction('rollback')">
-                Rollback to this version
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                :disabled="!isEnabled('rollback')" :class="btnClass(active, isEnabled('rollback'))"
+                @click="isEnabled('rollback') && doAction('rollback')">
+                <ArrowTurnUpRightIcon class="h-4 w-4" />
+                <span>Rollback to this version</span>
               </button>
               </MenuItem>
 
               <div class="my-1 h-px bg-default"></div>
 
               <MenuItem v-slot="{ active }" :disabled="!isEnabled('delete')">
-              <button type="button" class="block w-full px-4 py-2 text-left text-sm" :disabled="!isEnabled('delete')"
-                :class="btnClass(active, isEnabled('delete'))" @click="isEnabled('delete') && doAction('delete')">
-                Delete version
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                :disabled="!isEnabled('delete')" :class="btnClass(active, isEnabled('delete'))"
+                @click="isEnabled('delete') && doAction('delete')">
+                <TrashIcon class="h-4 w-4" />
+                <span>Delete version</span>
+              </button>
+              </MenuItem>
+
+              <MenuItem v-slot="{ active }" :disabled="!isEnabled('tags')">
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                :disabled="!isEnabled('tags')" :class="btnClass(active, isEnabled('tags'))"
+                @click="isEnabled('tags') && doAction('tags')">
+                <TagIcon class="h-4 w-4" />
+                <span>Edit version tags</span>
               </button>
               </MenuItem>
             </template>
@@ -109,10 +132,11 @@
   </Teleport>
 </template>
 
+
 <script setup lang="ts">
 import { Menu, MenuItem, MenuItems } from "@headlessui/vue";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-
+import { ArrowDownOnSquareIcon, ClipboardDocumentIcon, ScissorsIcon, TrashIcon, TagIcon, CircleStackIcon, ClipboardIcon, PencilSquareIcon, ArrowTurnUpRightIcon } from "@heroicons/vue/20/solid";
 export type MenuMode = "objects" | "versions";
 
 export type MenuAction =

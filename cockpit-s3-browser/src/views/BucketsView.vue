@@ -12,10 +12,11 @@
             </div>
           </div>
           <div class="flex items-center gap-2 shrink-0">
+            <TaskCenter></TaskCenter>
             <button type="button"
               class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
               :disabled="busy" @click="goBack">
-              <ArrowUturnLeftIcon class="h-4 w-4"></ArrowUturnLeftIcon> Back
+              <ArrowUturnLeftIcon class="h-4 w-4 mr-1"></ArrowUturnLeftIcon> Back
             </button>
 
             <button type="button"
@@ -33,15 +34,15 @@
 
           <div class="mb-3 flex items-center gap-3">
             <div class="relative w-full">
-              <div class="pointer-events-none absolute left-3 top-2">
-                <MagnifyingGlassIcon class="h-6 w-6 text-default" :stroke-width="2.5" />
-              </div>
+              <MagnifyingGlassIcon
+                class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
 
               <input v-model.trim="query" type="text" placeholder="Search buckets..."
                 class="block w-full rounded-md border border-default bg-default px-3 py-2 pl-9 text-sm text-default shadow-sm placeholder:text-default/60 focus:outline-none focus:ring-2 focus:ring-default"
                 :disabled="busy || buckets.length === 0" />
             </div>
           </div>
+
 
           <div class="mb-3 flex items-center justify-between text-sm text-default">
             <div>
@@ -115,9 +116,9 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { listBuckets } from "../lib/s3Buckets";
 import type { BucketSummary } from "../types";
-import { ArchiveBoxIcon, MagnifyingGlassIcon, ArrowPathIcon } from "@heroicons/vue/20/solid";
+import { ArchiveBoxIcon, ArrowUturnLeftIcon, MagnifyingGlassIcon, ArrowPathIcon } from "@heroicons/vue/20/solid";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
-
+import TaskCenter from "../components/TaskCenter.vue";
 
 const route = useRoute();
 const router = useRouter();
