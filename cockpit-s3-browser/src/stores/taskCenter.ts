@@ -92,6 +92,7 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
       copy: 0,
       move: 0,
       rename: 0,
+      transfer: 0
     };
     for (const t of items.value) {
       if (t.state === "running" || t.state === "canceling") m[t.kind] += 1;

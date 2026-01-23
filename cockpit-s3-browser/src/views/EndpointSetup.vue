@@ -155,7 +155,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import type { ConnectionSummary } from "../types";
 import { deleteConnection, listConnections, touchLastUsed } from "../lib/endpointConnection";
-import ConnectionModal from "./endpoints/EndpointConnectionModal.vue";
+import ConnectionModal from "../components/Modals/EndpointConnectionModal.vue";
 import { MagnifyingGlassIcon, LinkIcon, PencilSquareIcon, TrashIcon } from "@heroicons/vue/20/solid";
 import TaskCenter from "../components/TaskCenter.vue";
 

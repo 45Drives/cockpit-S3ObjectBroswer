@@ -14,7 +14,7 @@ import type {
   getDownloadJobStatus as getDownloadJobStatusFn,
   cancelDownloadJob as cancelDownloadJobFn,
 } from "../lib/s3Objects";
-import { formatBytesPerSec, formatEta, newJobId, rateEtaText, updateRateAndEta } from "../lib/helpers";
+import {  newJobId, rateEtaText, updateRateAndEta } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 

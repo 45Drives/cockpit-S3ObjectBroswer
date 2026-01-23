@@ -287,7 +287,7 @@ import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingG
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu, { type MenuAction } from "../components/ObjectContextMenu.vue";
-import ConfirmDeleteModal from "../components/ConfirmDeleteModal.vue";
+import ConfirmDeleteModal from "../components/Modals/ConfirmDeleteModal.vue";
 import { useDeleteTasksStore } from "../stores/deleteTasks";
 import {
     formatBytes, formatDate, normalizePrefix, guessFileTypeFromKey, fileExt,
@@ -485,6 +485,8 @@ const transfers = useTransfers({
         if (it.type === "file") removeFileRowByKey(it.key);
         else removeFolderRowByPrefix(it.prefix);
     },
+    getDownloadJobStatus,
+    cancelDownloadJob
 });
 
 

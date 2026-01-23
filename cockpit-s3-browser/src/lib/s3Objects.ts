@@ -450,25 +450,40 @@ export function getDownloadJobStatus(params: {
     });
 }
 
+// lib/s3Objects.ts (replace these 3 functions)
+
 export function copyObject(params: {
   connectionId: string;
   srcBucket: string;
   srcKey: string;
   dstBucket: string;
   dstKey: string;
+  jobId: string;
   concurrency?: number;
 }): ResultAsync<void, ProcessError | SyntaxError> {
-  const args: string[] =["copy-object", params.connectionId, params.srcBucket, params.srcKey, params.dstBucket, params.dstKey, "--concurrency", "6"]
+  const conc = params.concurrency ?? 6;
 
-  if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
+  const args: string[] = [
+    "copy-object",
+    params.connectionId,
+    params.srcBucket,
+    params.srcKey,
+    params.dstBucket,
+    params.dstKey,
+    "--job-id",
+    params.jobId,
+    "--concurrency",
+    String(conc),
+  ];
 
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<{ ok: boolean; error?: string }>(s))
-    .andThen((res) => (res.ok ? okAsync(undefined) : errAsync(new SyntaxError(res.error || "Copy failed"))));
+    .andThen((res) =>
+      res.ok ? okAsync(undefined) : errAsync(new SyntaxError(res.error || "Copy failed"))
+    );
 }
-
 
 export function copyPrefix(params: {
   connectionId: string;
@@ -476,8 +491,11 @@ export function copyPrefix(params: {
   srcPrefix: string;
   dstBucket: string;
   dstPrefix: string;
+  jobId: string;
   concurrency?: number;
 }): ResultAsync<void, ProcessError | SyntaxError> {
+  const conc = params.concurrency ?? 6;
+
   const args: string[] = [
     "copy-prefix",
     params.connectionId,
@@ -485,8 +503,12 @@ export function copyPrefix(params: {
     params.srcPrefix,
     params.dstBucket,
     params.dstPrefix,
+    "--job-id",
+    params.jobId,
+    "--concurrency",
+    String(conc),
   ];
-  if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
+
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())
@@ -501,13 +523,26 @@ export function movePrefix(params: {
   connectionId: string;
   srcBucket: string;
   srcPrefix: string;
-  dstBucket: string
+  dstBucket: string;
   dstPrefix: string;
+  jobId: string;
   concurrency?: number;
 }): ResultAsync<void, ProcessError | SyntaxError> {
-  const args: string[] = ["move-prefix", params.connectionId, params.srcBucket, params.srcPrefix, params.dstBucket, params.dstPrefix, "--concurrency", "6"]
-  ;
-  if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
+  const conc = params.concurrency ?? 6;
+
+  const args: string[] = [
+    "move-prefix",
+    params.connectionId,
+    params.srcBucket,
+    params.srcPrefix,
+    params.dstBucket,
+    params.dstPrefix,
+    "--job-id",
+    params.jobId,
+    "--concurrency",
+    String(conc),
+  ];
+
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())

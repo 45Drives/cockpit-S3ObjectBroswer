@@ -170,7 +170,7 @@ export type TransferJob = {
 export type TagKV = { key: string; value: string };
 export type TagMap = Record<string, string>;
 
-export type TaskKind = "delete" | "download" | "upload" | "copy" | "move" | "rename";
+export type TaskKind = "delete" | "download" | "upload" | "copy" | "move" | "rename" | "transfer";
 
 export type TaskState = "running" | "canceling" | "done" | "failed" | "canceled";
 
