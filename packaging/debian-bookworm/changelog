@@ -1,0 +1,5 @@
+cockpit-s3-browser (1.1.0-1bookworm) bookworm; urgency=medium
+
+  * building test package
+
+ -- Rachit Hans <rhans@45drives.com>  Fri, 23 Jan 2026 13:26:36 -0400

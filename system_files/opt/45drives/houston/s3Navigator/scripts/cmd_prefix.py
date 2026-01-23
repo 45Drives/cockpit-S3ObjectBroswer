@@ -211,8 +211,7 @@ def cmd_transfer_prefix(
   })
 
   def do_one(it: Dict[str, Any]) -> Dict[str, Any]:
-    nonlocal done_files, done_bytes  # must be at top of function (not inside a with block)
-
+    nonlocal done_files, done_bytes  
     if canceled["yes"]:
       raise KeyboardInterrupt("Canceled")
 
@@ -508,7 +507,7 @@ def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
                     "errors": 0,
                     "message": "No objects found to delete. Operation completed successfully."
                 })
-                return  # No objects to delete, exit early
+                return  # No objects to delete
 
             keys = [{"Key": o["Key"]} for o in items if o.get("Key")]
 
