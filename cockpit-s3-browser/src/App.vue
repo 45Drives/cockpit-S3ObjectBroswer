@@ -12,7 +12,6 @@
       </div>
 
       <div class="w-full flex justify-end px-4 pt-3">
-        <!-- header right area (if you want TaskCenter button here later) -->
       </div>
 
       <TaskProgressController />
@@ -36,7 +35,6 @@ const hasActive = computed(() => taskCenter.hasActive);
 function onBeforeUnload(e: BeforeUnloadEvent) {
   if (!taskCenter.hasActive) return;
   e.preventDefault();
-  e.returnValue = "";
 }
 
 onMounted(() => {

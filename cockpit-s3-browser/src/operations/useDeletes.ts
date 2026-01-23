@@ -84,7 +84,7 @@ export function useDeletes(deps: Deps) {
     name: string;
     state: "running" | "done" | "failed" | "canceled" | "canceling";
     progressText?: string;
-    progressPct?: number; // Add progressPct to track progress
+    progressPct?: number;
     error?: string;
     cancel?: () => void;
     dismiss?: () => void;
@@ -96,7 +96,7 @@ export function useDeletes(deps: Deps) {
       name: opts.name,
       state: opts.state,
       progressText: opts.progressText,
-      progressPct: opts.progressPct, // Use progressPct to update UI progress bar
+      progressPct: opts.progressPct,
       error: opts.error,
       meta: opts.meta,
       actions: {
@@ -109,30 +109,27 @@ export function useDeletes(deps: Deps) {
   async function deleteNow(items: Row[]) {
     if (!deps.connectionId.value || !deps.bucket.value) return;
     if (!items.length) return;
-  
+
     const conn = deps.connectionId.value;
     const bucket = deps.bucket.value;
-  
+
     for (const it of items) {
       if (isDeletingRow(it)) continue;
-  
+
       const tcId = uid();
       const displayName = it.type === "folder" ? `${it.name}/` : it.name;
-  
-      // Remove the count of deleted items and just set a default total.
-      const total = it.type === "folder" ? 100 : 1; // Assuming folder has 100 items for progress.
-  
+
       if (it.type === "folder") {
         const ac = new AbortController();
         let canceled = false;
-  
+
         const meta: DeleteTaskMeta = {
           op: "delete",
           connectionId: conn,
           bucket,
           target: { kind: "folder", prefix: it.prefix },
         };
-  
+
         upsertDeleteTask({
           id: tcId,
           name: displayName,
@@ -148,7 +145,7 @@ export function useDeletes(deps: Deps) {
           },
           dismiss: () => taskCenter.remove(tcId),
         });
-  
+
         void (async () => {
           try {
             const res = await (deps.deletePrefixStreamed as any)({
@@ -158,7 +155,7 @@ export function useDeletes(deps: Deps) {
               signal: ac.signal,
               onEvent: (ev: any) => {
                 if (canceled) return;
-  
+
                 if (ev?.type === "start") {
                   upsertDeleteTask({
                     id: tcId,
@@ -171,7 +168,7 @@ export function useDeletes(deps: Deps) {
                   });
                   return;
                 }
-  
+
                 // Simplified to always update the progress to 100% once deletion starts
                 if (ev?.type === "progress") {
                   upsertDeleteTask({
@@ -186,12 +183,12 @@ export function useDeletes(deps: Deps) {
                 }
               },
             });
-  
+
             // Ensure the response is valid before processing
             if (!res || !res.value) {
               throw new Error("Invalid response from deletePrefixStreamed");
             }
-  
+
             if (canceled) {
               upsertDeleteTask({
                 id: tcId,
@@ -204,7 +201,7 @@ export function useDeletes(deps: Deps) {
               });
               return;
             }
-  
+
             if (res?.isErr?.()) {
               upsertDeleteTask({
                 id: tcId,
@@ -218,7 +215,7 @@ export function useDeletes(deps: Deps) {
               });
               return;
             }
-  
+
             upsertDeleteTask({
               id: tcId,
               name: displayName,
@@ -242,7 +239,7 @@ export function useDeletes(deps: Deps) {
               });
               return;
             }
-  
+
             upsertDeleteTask({
               id: tcId,
               name: displayName,
@@ -256,17 +253,16 @@ export function useDeletes(deps: Deps) {
           }
         })();
       } else {
-        // File Deletion logic remains similar, but we won't track progress.
         const ac = new AbortController();
         let canceled = false;
-  
+
         const meta: DeleteTaskMeta = {
           op: "delete",
           connectionId: conn,
           bucket,
           target: { kind: "file", key: it.key },
         };
-  
+
         upsertDeleteTask({
           id: tcId,
           name: displayName,
@@ -282,7 +278,7 @@ export function useDeletes(deps: Deps) {
           },
           dismiss: () => taskCenter.remove(tcId),
         });
-  
+
         void (async () => {
           try {
             const res = await (deps.deleteObject as any)({
@@ -291,12 +287,12 @@ export function useDeletes(deps: Deps) {
               key: it.key,
               signal: ac.signal,
             });
-  
+
             // Check if the response is valid
             if (!res || !res.value) {
               throw new Error("Invalid response from deleteObject");
             }
-  
+
             if (canceled) {
               upsertDeleteTask({
                 id: tcId,
@@ -309,7 +305,7 @@ export function useDeletes(deps: Deps) {
               });
               return;
             }
-  
+
             if (res?.isErr?.()) {
               upsertDeleteTask({
                 id: tcId,
@@ -323,7 +319,7 @@ export function useDeletes(deps: Deps) {
               });
               return;
             }
-  
+
             upsertDeleteTask({
               id: tcId,
               name: displayName,
@@ -347,7 +343,7 @@ export function useDeletes(deps: Deps) {
               });
               return;
             }
-  
+
             upsertDeleteTask({
               id: tcId,
               name: displayName,
@@ -363,7 +359,7 @@ export function useDeletes(deps: Deps) {
       }
     }
   }
-    async function deleteVersionsForKey(opts: {
+  async function deleteVersionsForKey(opts: {
     key: string;
     versionIds: string[];
     displayName?: string;

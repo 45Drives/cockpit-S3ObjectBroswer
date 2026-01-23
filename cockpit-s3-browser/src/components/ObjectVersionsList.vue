@@ -24,8 +24,6 @@
             <div v-if="err && !busy" class="m-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
                 {{ err }}
             </div>
-
-            <!-- hint / status -->
             <div class="px-3 py-2 border-b border-default flex items-center justify-between gap-2">
                 <div class="text-xs text-default opacity-80">
                     Selected: <span class="font-semibold">{{ selectedCount }}</span>
@@ -34,21 +32,21 @@
                     Right-click for actions
                 </div>
             </div>
-<!-- columns header -->
-<div class="bg-well text-left text-default w-full" :style="headerStyle + 'scrollbar-gutter: stable;'">
-  <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
-    Version ID
-  </div>
-  <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
-    Size
-  </div>
-  <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
-    Last modified
-  </div>
-  <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
-    Storage class
-  </div>
-</div>
+            <!-- columns header -->
+            <div class="bg-well text-left text-default w-full" :style="headerStyle + 'scrollbar-gutter: stable;'">
+                <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                    Version ID
+                </div>
+                <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                    Size
+                </div>
+                <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                    Last modified
+                </div>
+                <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                    Storage class
+                </div>
+            </div>
 
             <!-- list -->
             <div class="w-full" @contextmenu.prevent="onBlankContextMenu">
@@ -104,7 +102,7 @@ import { formatBytes, formatDate } from "../lib/helpers";
 
 type MenuPos = { x: number; y: number };
 const headerStyle =
-  "display:grid; grid-template-columns: 1.6fr 0.6fr 0.9fr 0.8fr; width:100%;";
+    "display:grid; grid-template-columns: 1.6fr 0.6fr 0.9fr 0.8fr; width:100%;";
 
 const props = defineProps<{
     busy: boolean;

@@ -4,7 +4,15 @@ import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 
 // @ts-ignore
 // import s3browser_cli_script from "../scripts/s3browser-cli.py?raw";
-import { GetObjectVersionsCliResult, ListObjectsCliResult, ListObjectsResponse, ObjectVersionItem, PresignGetCliResult, TagKV, TagMap } from "../types";
+import {
+  GetObjectVersionsCliResult,
+  ListObjectsCliResult,
+  ListObjectsResponse,
+  ObjectVersionItem,
+  PresignGetCliResult,
+  TagKV,
+  TagMap,
+} from "../types";
 
 function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
   try {
@@ -24,12 +32,12 @@ function pyCmd(args: string[], superuser: "try" | "require" = "try") {
 const S3BROWSER_CLI_PATH = "/opt/45drives/houston/s3Navigator/scripts/main.py";
 
 export function listObjects(params: {
-connectionId: string;
-bucket: string;
-prefix?: string;
-delimiter?: string | null; // "/" for folder view, null/"" for flat view
-continuationToken?: string | null;
-maxKeys?: number;
+  connectionId: string;
+  bucket: string;
+  prefix?: string;
+  delimiter?: string | null; // "/" for folder view, null/"" for flat view
+  continuationToken?: string | null;
+  maxKeys?: number;
 }): ResultAsync<ListObjectsResponse, ProcessError | SyntaxError> {
   const args: string[] = [
     "list-objects",
@@ -54,11 +62,14 @@ maxKeys?: number;
     .map((proc) => proc.getStdout().trim())
     .andThen((stdout) => safeJsonParse<ListObjectsCliResult>(stdout))
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to list objects"));
+      if (!res.ok)
+        return errAsync(new SyntaxError(res.error || "Failed to list objects"));
 
       return okAsync({
-        prefix: res.prefix ?? (params.prefix ?? ""),
-        commonPrefixes: Array.isArray(res.commonPrefixes) ? res.commonPrefixes : [],
+        prefix: res.prefix ?? params.prefix ?? "",
+        commonPrefixes: Array.isArray(res.commonPrefixes)
+          ? res.commonPrefixes
+          : [],
         contents: Array.isArray(res.contents) ? res.contents : [],
         isTruncated: Boolean(res.isTruncated),
         nextContinuationToken: res.nextContinuationToken ?? null,
@@ -72,7 +83,10 @@ export function presignGetObject(params: {
   bucket: string;
   key: string;
   expiresSeconds?: number; // default 900
-}): ResultAsync<{ url: string; expiresIn: number }, ProcessError | SyntaxError> {
+}): ResultAsync<
+  { url: string; expiresIn: number },
+  ProcessError | SyntaxError
+> {
   const args: string[] = [
     "presign-get",
     params.connectionId,
@@ -87,129 +101,190 @@ export function presignGetObject(params: {
     .map((proc) => proc.getStdout().trim())
     .andThen((stdout) => safeJsonParse<PresignGetCliResult>(stdout))
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to presign download URL"));
+      if (!res.ok)
+        return errAsync(
+          new SyntaxError(res.error || "Failed to presign download URL")
+        );
       return okAsync({ url: res.url, expiresIn: res.expiresIn });
     });
 }
 
-
 export function deleteObject(params: {
-    connectionId: string;
-    bucket: string;
-    key: string;
-  }): ResultAsync<void, ProcessError | SyntaxError> {
-    const args: string[] = ["delete-object", params.connectionId, params.bucket, params.key];
-  
-    return server
-      .execute(pyCmd(args, "try"))
-      .map((proc) => proc.getStdout().trim())
-      .andThen((stdout) => safeJsonParse<{ ok: boolean; error?: string }>(stdout))
-      .andThen((res) => {
-        if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to delete object"));
-        return okAsync(undefined);
-      });
-  }
-  
-  type DeletePrefixEvent =
-  | { type: "start"; ok: boolean; prefix?: string }
-  | { type: "progress"; ok: boolean; deletedRequested?: number; errors?: number }
-  | { type: "result"; ok: boolean; deletedRequested?: number; errors?: number; error?: string };
+  connectionId: string;
+  bucket: string;
+  key: string;
+}): ResultAsync<void, ProcessError | SyntaxError> {
+  const args: string[] = [
+    "delete-object",
+    params.connectionId,
+    params.bucket,
+    params.key,
+  ];
 
-  export function deletePrefixStreamed(params: {
-    connectionId: string;
-    bucket: string;
-    prefix: string;
-    onEvent: (ev: DeletePrefixEvent) => void;
-  }): ResultAsync<{ deletedRequested: number; errors: number }, ProcessError | SyntaxError> {
-    const args: string[] = ["delete-prefix", params.connectionId, params.bucket, params.prefix];
-  
-    // Spawn the process
-    const proc = server.spawnProcess(pyCmd(args, "try"));
-  
-    // NDJSON line buffer
-    let buf = "";
-  
-    proc.stream((chunk) => {
-      buf += chunk;
-  
-      while (true) {
-        const i = buf.indexOf("\n");
-        if (i < 0) break;
-  
-        const line = buf.slice(0, i).trim();
-        buf = buf.slice(i + 1);
-        if (!line) continue;
-  
-        try {
-          // Check for empty or invalid response
-          if (line.trim() === "") {
-            console.error("Received empty response.");
-            return; // Handle empty response
-          }
-  
-          const obj = JSON.parse(line) as any;
-  
-          if (obj && typeof obj === "object") {
-            if ("type" in obj) {
-              params.onEvent(obj as DeletePrefixEvent);
-            } else if (obj.ok === false) {
-              params.onEvent({ type: "result", ok: false, error: String(obj.error ?? "Failed") });
-            }
-          }
-        } catch (e) {
-          console.error("Error parsing JSON:", e, "Line content:", line); // Log error and line for debugging
-          // Ignore parse errors but log them for debugging purposes
-        }
-      }
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((proc) => proc.getStdout().trim())
+    .andThen((stdout) => safeJsonParse<{ ok: boolean; error?: string }>(stdout))
+    .andThen((res) => {
+      if (!res.ok)
+        return errAsync(
+          new SyntaxError(res.error || "Failed to delete object")
+        );
+      return okAsync(undefined);
     });
-  
-    // Wait for the process to complete
-    return proc.wait(true).andThen((exited: any) => {
-      const stdout = String(exited.getStdout?.() ?? "").trim();
-      
-      // Handle case where stdout is empty
-      if (stdout === "") {
-        console.log("No output received. Treating as completed.");
-        return okAsync({ deletedRequested: 0, errors: 0 }); // Treat as completed successfully
+}
+
+type DeletePrefixEvent =
+  | { type: "start"; ok: boolean; prefix?: string }
+  | {
+      type: "progress";
+      ok: boolean;
+      deletedRequested?: number;
+      errors?: number;
+    }
+  | {
+      type: "result";
+      ok: boolean;
+      deletedRequested?: number;
+      errors?: number;
+      error?: string;
+    };
+
+export function deletePrefixStreamed(params: {
+  connectionId: string;
+  bucket: string;
+  prefix: string;
+  onEvent: (ev: DeletePrefixEvent) => void;
+}): ResultAsync<
+  { deletedRequested: number; errors: number },
+  ProcessError | SyntaxError
+> {
+  const args: string[] = [
+    "delete-prefix",
+    params.connectionId,
+    params.bucket,
+    params.prefix,
+  ];
+
+  // Spawn the process
+  const proc = server.spawnProcess(pyCmd(args, "try"));
+
+  // NDJSON line buffer
+  let buf = "";
+
+  proc.stream((chunk) => {
+    buf += chunk;
+
+    while (true) {
+      const i = buf.indexOf("\n");
+      if (i < 0) break;
+
+      const line = buf.slice(0, i).trim();
+      buf = buf.slice(i + 1);
+      if (!line) continue;
+
+      try {
+        // Check for empty or invalid response
+        if (line.trim() === "") {
+          console.error("Received empty response.");
+          return; // Handle empty response
+        }
+
+        const obj = JSON.parse(line) as any;
+
+        if (obj && typeof obj === "object") {
+          if ("type" in obj) {
+            params.onEvent(obj as DeletePrefixEvent);
+          } else if (obj.ok === false) {
+            params.onEvent({
+              type: "result",
+              ok: false,
+              error: String(obj.error ?? "Failed"),
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Error parsing JSON:", e, "Line content:", line); // Log error and line for debugging
       }
-  
-      const last = stdout
+    }
+  });
+
+  // Wait for the process to complete
+  return proc.wait(true).andThen((exited: any) => {
+    const stdout = String(exited.getStdout?.() ?? "").trim();
+
+    // Handle case where stdout is empty
+    if (stdout === "") {
+      console.log("No output received. Treating as completed.");
+      return okAsync({ deletedRequested: 0, errors: 0 }); // Treat as completed successfully
+    }
+
+    const last =
+      stdout
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean)
         .pop() ?? "";
-  
-      console.log("Raw stdout:", stdout); // Log stdout for debugging
-  
-      return safeJsonParse<any>(last).andThen((obj) => {
-        // Check for result type message
-        if (obj && obj.type === "result") {
-          if (!obj.ok) return errAsync(new SyntaxError(obj.error || "Failed to delete prefix"));
-          return okAsync({
-            deletedRequested: Number(obj.deletedRequested ?? 0),
-            errors: Number(obj.errors ?? 0),
-          });
-        }
-  
-        // Legacy one-shot protocol fallback (if python hasn't been updated yet)
-        if (obj && typeof obj.ok === "boolean") {
-          if (!obj.ok) return errAsync(new SyntaxError(obj.error || "Failed to delete prefix"));
-          return okAsync({
-            deletedRequested: Number(obj.deletedRequested ?? obj.deleted ?? 0),
-            errors: Number(obj.errors ?? 0),
-          });
-        }
-  
-        return errAsync(new SyntaxError("Malformed delete-prefix output"));
-      });
-    });
-  }
-    
 
-  type RenameObjectEvent =
-  | { type: "start"; ok: boolean; src?: string; dst?: string; size?: number; totalParts?: number; partSize?: number; concurrency?: number }
-  | { type: "progress"; ok: boolean; partsDone?: number; totalParts?: number; bytesCopied?: number; size?: number }
-  | { type: "result"; ok: boolean; src?: string; dst?: string; size?: number; error?: string };
+    console.log("Raw stdout:", stdout); // Log stdout for debugging
+
+    return safeJsonParse<any>(last).andThen((obj) => {
+      // Check for result type message
+      if (obj && obj.type === "result") {
+        if (!obj.ok)
+          return errAsync(
+            new SyntaxError(obj.error || "Failed to delete prefix")
+          );
+        return okAsync({
+          deletedRequested: Number(obj.deletedRequested ?? 0),
+          errors: Number(obj.errors ?? 0),
+        });
+      }
+
+      // Legacy one-shot protocol fallback (if python hasn't been updated yet)
+      if (obj && typeof obj.ok === "boolean") {
+        if (!obj.ok)
+          return errAsync(
+            new SyntaxError(obj.error || "Failed to delete prefix")
+          );
+        return okAsync({
+          deletedRequested: Number(obj.deletedRequested ?? obj.deleted ?? 0),
+          errors: Number(obj.errors ?? 0),
+        });
+      }
+
+      return errAsync(new SyntaxError("Malformed delete-prefix output"));
+    });
+  });
+}
+
+type RenameObjectEvent =
+  | {
+      type: "start";
+      ok: boolean;
+      src?: string;
+      dst?: string;
+      size?: number;
+      totalParts?: number;
+      partSize?: number;
+      concurrency?: number;
+    }
+  | {
+      type: "progress";
+      ok: boolean;
+      partsDone?: number;
+      totalParts?: number;
+      bytesCopied?: number;
+      size?: number;
+    }
+  | {
+      type: "result";
+      ok: boolean;
+      src?: string;
+      dst?: string;
+      size?: number;
+      error?: string;
+    };
 
 export function renameObjectStreamed(params: {
   connectionId: string;
@@ -260,33 +335,71 @@ export function renameObjectStreamed(params: {
 
   const run = proc.wait(true).andThen(() => {
     if (finalResult && finalResult.type === "result") {
-      if (!finalResult.ok) return errAsync(new SyntaxError(finalResult.error || "Failed to rename object"));
+      if (!finalResult.ok)
+        return errAsync(
+          new SyntaxError(finalResult.error || "Failed to rename object")
+        );
       return okAsync(undefined);
     }
-    return errAsync(new SyntaxError("Rename did not return a final result message"));
+    return errAsync(
+      new SyntaxError("Rename did not return a final result message")
+    );
   });
 
   const cancel = () => {
-    try { (proc as any).kill?.("SIGTERM"); } catch {}
-    try { (proc as any).terminate?.(); } catch {}
-    try { (proc as any).signal?.("SIGTERM"); } catch {}
+    try {
+      (proc as any).kill?.("SIGTERM");
+    } catch {}
+    try {
+      (proc as any).terminate?.();
+    } catch {}
+    try {
+      (proc as any).signal?.("SIGTERM");
+    } catch {}
 
     window.setTimeout(() => {
-      try { (proc as any).kill?.("SIGKILL"); } catch {}
+      try {
+        (proc as any).kill?.("SIGKILL");
+      } catch {}
     }, 500);
   };
-
 
   return { run, cancel };
 }
 
-
 export type UploadStdinEvent =
-  | { type: "start"; ok: boolean; bucket?: string; key?: string; size?: number; contentType?: string; multipart?: boolean }
-  | { type: "mpu"; ok: boolean; uploadId?: string; partSize?: number; totalParts?: number }
+  | {
+      type: "start";
+      ok: boolean;
+      bucket?: string;
+      key?: string;
+      size?: number;
+      contentType?: string;
+      multipart?: boolean;
+    }
+  | {
+      type: "mpu";
+      ok: boolean;
+      uploadId?: string;
+      partSize?: number;
+      totalParts?: number;
+    }
   | { type: "progress"; ok: boolean; bytesRead?: number; size?: number }
-  | { type: "part"; ok: boolean; partNumber?: number; partsDone?: number; totalParts?: number }
-  | { type: "result"; ok: boolean; bucket?: string; key?: string; size?: number; error?: string };
+  | {
+      type: "part";
+      ok: boolean;
+      partNumber?: number;
+      partsDone?: number;
+      totalParts?: number;
+    }
+  | {
+      type: "result";
+      ok: boolean;
+      bucket?: string;
+      key?: string;
+      size?: number;
+      error?: string;
+    };
 
 export type UploadStdinJob = {
   writeChunk: (chunk: Uint8Array) => void;
@@ -338,7 +451,11 @@ export function uploadObjectFromStdinStreamed(params: {
           if (obj.type === "result") final = obj;
         } else if (obj && obj.ok === false) {
           // fallback / crash-style message
-          final = { type: "result", ok: false, error: String(obj.error ?? "Upload failed") };
+          final = {
+            type: "result",
+            ok: false,
+            error: String(obj.error ?? "Upload failed"),
+          };
           params.onEvent(final as UploadStdinEvent);
         }
       } catch {
@@ -347,13 +464,18 @@ export function uploadObjectFromStdinStreamed(params: {
     }
   });
 
-  const run: ResultAsync<void, ProcessError | SyntaxError> = proc.wait(true).andThen(() => {
-    if (final && final.type === "result") {
-      if (!final.ok) return errAsync(new SyntaxError(final.error || "Upload failed"));
-      return okAsync(undefined);
-    }
-    return errAsync(new SyntaxError("Upload did not return a final result message"));
-  });
+  const run: ResultAsync<void, ProcessError | SyntaxError> = proc
+    .wait(true)
+    .andThen(() => {
+      if (final && final.type === "result") {
+        if (!final.ok)
+          return errAsync(new SyntaxError(final.error || "Upload failed"));
+        return okAsync(undefined);
+      }
+      return errAsync(
+        new SyntaxError("Upload did not return a final result message")
+      );
+    });
 
   const writeChunk = (chunk: Uint8Array) => {
     // IMPORTANT: stream=true to keep stdin open
@@ -372,22 +494,32 @@ export function uploadObjectFromStdinStreamed(params: {
   };
 
   const cancel = () => {
-    try { (proc as any).closeStdin?.(); } catch {}
-    try { (proc as any).end?.(); } catch {}
+    try {
+      (proc as any).closeStdin?.();
+    } catch {}
+    try {
+      (proc as any).end?.();
+    } catch {}
 
-    try { (proc as any).kill?.("SIGTERM"); } catch {}
-    try { (proc as any).terminate?.(); } catch {}
-    try { (proc as any).signal?.("SIGTERM"); } catch {}
+    try {
+      (proc as any).kill?.("SIGTERM");
+    } catch {}
+    try {
+      (proc as any).terminate?.();
+    } catch {}
+    try {
+      (proc as any).signal?.("SIGTERM");
+    } catch {}
 
     window.setTimeout(() => {
-      try { (proc as any).kill?.("SIGKILL"); } catch {}
+      try {
+        (proc as any).kill?.("SIGKILL");
+      } catch {}
     }, 500);
   };
 
-
   return { writeChunk, end, cancel, run };
 }
-
 
 export function downloadPrefixTarGz(params: {
   connectionId: string;
@@ -424,7 +556,6 @@ export function downloadPrefixTarGz(params: {
   });
 }
 
-
 export function downloadObject(params: {
   connectionId: string;
   bucket: string;
@@ -432,7 +563,7 @@ export function downloadObject(params: {
   filename?: string;
   jobId: string;
 }): ResultAsync<void, ProcessError> {
-  const filename = params.filename || (params.key.split("/").pop() || "download");
+  const filename = params.filename || params.key.split("/").pop() || "download";
 
   const args: string[] = [
     "download-object",
@@ -448,7 +579,6 @@ export function downloadObject(params: {
   });
 }
 
-
 export function getDownloadJobStatus(params: {
   jobId: string;
 }): ResultAsync<any, ProcessError | SyntaxError> {
@@ -460,13 +590,13 @@ export function getDownloadJobStatus(params: {
     .andThen((stdout) => safeJsonParse<any>(stdout))
     .andThen((res) => {
       if (!res || res.ok === false) {
-        return errAsync(new SyntaxError(res?.error || "Failed to read job status"));
+        return errAsync(
+          new SyntaxError(res?.error || "Failed to read job status")
+        );
       }
       return okAsync(res);
     });
 }
-
-// lib/s3Objects.ts (replace these 3 functions)
 
 export function copyObject(params: {
   connectionId: string;
@@ -497,7 +627,9 @@ export function copyObject(params: {
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<{ ok: boolean; error?: string }>(s))
     .andThen((res) =>
-      res.ok ? okAsync(undefined) : errAsync(new SyntaxError(res.error || "Copy failed"))
+      res.ok
+        ? okAsync(undefined)
+        : errAsync(new SyntaxError(res.error || "Copy failed"))
     );
 }
 
@@ -530,7 +662,8 @@ export function copyPrefix(params: {
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<{ ok: boolean; error?: string }>(s))
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Copy prefix failed"));
+      if (!res.ok)
+        return errAsync(new SyntaxError(res.error || "Copy prefix failed"));
       return okAsync(undefined);
     });
 }
@@ -564,7 +697,8 @@ export function movePrefix(params: {
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<{ ok: boolean; error?: string }>(s))
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Move prefix failed"));
+      if (!res.ok)
+        return errAsync(new SyntaxError(res.error || "Move prefix failed"));
       return okAsync(undefined);
     });
 }
@@ -588,7 +722,12 @@ export function statObject(params: {
   },
   ProcessError | SyntaxError
 > {
-  const args: string[] = ["stat-object", params.connectionId, params.bucket, params.key];
+  const args: string[] = [
+    "stat-object",
+    params.connectionId,
+    params.bucket,
+    params.key,
+  ];
 
   return server
     .execute(pyCmd(args, "try"))
@@ -608,18 +747,24 @@ export function statObject(params: {
         metadata?: Record<string, string> | null;
 
         error?: string;
-      }>(s),
+      }>(s)
     )
     .andThen((res) => {
       if (!res.ok) return errAsync(new SyntaxError(res.error || "Stat failed"));
 
       const md = res.metadata;
       const metadata: Record<string, string> =
-        md && typeof md === "object" && !Array.isArray(md) ? (md as Record<string, string>) : {};
+        md && typeof md === "object" && !Array.isArray(md)
+          ? (md as Record<string, string>)
+          : {};
 
       const tcRaw = res.taggingCount;
       const taggingCount =
-        typeof tcRaw === "number" && Number.isFinite(tcRaw) ? tcRaw : tcRaw == null ? null : Number(tcRaw);
+        typeof tcRaw === "number" && Number.isFinite(tcRaw)
+          ? tcRaw
+          : tcRaw == null
+            ? null
+            : Number(tcRaw);
 
       return okAsync({
         key: String(res.key || params.key),
@@ -629,7 +774,9 @@ export function statObject(params: {
         etag: (res.etag ?? null) as string | null,
 
         contentType: (res.contentType ?? null) as string | null,
-        taggingCount: Number.isFinite(taggingCount as number) ? (taggingCount as number) : null,
+        taggingCount: Number.isFinite(taggingCount as number)
+          ? (taggingCount as number)
+          : null,
         metadata,
       });
     });
@@ -641,7 +788,12 @@ export function getObjectTags(params: {
   key: string;
   versionId?: string | null;
 }): ResultAsync<{ tags: TagKV[] }, ProcessError | SyntaxError> {
-  const args: string[] = ["get-object-tags", params.connectionId, params.bucket, params.key];
+  const args: string[] = [
+    "get-object-tags",
+    params.connectionId,
+    params.bucket,
+    params.key,
+  ];
 
   if (params.versionId) {
     args.push("--version-id", String(params.versionId));
@@ -675,7 +827,10 @@ export function putObjectTags(params: {
   key: string;
   tags: TagMap;
   versionId?: string | null;
-}): ResultAsync<{ bucket: string; key: string; tags: TagKV[] }, ProcessError | SyntaxError> {
+}): ResultAsync<
+  { bucket: string; key: string; tags: TagKV[] },
+  ProcessError | SyntaxError
+> {
   const args: string[] = [
     "put-object-tags",
     params.connectionId,
@@ -722,7 +877,6 @@ function lastNonEmptyLine(s: string): string {
   return lines[lines.length - 1] ?? "";
 }
 
-
 export function changeStorageClass(params: {
   connectionId: string;
   bucket: string;
@@ -740,7 +894,8 @@ export function changeStorageClass(params: {
     params.storageClass,
   ];
 
-  if (params.concurrency != null) args.push("--concurrency", String(params.concurrency));
+  if (params.concurrency != null)
+    args.push("--concurrency", String(params.concurrency));
   if (params.force) args.push("--force", "1");
 
   return server
@@ -752,11 +907,16 @@ export function changeStorageClass(params: {
         storageClass?: string | null;
         requestedStorageClass?: string;
         error?: string;
-      }>(s),
+      }>(s)
     )
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to change storage class"));
-      return okAsync({ storageClass: (res.storageClass ?? null) as string | null });
+      if (!res.ok)
+        return errAsync(
+          new SyntaxError(res.error || "Failed to change storage class")
+        );
+      return okAsync({
+        storageClass: (res.storageClass ?? null) as string | null,
+      });
     });
 }
 
@@ -770,11 +930,13 @@ export function cancelDownloadJob(params: {
     .map((proc) => proc.getStdout().trim())
     .andThen((stdout) => safeJsonParse<{ ok: boolean; error?: string }>(stdout))
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to cancel download job"));
+      if (!res.ok)
+        return errAsync(
+          new SyntaxError(res.error || "Failed to cancel download job")
+        );
       return okAsync(undefined);
     });
 }
-
 
 export function getObjectVersions(params: {
   connectionId: string;
@@ -796,7 +958,10 @@ export function getObjectVersions(params: {
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<GetObjectVersionsCliResult>(s))
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to list object versions"));
+      if (!res.ok)
+        return errAsync(
+          new SyntaxError(res.error || "Failed to list object versions")
+        );
 
       const raw = Array.isArray(res.versions) ? res.versions : [];
 
@@ -813,21 +978,40 @@ export function getObjectVersions(params: {
     });
 }
 
-
 export function deleteObjectVersion(params: {
   connectionId: string;
   bucket: string;
   key: string;
   versionId: string;
-}): ResultAsync<{ bucket: string; key: string; versionId: string }, ProcessError | SyntaxError> {
-  const args: string[] = ["delete-object-version", params.connectionId, params.bucket, params.key, params.versionId];
+}): ResultAsync<
+  { bucket: string; key: string; versionId: string },
+  ProcessError | SyntaxError
+> {
+  const args: string[] = [
+    "delete-object-version",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    params.versionId,
+  ];
 
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())
-    .andThen((s) => safeJsonParse<{ ok: boolean; bucket?: string; key?: string; versionId?: string; error?: string }>(s))
+    .andThen((s) =>
+      safeJsonParse<{
+        ok: boolean;
+        bucket?: string;
+        key?: string;
+        versionId?: string;
+        error?: string;
+      }>(s)
+    )
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to delete version"));
+      if (!res.ok)
+        return errAsync(
+          new SyntaxError(res.error || "Failed to delete version")
+        );
       return okAsync({
         bucket: String(res.bucket ?? params.bucket),
         key: String(res.key ?? params.key),
@@ -841,17 +1025,35 @@ export function rollbackObjectVersion(params: {
   bucket: string;
   key: string;
   versionId: string;
-}): ResultAsync<{ bucket: string; key: string; fromVersionId: string }, ProcessError | SyntaxError> {
-  const args: string[] = ["rollback-object-version", params.connectionId, params.bucket, params.key, params.versionId];
+}): ResultAsync<
+  { bucket: string; key: string; fromVersionId: string },
+  ProcessError | SyntaxError
+> {
+  const args: string[] = [
+    "rollback-object-version",
+    params.connectionId,
+    params.bucket,
+    params.key,
+    params.versionId,
+  ];
 
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())
     .andThen((s) =>
-      safeJsonParse<{ ok: boolean; bucket?: string; key?: string; fromVersionId?: string; error?: string }>(s),
+      safeJsonParse<{
+        ok: boolean;
+        bucket?: string;
+        key?: string;
+        fromVersionId?: string;
+        error?: string;
+      }>(s)
     )
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to rollback version"));
+      if (!res.ok)
+        return errAsync(
+          new SyntaxError(res.error || "Failed to rollback version")
+        );
       return okAsync({
         bucket: String(res.bucket ?? params.bucket),
         key: String(res.key ?? params.key),
@@ -859,8 +1061,6 @@ export function rollbackObjectVersion(params: {
       });
     });
 }
-
-
 
 export function downloadObjectVersion(params: {
   connectionId: string;
@@ -870,7 +1070,7 @@ export function downloadObjectVersion(params: {
   filename?: string;
   jobId: string;
 }): ResultAsync<void, ProcessError> {
-  const base = params.filename || (params.key.split("/").pop() || "download");
+  const base = params.filename || params.key.split("/").pop() || "download";
   const safeVid = (params.versionId || "").slice(0, 8) || "version";
   const filename = `${base}.v-${safeVid}`;
 
@@ -893,26 +1093,49 @@ export function getBucketObjectLock(params: {
   connectionId: string;
   bucket: string;
 }): ResultAsync<
-  { supported: boolean; enabled: boolean; reason?: string; defaultRetention?: { mode?: string; days?: number; years?: number } },
+  {
+    supported: boolean;
+    enabled: boolean;
+    reason?: string;
+    defaultRetention?: { mode?: string; days?: number; years?: number };
+  },
   ProcessError | SyntaxError
 > {
-  const args: string[] = ["get-bucket-object-lock", params.connectionId, params.bucket];
+  const args: string[] = [
+    "get-bucket-object-lock",
+    params.connectionId,
+    params.bucket,
+  ];
 
   return server
     .execute(pyCmd(args, "try"))
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<any>(s))
     .andThen((res) => {
-      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to get bucket object lock"));
+      if (!res || res.ok === false)
+        return errAsync(
+          new SyntaxError(res?.error || "Failed to get bucket object lock")
+        );
       return okAsync({
         supported: Boolean(res.supported),
         enabled: Boolean(res.enabled),
         reason: res.reason != null ? String(res.reason) : undefined,
-        defaultRetention: res.defaultRetention ? {
-          mode: res.defaultRetention.mode != null ? String(res.defaultRetention.mode) : undefined,
-          days: res.defaultRetention.days != null ? Number(res.defaultRetention.days) : undefined,
-          years: res.defaultRetention.years != null ? Number(res.defaultRetention.years) : undefined,
-        } : undefined,
+        defaultRetention: res.defaultRetention
+          ? {
+              mode:
+                res.defaultRetention.mode != null
+                  ? String(res.defaultRetention.mode)
+                  : undefined,
+              days:
+                res.defaultRetention.days != null
+                  ? Number(res.defaultRetention.days)
+                  : undefined,
+              years:
+                res.defaultRetention.years != null
+                  ? Number(res.defaultRetention.years)
+                  : undefined,
+            }
+          : undefined,
       });
     });
 }
@@ -927,8 +1150,16 @@ export function getObjectLegalHold(params: {
   bucket: string;
   key: string;
   versionId?: string | null;
-}): ResultAsync<{ status: LegalHoldStatus | null }, ProcessError | SyntaxError> {
-  const args: string[] = ["get-object-legal-hold", params.connectionId, params.bucket, params.key];
+}): ResultAsync<
+  { status: LegalHoldStatus | null },
+  ProcessError | SyntaxError
+> {
+  const args: string[] = [
+    "get-object-legal-hold",
+    params.connectionId,
+    params.bucket,
+    params.key,
+  ];
   if (params.versionId) args.push("--version-id", String(params.versionId));
 
   return server
@@ -936,7 +1167,10 @@ export function getObjectLegalHold(params: {
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<any>(s))
     .andThen((res) => {
-      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to get legal hold"));
+      if (!res || res.ok === false)
+        return errAsync(
+          new SyntaxError(res?.error || "Failed to get legal hold")
+        );
 
       const raw = res.status;
       const status = isLegalHoldStatus(raw) ? raw : null;
@@ -945,14 +1179,21 @@ export function getObjectLegalHold(params: {
     });
 }
 
-
 export function getObjectRetention(params: {
   connectionId: string;
   bucket: string;
   key: string;
   versionId?: string | null;
-}): ResultAsync<{ mode: string | null; retainUntil: string | null }, ProcessError | SyntaxError> {
-  const args: string[] = ["get-object-retention", params.connectionId, params.bucket, params.key];
+}): ResultAsync<
+  { mode: string | null; retainUntil: string | null },
+  ProcessError | SyntaxError
+> {
+  const args: string[] = [
+    "get-object-retention",
+    params.connectionId,
+    params.bucket,
+    params.key,
+  ];
   if (params.versionId) args.push("--version-id", String(params.versionId));
 
   return server
@@ -960,14 +1201,16 @@ export function getObjectRetention(params: {
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<any>(s))
     .andThen((res) => {
-      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to get retention"));
+      if (!res || res.ok === false)
+        return errAsync(
+          new SyntaxError(res?.error || "Failed to get retention")
+        );
       return okAsync({
         mode: res.mode != null ? String(res.mode) : null,
         retainUntil: (res.retainUntil ?? null) as string | null,
       });
     });
 }
-
 
 export function putObjectLegalHold(params: {
   connectionId: string;
@@ -991,11 +1234,15 @@ export function putObjectLegalHold(params: {
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<any>(s))
     .andThen((res) => {
-      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to set legal hold"));
+      if (!res || res.ok === false)
+        return errAsync(
+          new SyntaxError(res?.error || "Failed to set legal hold")
+        );
 
       const raw = res.status;
       const status = isLegalHoldStatus(raw) ? raw : null;
-      if (!status) return errAsync(new SyntaxError("Invalid legal hold status from CLI"));
+      if (!status)
+        return errAsync(new SyntaxError("Invalid legal hold status from CLI"));
 
       return okAsync({ status });
     });
@@ -1037,14 +1284,20 @@ export function putObjectRetention(params: {
     .map((p) => p.getStdout().trim())
     .andThen((s) => safeJsonParse<any>(s))
     .andThen((res) => {
-      if (!res || res.ok === false) return errAsync(new SyntaxError(res?.error || "Failed to set retention"));
+      if (!res || res.ok === false)
+        return errAsync(
+          new SyntaxError(res?.error || "Failed to set retention")
+        );
 
       const rawMode = res.mode;
       const mode = isRetentionMode(rawMode) ? rawMode : null;
-      if (!mode) return errAsync(new SyntaxError("Invalid retention mode from CLI"));
+      if (!mode)
+        return errAsync(new SyntaxError("Invalid retention mode from CLI"));
 
-      const retainUntil = res.retainUntil != null ? String(res.retainUntil) : null;
-      if (!retainUntil) return errAsync(new SyntaxError("Missing retainUntil from CLI"));
+      const retainUntil =
+        res.retainUntil != null ? String(res.retainUntil) : null;
+      if (!retainUntil)
+        return errAsync(new SyntaxError("Missing retainUntil from CLI"));
 
       const bypassGovernance = Boolean(res.bypassGovernance);
 

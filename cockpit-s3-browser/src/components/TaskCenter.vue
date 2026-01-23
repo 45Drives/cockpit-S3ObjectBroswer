@@ -64,7 +64,7 @@
                                 <div v-if="typeof t.progressCurrent === 'number' && typeof t.progressTotal === 'number' && t.progressTotal > 0"
                                     class="mt-1 flex items-center justify-between text-xs opacity-80">
                                     <span>{{ formatBytes(t.progressCurrent) }} / {{ formatBytes(t.progressTotal)
-                                        }}</span>
+                                    }}</span>
                                     <span>{{ pctFor(t) }}%</span>
                                 </div>
 
@@ -119,16 +119,16 @@ const { items } = storeToRefs(taskCenter);
 const countsByKind = computed(() => taskCenter.countsByKind);
 
 const badges = computed(() => {
-  const order: TaskKind[] = ["download", "upload", "copy", "move", "delete", "rename"];
-  return order
-    .map((kind) => ({
-      kind,
-      count: countsByKind.value[kind],
-      label: `${kind} tasks`,
-      short: shortKind(kind),
-      className: kindBadgeClass(kind) + (filterKind.value === kind ? " ring-2 ring-default" : ""),
-    }))
-    .filter((b) => b.count > 0);
+    const order: TaskKind[] = ["download", "upload", "copy", "move", "delete", "rename"];
+    return order
+        .map((kind) => ({
+            kind,
+            count: countsByKind.value[kind],
+            label: `${kind} tasks`,
+            short: shortKind(kind),
+            className: kindBadgeClass(kind) + (filterKind.value === kind ? " ring-2 ring-default" : ""),
+        }))
+        .filter((b) => b.count > 0);
 });
 
 const visibleTasks = computed<TaskRecord[]>(() => {

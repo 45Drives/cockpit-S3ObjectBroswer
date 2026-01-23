@@ -77,7 +77,9 @@ export function useTransfers(deps: Deps) {
 
   const transferJobs = ref<TransferJobEx[]>([]);
   const transferBusy = computed(() =>
-    transferJobs.value.some((j) => j.state === "running" || j.state === "canceling")
+    transferJobs.value.some(
+      (j) => j.state === "running" || j.state === "canceling"
+    )
   );
 
   const pasteItems = ref<PasteItem[]>([]);
@@ -98,7 +100,11 @@ export function useTransfers(deps: Deps) {
 
   // auto-clear paste UI when finished
   watch(pasteBusy, (b) => {
-    if (!b && pasteItems.value.length && pasteItems.value.every((p) => p.step === "done")) {
+    if (
+      !b &&
+      pasteItems.value.length &&
+      pasteItems.value.every((p) => p.step === "done")
+    ) {
       setTimeout(() => {
         if (!pasteBusy.value) pasteItems.value = [];
       }, 2000);
@@ -123,7 +129,6 @@ export function useTransfers(deps: Deps) {
       if (!pendingUi) return;
       pendingUi = false;
       transferJobs.value = [...transferJobs.value];
-      // (we also upsert tasks during polling / state changes)
     }, 250);
   };
 
@@ -158,19 +163,21 @@ export function useTransfers(deps: Deps) {
           ? "failed"
           : j.state === "canceled"
             ? "canceled"
-            : (j.phase ? String(j.phase) : "");
-  
+            : j.phase
+              ? String(j.phase)
+              : "";
+
     const re = rateEtaText(rateStats, j.id);
-  
+
     let pct =
       typeof j.bytes === "number" &&
       typeof j.totalBytes === "number" &&
       j.totalBytes > 0
         ? Math.floor((j.bytes * 100) / j.totalBytes)
         : null;
-  
+
     if (j.state === "done") pct = 100;
-  
+
     // For final states, don't keep showing ETA/rate noise
     if (j.state === "done") {
       return pct != null ? `Done • ${pct}%` : "Done";
@@ -181,7 +188,7 @@ export function useTransfers(deps: Deps) {
     if (j.state === "canceled") {
       return "Canceled";
     }
-  
+
     // Running/canceling text
     if (pct != null && phase) return `${phase}… ${pct}% • ${re}`;
     if (pct != null) return `${pct}% • ${re}`;
@@ -189,52 +196,51 @@ export function useTransfers(deps: Deps) {
     return re;
   }
 
-    function syncTask(j: TransferJobEx) {
+  function syncTask(j: TransferJobEx) {
     const tid = taskIdForJob(j);
-  
+
     let cur = typeof j.bytes === "number" ? j.bytes : null;
     const tot =
-      typeof j.totalBytes === "number" && j.totalBytes > 0 ? j.totalBytes : null;
-  
+      typeof j.totalBytes === "number" && j.totalBytes > 0
+        ? j.totalBytes
+        : null;
+
     // If the job is finished, force progress to 100% for UI consistency.
     // Also clamp displayed bytes to total when we know the total.
     if (j.state === "done") {
       if (tot != null) cur = tot;
     } else if (cur != null && tot != null) {
-      // While running, never show more than total
       cur = Math.min(cur, tot);
     }
-  
+
     let pct =
       cur != null && tot != null
         ? Math.max(0, Math.min(100, Math.round((cur * 100) / tot)))
         : null;
-  
+
     if (j.state === "done") pct = 100;
-  
+
     taskCenter.upsert({
       id: tid,
       kind: j.kind,
       name: j.name,
       state: j.state,
-  
+
       progressCurrent: cur,
       progressTotal: tot,
       progressPct: pct,
-  
+
       progressText: progressTextForJob(j),
-  
+
       error: j.error || undefined,
-  
+
       actions: {
         cancel: () => cancelJob(j.id),
         dismiss: () => dismiss(j.id),
       },
     });
   }
-  
 
-  
   function removeTaskForJob(id: string) {
     taskCenter.remove(`transfer:${id}`);
   }
@@ -261,7 +267,9 @@ export function useTransfers(deps: Deps) {
 
       const results = await Promise.all(
         active.map(async (j) => {
-          const res = await deps.getDownloadJobStatus({ jobId: j.backendJobId! });
+          const res = await deps.getDownloadJobStatus({
+            jobId: j.backendJobId!,
+          });
           return { j, res };
         })
       );
@@ -417,10 +425,19 @@ export function useTransfers(deps: Deps) {
           });
         } else {
           const srcPrefix = normalizePrefixNoLead(it.prefix);
-          const folderName = makeUniqueName(folderNameFromPrefix(it.prefix), usedNames);
-          const dstPrefix = dstBasePrefix ? `${dstBasePrefix}${folderName}/` : `${folderName}/`;
+          const folderName = makeUniqueName(
+            folderNameFromPrefix(it.prefix),
+            usedNames
+          );
+          const dstPrefix = dstBasePrefix
+            ? `${dstBasePrefix}${folderName}/`
+            : `${folderName}/`;
 
-          if (kind === "cut" && it.bucket === dstBucket && isPasteIntoSelfPrefix(srcPrefix, dstPrefix)) {
+          if (
+            kind === "cut" &&
+            it.bucket === dstBucket &&
+            isPasteIntoSelfPrefix(srcPrefix, dstPrefix)
+          ) {
             pushNotification(
               new Notification(
                 "Not Allowed",
@@ -448,7 +465,7 @@ export function useTransfers(deps: Deps) {
 
       pasteItems.value = planned;
 
-      // 2) Execute sequentially (your current behavior)
+      // 2) Execute sequentially
       for (const p of pasteItems.value) {
         p.step = "copying";
         pasteItems.value = [...pasteItems.value];
@@ -485,7 +502,9 @@ export function useTransfers(deps: Deps) {
           const sameBucket = p.srcBucket === dstBucket;
 
           if (kind === "cut" && !sameBucket) {
-            throw new Error("Move across buckets is not supported. Use Copy instead.");
+            throw new Error(
+              "Move across buckets is not supported. Use Copy instead."
+            );
           }
 
           if (p.itemType === "file") {
@@ -509,7 +528,12 @@ export function useTransfers(deps: Deps) {
                     if (b != null) tj.bytes = b;
                     if (sz != null) tj.totalBytes = sz;
                     if (typeof tj.bytes === "number") {
-                      updateRateAndEta(rateStats, tj.id, tj.bytes, tj.totalBytes || 0);
+                      updateRateAndEta(
+                        rateStats,
+                        tj.id,
+                        tj.bytes,
+                        tj.totalBytes || 0
+                      );
                     }
                     syncTask(tj);
                     scheduleUi();
@@ -585,12 +609,14 @@ export function useTransfers(deps: Deps) {
           // success
           p.step = "done";
 
-          // created at destination (only update UI if destination is current view)
-          if (p.itemType === "file") deps.onCreated?.({ type: "file", key: p.dstKey });
+          // created at destination
+          if (p.itemType === "file")
+            deps.onCreated?.({ type: "file", key: p.dstKey });
           else deps.onCreated?.({ type: "folder", prefix: p.dstKey });
 
           if (kind === "cut" && p.srcBucket === dstBucket) {
-            if (p.itemType === "file") deps.onDeleted?.({ type: "file", key: p.srcKey });
+            if (p.itemType === "file")
+              deps.onDeleted?.({ type: "file", key: p.srcKey });
             else deps.onDeleted?.({ type: "folder", prefix: p.srcKey });
           }
 
@@ -696,7 +722,9 @@ export function useTransfers(deps: Deps) {
     }
 
     // Also try to cancel matching paste item (UI)
-    const p = pasteItems.value.find((x) => x.name === j.name && x.step === "copying");
+    const p = pasteItems.value.find(
+      (x) => x.name === j.name && x.step === "copying"
+    );
     if (p) {
       p.step = "canceled";
       pasteItems.value = [...pasteItems.value];

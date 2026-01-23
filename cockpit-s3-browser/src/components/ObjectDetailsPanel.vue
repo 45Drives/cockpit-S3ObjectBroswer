@@ -19,7 +19,7 @@
           }" :disabled="!showBackToObjects && (!isFile || Boolean(versionId) || isMultiSelected)"
             @click="showBackToObjects ? emitBackToObjects() : emitOpenVersions()">
             <DocumentDuplicateIcon class="h-4 w-4"></DocumentDuplicateIcon> {{ showBackToObjects ? 'Hide versions' :
-            'Versions' }}
+              'Versions' }}
           </button>
         </div>
       </div>

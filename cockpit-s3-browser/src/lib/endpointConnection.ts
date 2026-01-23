@@ -40,7 +40,8 @@ export function listConnections(): ResultAsync<
     .execute(pyCmd(["list"], "try"))
     .map((proc) => proc.getStdout().trim())
     .andThen((stdout) => {
-      if (!stdout || stdout === "null") return okAsync([] as ConnectionSummary[]);
+      if (!stdout || stdout === "null")
+        return okAsync([] as ConnectionSummary[]);
       return safeJsonParse<ConnectionSummary[]>(stdout);
     });
 }
@@ -69,7 +70,8 @@ export function upsertConnection(
     .map((proc) => proc.getStdout().trim())
     .andThen(safeJsonParse<UpsertResult>)
     .andThen((res) => {
-      if (!res.ok || !res.id) return errAsync(new SyntaxError("Helper did not return ok/id"));
+      if (!res.ok || !res.id)
+        return errAsync(new SyntaxError("Helper did not return ok/id"));
       return okAsync(res.id);
     });
 }

@@ -15,7 +15,11 @@ function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
   }
 }
 
-type ListBucketsResult = { ok: boolean; buckets?: BucketSummary[]; error?: string };
+type ListBucketsResult = {
+  ok: boolean;
+  buckets?: BucketSummary[];
+  error?: string;
+};
 
 function pyCmd(args: string[], superuser: "try" | "require" = "try") {
   return new Command(
@@ -32,7 +36,8 @@ export function listBuckets(
     .map((proc) => proc.getStdout().trim())
     .andThen((stdout) => safeJsonParse<ListBucketsResult>(stdout))
     .andThen((res) => {
-      if (!res.ok) return errAsync(new SyntaxError(res.error || "Failed to list buckets"));
+      if (!res.ok)
+        return errAsync(new SyntaxError(res.error || "Failed to list buckets"));
       return okAsync(Array.isArray(res.buckets) ? res.buckets : []);
     });
 }

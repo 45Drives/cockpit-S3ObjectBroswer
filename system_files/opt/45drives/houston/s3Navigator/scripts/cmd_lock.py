@@ -3,7 +3,7 @@ import json
 import sys
 from typing import Any, Dict, List
 from utils import cfg_path, get_flag_value, make_client, read_json
-from botocore.exceptions import BotoCoreError, ClientError # type: ignore
+from botocore.exceptions import ClientError # type: ignore
 
 
 def parse_iso8601_to_datetime(value: str) -> datetime:

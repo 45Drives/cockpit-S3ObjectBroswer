@@ -10,7 +10,7 @@
                     </div>
 
                     <div class="flex items-center gap-2">
-                    <TaskCenter></TaskCenter>
+                        <TaskCenter></TaskCenter>
                         <button type="button"
                             class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
                             :disabled="busy" @click="goBack">
@@ -26,19 +26,19 @@
                         <div class="relative" ref="uploadMenuRef">
                             <button type="button"
                                 class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:opacity-60"
-                                :disabled="busy " @click="toggleUploadMenu">
+                                :disabled="busy" @click="toggleUploadMenu">
                                 <ArrowUpOnSquareIcon class="h-4 w-4"></ArrowUpOnSquareIcon> Upload
                             </button>
 
                             <div v-if="uploadMenuOpen"
                                 class="absolute right-0 mt-2 w-44 rounded-md border border-default bg-default shadow-lg z-[9999]">
                                 <button type="button" class="w-full text-left px-3 py-2 text-sm hover:bg-well"
-                                    :disabled="busy " @click="chooseUpload('files')">
+                                    :disabled="busy" @click="chooseUpload('files')">
                                     Files…
                                 </button>
 
                                 <button type="button" class="w-full text-left px-3 py-2 text-sm hover:bg-well"
-                                    :disabled="busy " @click="chooseUpload('folder')">
+                                    :disabled="busy" @click="chooseUpload('folder')">
                                     Folder…
                                 </button>
                             </div>
@@ -93,7 +93,7 @@
                         <!-- left: list -->
                         <ObjectVersionsList v-if="mode === 'versions'" :busy="versionsLoading" :err="versionsErr"
                             :items="versionRows" :selectedVersionIds="selectedVersionIds"
-                            @select="(ids) => (selectedVersionIds = ids)" @contextmenu="onVersionsContextMenu"  />
+                            @select="(ids) => (selectedVersionIds = ids)" @contextmenu="onVersionsContextMenu" />
                         <template v-else>
                             <div class=" w-[70%] flex-none min-w-0 pr-0">
                                 <!-- TABLE VIEW -->
@@ -171,7 +171,7 @@
 
                                                 <div class="px-3 py-2 text-default min-w-0 truncate">
                                                     <span v-if="r.type === 'file'">{{ formatDate(r.lastModified)
-                                                    }}</span>
+                                                        }}</span>
                                                     <span v-else>—</span>
                                                 </div>
 
@@ -244,7 +244,7 @@
                                 </div>
                             </div>
                         </template>
-                        <div  class="w-[30%] flex-none min-w-0">
+                        <div class="w-[30%] flex-none min-w-0">
                             <ObjectDetailsPanel ref="detailsRef" :connectionId="connectionId" :bucket="bucket"
                                 :row="detailsRow"
                                 :versionId="mode === 'versions' && selectedVersionCount === 1 ? activeVersionId : null"
@@ -433,8 +433,6 @@ const detailsRow = computed<Row | null>(() => {
     return selectedObjectCount.value === 1 ? activeRow.value : null;
 });
 
-
-
 const downloads = useDownloads({
     connectionId,
     bucket,
@@ -446,8 +444,6 @@ const downloads = useDownloads({
 });
 
 const downloadBusy = downloads.downloadBusy;
-
-
 const uploads = useUploads({
     connectionId,
     bucket,
@@ -455,9 +451,9 @@ const uploads = useUploads({
     uploadObjectFromStdinStreamed,
     refresh,
     onUploaded: (key) => {
-    upsertFileRowByKey(key); 
-    refresh();
-  },
+        upsertFileRowByKey(key);
+        refresh();
+    },
 
 });
 
@@ -491,14 +487,14 @@ const transferBusy = transfers.transferBusy;
 const pasteBusy = transfers.pasteBusy;
 
 const renamer = useRename({
-  connectionId,
-  bucket,
-  renameObjectStreamed,
-  setBusy: (busy) => { /* handle busy state */ },
-  onRenamed: async (srcKey, dstKey) => {
-    // Trigger a refresh of the object list after rename
-    await refresh();
-  },
+    connectionId,
+    bucket,
+    renameObjectStreamed,
+    setBusy: (busy) => { /* handle busy state */ },
+    onRenamed: async (srcKey, dstKey) => {
+        // Trigger a refresh of the object list after rename
+        await refresh();
+    },
 });
 
 
@@ -666,13 +662,6 @@ function toggleView() {
 
 function rowKey(r: Row) {
     return r.type === "folder" ? `d:${r.prefix}` : `f:${r.key}`;
-}
-
-
-
-
-function cancelRename() {
-    renamer.cancelRename();
 }
 
 function resetLists() {
@@ -1048,59 +1037,56 @@ async function onMenuAction(action: MenuAction) {
         return;
     }
     if (action === "tags") {
-  const items = effectiveSelection();
-  if (items.length === 0) {
-    pushNotification(new Notification("Not allowed", "Select one or more files.", "error", 5000));
-    return;
-  }
+        const items = effectiveSelection();
+        if (items.length === 0) {
+            pushNotification(new Notification("Not allowed", "Select one or more files.", "error", 5000));
+            return;
+        }
 
-  // Only allow files (S3 tags are per-object; folders/prefixes are not real objects)
-  const files = items.filter(isFileRow);
-  const hasFolder = items.some((x) => x.type === "folder");
+        // Only allow files (S3 tags are per-object; folders/prefixes are not real objects)
+        const files = items.filter(isFileRow);
+        const hasFolder = items.some((x) => x.type === "folder");
 
-  if (files.length === 0) {
-    pushNotification(new Notification("Not allowed", "Select one or more files to edit tags.", "error", 5000));
-    return;
-  }
+        if (files.length === 0) {
+            pushNotification(new Notification("Not allowed", "Select one or more files to edit tags.", "error", 5000));
+            return;
+        }
 
-  if (hasFolder) {
-    pushNotification(
-      new Notification(
-        "Not allowed",
-        "Folders (prefixes) cannot be tagged. Select only files.",
-        "error",
-        5000
-      )
-    );
-    return;
-  }
+        if (hasFolder) {
+            pushNotification(
+                new Notification(
+                    "Not allowed",
+                    "Folders (prefixes) cannot be tagged. Select only files.",
+                    "error",
+                    5000
+                )
+            );
+            return;
+        }
 
-  // store targets for save
-  tagsTargets.value = files;
+        // store targets for save
+        tagsTargets.value = files;
 
-  // versions not involved here
-  tagsVersionId.value = null;
+        // versions not involved here
+        tagsVersionId.value = null;
 
-  if (files.length === 1) {
-    const it = files[0];
-    tagsKey.value = it.key;
-    tagsTitle.value = it.key;
+        if (files.length === 1) {
+            const it = files[0];
+            tagsKey.value = it.key;
+            tagsTitle.value = it.key;
 
-    await tags.loadObjectTags(it.key); // load existing tags for single
-    tagsInitial.value = [...tags.currentTags.value];
-  } else {
-    tagsKey.value = "";
-    tagsTitle.value = `${files.length} objects`;
-    tagsInitial.value = []; // for multi: start blank (apply same tags to all)
-    tags.currentTags.value = [];
-  }
+            await tags.loadObjectTags(it.key); // load existing tags for single
+            tagsInitial.value = [...tags.currentTags.value];
+        } else {
+            tagsKey.value = "";
+            tagsTitle.value = `${files.length} objects`;
+            tagsInitial.value = []; // for multi: start blank (apply same tags to all)
+            tags.currentTags.value = [];
+        }
 
-  tagsOpen.value = true;
-  return;
-}
-
-
-
+        tagsOpen.value = true;
+        return;
+    }
     if (action === "storageClass") {
         const items = effectiveSelection();
         const files = items.filter(isFileRow);
@@ -1359,58 +1345,58 @@ function removeFolderRowByPrefix(pfx: string) {
 
 
 async function onSaveTags(payload: { tags: TagKV[] }) {
-  // Versions mode: still single version tagging (your existing behavior)
-  if (mode.value === "versions") {
-    const key = tagsKey.value;
-    if (!key) return;
+    // Versions mode: still single version tagging (your existing behavior)
+    if (mode.value === "versions") {
+        const key = tagsKey.value;
+        if (!key) return;
 
-    await tags.applyObjectTags({
-      key,
-      versionId: tagsVersionId.value, // null means latest
-      tags: payload.tags,
-    });
+        await tags.applyObjectTags({
+            key,
+            versionId: tagsVersionId.value, // null means latest
+            tags: payload.tags,
+        });
 
-    tagsInitial.value = [...tags.currentTags.value];
+        tagsInitial.value = [...tags.currentTags.value];
+        tagsOpen.value = false;
+
+        const r = detailsRow.value;
+        if (r?.type === "file" && r.key === key) {
+            await detailsRef.value?.refreshTags();
+        }
+        return;
+    }
+
+    // Objects mode: single or multiple files
+    const targets = tagsTargets.value;
+    if (!targets.length) return;
+
+    if (targets.length === 1) {
+        const key = targets[0].key;
+
+        await tags.applyObjectTags({
+            key,
+            versionId: null,
+            tags: payload.tags,
+        });
+
+        tagsInitial.value = [...tags.currentTags.value];
+    } else {
+        await tags.applyTagsToSelection({
+            items: targets, // FileRow[] is also Row[]
+            tags: payload.tags,
+            includeFolders: false,
+        });
+
+        tags.currentTags.value = payload.tags;
+        tagsInitial.value = payload.tags;
+    }
+
     tagsOpen.value = false;
 
     const r = detailsRow.value;
-    if (r?.type === "file" && r.key === key) {
-      await detailsRef.value?.refreshTags();
+    if (r?.type === "file" && targets.some((t) => t.key === r.key)) {
+        await detailsRef.value?.refreshTags();
     }
-    return;
-  }
-
-  // Objects mode: single or multiple files
-  const targets = tagsTargets.value;
-  if (!targets.length) return;
-
-  if (targets.length === 1) {
-    const key = targets[0].key;
-
-    await tags.applyObjectTags({
-      key,
-      versionId: null,
-      tags: payload.tags,
-    });
-
-    tagsInitial.value = [...tags.currentTags.value];
-  } else {
-    await tags.applyTagsToSelection({
-      items: targets, // FileRow[] is also Row[]
-      tags: payload.tags,
-      includeFolders: false,
-    });
-
-    tags.currentTags.value = payload.tags;
-    tagsInitial.value = payload.tags;
-  }
-
-  tagsOpen.value = false;
-
-  const r = detailsRow.value;
-  if (r?.type === "file" && targets.some((t) => t.key === r.key)) {
-    await detailsRef.value?.refreshTags();
-  }
 }
 
 async function loadVersionsForKey(key: string, name: string) {
@@ -1457,13 +1443,10 @@ async function loadVersionsForKey(key: string, name: string) {
     }
 }
 
-
-
 const activeRow = computed<Row | null>(() => {
     const sel = selectedRows.value;
     return sel.length === 1 ? sel[0] : null;
 });
-
 
 async function onVersionAction(payload: { action: "download" | "delete" | "rollback"; versionIds: string[] }) {
     const key = versionsKey.value;

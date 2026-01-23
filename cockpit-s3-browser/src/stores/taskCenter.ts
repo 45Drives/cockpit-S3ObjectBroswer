@@ -77,19 +77,19 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
 
   function clearFinished() {
     items.value = items.value.filter(
-      (t) => t.state === "running" || t.state === "canceling",
+      (t) => t.state === "running" || t.state === "canceling"
     );
   }
 
   const hasAny = computed(() => items.value.length > 0);
   const hasActive = computed(() =>
-    items.value.some((t) => t.state === "running" || t.state === "canceling"),
+    items.value.some((t) => t.state === "running" || t.state === "canceling")
   );
   const activeTotal = computed(() =>
     items.value.reduce(
       (n, t) => n + (t.state === "running" || t.state === "canceling" ? 1 : 0),
-      0,
-    ),
+      0
+    )
   );
 
   const countsByKind = computed(() => {
@@ -110,7 +110,7 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
 
   const overallPct = computed(() => {
     const active = items.value.filter(
-      (t) => t.state === "running" || t.state === "canceling",
+      (t) => t.state === "running" || t.state === "canceling"
     );
     const pcts: number[] = [];
 

@@ -27,8 +27,7 @@
                                 <input
                                     class="w-1/2 rounded border border-default bg-default px-2 py-1 text-sm text-default outline-none"
                                     placeholder="Value" v-model="t.value" />
-                                <button type="button"
-                                    class=" px-2 py-1 text-red-700 text-sm  hover:text-default"
+                                <button type="button" class=" px-2 py-1 text-red-700 text-sm  hover:text-default"
                                     @click="removeRow(idx)" title="Remove">
                                     <TrashIcon class="h-4 w-4"></TrashIcon>
 
