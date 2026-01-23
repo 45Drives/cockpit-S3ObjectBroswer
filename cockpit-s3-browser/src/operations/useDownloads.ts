@@ -6,6 +6,7 @@ import type {
   Row,
   FolderRow,
   FileRow,
+  RateStats,
 } from "../types";
 import type {
   downloadObject as downloadObjectFn,
@@ -29,12 +30,7 @@ type Deps = {
   cancelDownloadJob: typeof cancelDownloadJobFn;
 };
 
-type RateStats = {
-  lastT: number;
-  lastB: number;
-  rateAvg: number | null; // bytes/sec
-  etaSec: number | null;  // seconds
-};
+
 
 function toNum(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;

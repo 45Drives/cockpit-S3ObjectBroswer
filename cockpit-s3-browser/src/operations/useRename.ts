@@ -4,14 +4,8 @@ import type { renameObjectStreamed as renameObjectStreamedFn } from "../lib/s3Ob
 import { useTaskCenterStore } from "../stores/taskCenter";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 import { rateEtaText, updateRateAndEta } from "../lib/helpers";
-import type { RateStats } from "../types";
+import type { ProgressSnap, RateStats, RenameProgress } from "../types";
 
-type RenameProgress = {
-  done: number;
-  total: number;
-  bytes: number;
-  size: number;
-};
 
 type Deps = {
   connectionId: { value: string };
@@ -25,12 +19,6 @@ type Deps = {
 
 type TaskState = "running" | "canceling" | "done" | "failed" | "canceled";
 
-type ProgressSnap = {
-  done: number | null;
-  total: number | null;
-  bytes: number | null;
-  size: number | null;
-};
 
 export function useRename(deps: Deps) {
   const taskCenter = useTaskCenterStore();

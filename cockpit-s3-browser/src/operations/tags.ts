@@ -1,13 +1,11 @@
 // src/composables/useTags.ts
 import { computed, ref } from "vue";
-import type { Row, FileRow, FolderRow } from "../types";
+import type { Row, FileRow, FolderRow, TagKV, TagMap } from "../types";
 import type {
   getObjectTags as getObjectTagsFn,
   putObjectTags as putObjectTagsFn,
 } from "../lib/s3Objects";
 
-type TagKV = { key: string; value: string };
-type TagMap = Record<string, string>;
 type VersionId = string | null | undefined;
 
 type Deps = {

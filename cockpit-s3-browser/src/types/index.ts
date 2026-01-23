@@ -1,3 +1,4 @@
+
 export type EndpointConfig = {
 	name: string;
     endpoint: string;
@@ -214,25 +215,6 @@ export type GetObjectVersionsCliResult = {
 };
 
 
-export type Stat = {
-  size: number;
-lastModified: string | null;
-etag: string | null;
-storageClass: string | null;
-metadata?: Record<string, string>;
-legalHold: "ON" | "OFF" | null;
-retentionMode: string | null;
-retainUntil: string | null;
-};
-export type VersionItem = {
-  versionId: string | null;
-  isLatest: boolean;
-  lastModified: string | null;
-  size: number;
-  etag: string | null;
-};
-
-
 export type VersionRow = {
   kind: "version";
   __key: string;
@@ -244,13 +226,6 @@ export type VersionRow = {
   size: number;
   etag: string | null;
   storageClass: string | null;
-};
-
-export type RateStats = {
-  lastT: number;
-  lastB: number;
-  rateAvg: number | null; 
-  etaSec: number | null; 
 };
 
 export type MenuMode = "objects" | "versions";
@@ -267,3 +242,120 @@ export type MenuAction =
   | "rollback";
 
 export type MenuPos = { x: number; y: number };
+
+export type Stat = {
+  size: number;
+  lastModified: string | null;
+  etag: string | null;
+  storageClass: string | null;
+  metadata?: Record<string, string>;
+  legalHold: "ON" | "OFF" | null;
+  retentionMode: string | null;
+  retainUntil?: string | null;
+};
+
+export type VersionItem = {
+  versionId: string | null;
+  isLatest: boolean;
+  lastModified: string | null;
+  size: number;
+  etag: string | null;
+};
+
+export type RenameObjectEvent =
+  | {
+      type: "start";
+      ok: boolean;
+      src?: string;
+      dst?: string;
+      size?: number;
+      totalParts?: number;
+      partSize?: number;
+      concurrency?: number;
+    }
+  | {
+      type: "progress";
+      ok: boolean;
+      partsDone?: number;
+      totalParts?: number;
+      bytesCopied?: number;
+      size?: number;
+    }
+  | {
+      type: "result";
+      ok: boolean;
+      src?: string;
+      dst?: string;
+      size?: number;
+      error?: string;
+    };
+
+    export type DeletePrefixEvent =
+  | { type: "start"; ok: boolean; prefix?: string }
+  | {
+      type: "progress";
+      ok: boolean;
+      deletedRequested?: number;
+      errors?: number;
+    }
+  | {
+      type: "result";
+      ok: boolean;
+      deletedRequested?: number;
+      errors?: number;
+      error?: string;
+    };
+
+    export type UploadStdinEvent =
+  | {
+      type: "start";
+      ok: boolean;
+      bucket?: string;
+      key?: string;
+      size?: number;
+      contentType?: string;
+      multipart?: boolean;
+    }
+  | {
+      type: "mpu";
+      ok: boolean;
+      uploadId?: string;
+      partSize?: number;
+      totalParts?: number;
+    }
+  | { type: "progress"; ok: boolean; bytesRead?: number; size?: number }
+  | {
+      type: "part";
+      ok: boolean;
+      partNumber?: number;
+      partsDone?: number;
+      totalParts?: number;
+    }
+  | {
+      type: "result";
+      ok: boolean;
+      bucket?: string;
+      key?: string;
+      size?: number;
+      error?: string;
+    };
+
+export type RateStats = {
+  lastT: number;
+  lastB: number;
+  rateAvg: number | null; // bytes/sec
+  etaSec: number | null;  // seconds
+};
+export type RenameProgress = {
+  done: number;
+  total: number;
+  bytes: number;
+  size: number;
+};
+
+export type ProgressSnap = {
+  done: number | null;
+  total: number | null;
+  bytes: number | null;
+  size: number | null;
+};

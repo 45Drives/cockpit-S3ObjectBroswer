@@ -228,7 +228,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import type { Row, FileRow } from "../types";
+import type { Row, FileRow, Stat, VersionItem } from "../types";
 import type { TagKV } from "./Modals/TagsModal.vue";
 import { formatBytes, formatDate } from "../lib/helpers";
 import {
@@ -236,24 +236,6 @@ import {
   getObjectRetention, putObjectLegalHold, putObjectRetention,
 } from "../lib/s3Objects";
 import { TagIcon, DocumentDuplicateIcon, InformationCircleIcon, AdjustmentsHorizontalIcon, ArrowRightEndOnRectangleIcon } from "@heroicons/vue/20/solid";
-type Stat = {
-  size: number;
-  lastModified: string | null;
-  etag: string | null;
-  storageClass: string | null;
-  metadata?: Record<string, string>;
-  legalHold: "ON" | "OFF" | null;
-  retentionMode: string | null;
-  retainUntil?: string | null;
-};
-
-type VersionItem = {
-  versionId: string | null;
-  isLatest: boolean;
-  lastModified: string | null;
-  size: number;
-  etag: string | null;
-};
 
 const props = defineProps<{
   connectionId: string;
@@ -516,19 +498,6 @@ async function loadVersionsForModal(r: FileRow, myReq: number) {
     if (reqId === myReq) versionsLoading.value = false;
   }
 }
-
-async function openVersionsModal() {
-  if (!props.row || props.row.type !== "file") return;
-
-  versionsErr.value = "";
-  versionsOpen.value = true;
-
-  const myReq = ++reqId;
-  currentReq.value = myReq;
-
-  await loadVersionsForModal(props.row, myReq);
-}
-
 
 watch(
   () => [props.connectionId, props.bucket, props.row, props.versionId] as const,

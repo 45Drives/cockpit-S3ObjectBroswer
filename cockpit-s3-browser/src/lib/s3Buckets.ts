@@ -4,8 +4,6 @@ import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 
 import type { BucketSummary } from "../types";
 
-// @ts-ignore
-import s3browser_cli_script from "../scripts/s3browser-cli.py?raw";
 
 function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
   try {
@@ -23,10 +21,12 @@ type ListBucketsResult = {
 
 function pyCmd(args: string[], superuser: "try" | "require" = "try") {
   return new Command(
-    ["/usr/bin/env", "python3", "-c", s3browser_cli_script, ...args],
+    ["/usr/bin/env", "python3", "-u", S3BROWSER_CLI_PATH, ...args],
     { superuser }
   );
 }
+
+const S3BROWSER_CLI_PATH = "/opt/45drives/houston/s3Navigator/scripts/main.py";
 
 export function listBuckets(
   connectionId: string

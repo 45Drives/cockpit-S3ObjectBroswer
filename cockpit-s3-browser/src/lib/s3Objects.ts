@@ -5,15 +5,24 @@ import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 // @ts-ignore
 // import s3browser_cli_script from "../scripts/s3browser-cli.py?raw";
 import {
+  DeletePrefixEvent,
   GetObjectVersionsCliResult,
   ListObjectsCliResult,
   ListObjectsResponse,
   ObjectVersionItem,
   PresignGetCliResult,
+  RenameObjectEvent,
   TagKV,
   TagMap,
+  UploadStdinEvent,
 } from "../types";
 
+ type UploadStdinJob = {
+  writeChunk: (chunk: Uint8Array) => void;
+  end: () => void;
+  cancel: () => void;
+  run: ResultAsync<void, ProcessError | SyntaxError>;
+};
 function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
   try {
     return okAsync(JSON.parse(raw) as T);
@@ -134,22 +143,6 @@ export function deleteObject(params: {
     });
 }
 
-type DeletePrefixEvent =
-  | { type: "start"; ok: boolean; prefix?: string }
-  | {
-      type: "progress";
-      ok: boolean;
-      deletedRequested?: number;
-      errors?: number;
-    }
-  | {
-      type: "result";
-      ok: boolean;
-      deletedRequested?: number;
-      errors?: number;
-      error?: string;
-    };
-
 export function deletePrefixStreamed(params: {
   connectionId: string;
   bucket: string;
@@ -258,33 +251,7 @@ export function deletePrefixStreamed(params: {
   });
 }
 
-type RenameObjectEvent =
-  | {
-      type: "start";
-      ok: boolean;
-      src?: string;
-      dst?: string;
-      size?: number;
-      totalParts?: number;
-      partSize?: number;
-      concurrency?: number;
-    }
-  | {
-      type: "progress";
-      ok: boolean;
-      partsDone?: number;
-      totalParts?: number;
-      bytesCopied?: number;
-      size?: number;
-    }
-  | {
-      type: "result";
-      ok: boolean;
-      src?: string;
-      dst?: string;
-      size?: number;
-      error?: string;
-    };
+
 
 export function renameObjectStreamed(params: {
   connectionId: string;
@@ -367,46 +334,6 @@ export function renameObjectStreamed(params: {
   return { run, cancel };
 }
 
-export type UploadStdinEvent =
-  | {
-      type: "start";
-      ok: boolean;
-      bucket?: string;
-      key?: string;
-      size?: number;
-      contentType?: string;
-      multipart?: boolean;
-    }
-  | {
-      type: "mpu";
-      ok: boolean;
-      uploadId?: string;
-      partSize?: number;
-      totalParts?: number;
-    }
-  | { type: "progress"; ok: boolean; bytesRead?: number; size?: number }
-  | {
-      type: "part";
-      ok: boolean;
-      partNumber?: number;
-      partsDone?: number;
-      totalParts?: number;
-    }
-  | {
-      type: "result";
-      ok: boolean;
-      bucket?: string;
-      key?: string;
-      size?: number;
-      error?: string;
-    };
-
-export type UploadStdinJob = {
-  writeChunk: (chunk: Uint8Array) => void;
-  end: () => void;
-  cancel: () => void;
-  run: ResultAsync<void, ProcessError | SyntaxError>;
-};
 
 export function uploadObjectFromStdinStreamed(params: {
   connectionId: string;
