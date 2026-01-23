@@ -1,3 +1,5 @@
+import { RateStats } from "../types";
+
 export function formatBytes(n: number) {
     if (!Number.isFinite(n)) return "—";
     const units = ["B", "KB", "MB", "GB", "TB", "PB"];
@@ -132,3 +134,68 @@ export function newJobId(): string {
 }
 
 
+export function formatBytesPerSec(bps: number) {
+    if (!Number.isFinite(bps) || bps <= 0) return "—";
+    const units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"];
+    let u = 0;
+    let v = bps;
+    while (v >= 1024 && u < units.length - 1) {
+      v /= 1024;
+      u++;
+    }
+    return `${v.toFixed(u === 0 ? 0 : 1)} ${units[u]}`;
+  }
+  
+  export function formatEta(sec: number) {
+    if (!Number.isFinite(sec) || sec <= 0) return "—";
+    const s = Math.floor(sec);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${r}s`;
+    return `${r}s`;
+  }
+  export function updateRateAndEta(
+    stats: Map<string, RateStats>,
+    id: string,
+    currentBytes: number,
+    totalBytes: number
+  ) {
+    const now = performance.now();
+    const st = stats.get(id);
+  
+    if (!st) {
+      stats.set(id, { lastT: now, lastB: currentBytes, rateAvg: null, etaSec: null });
+      return;
+    }
+  
+    const dtMs = now - st.lastT;
+    const db = currentBytes - st.lastB;
+  
+    st.lastT = now;
+    st.lastB = currentBytes;
+  
+    if (dtMs <= 0 || db < 0) return;
+  
+    const instRate = (1000 * db) / dtMs; // bytes/sec
+    const alpha = 0.125; // smoothing factor
+    st.rateAvg = st.rateAvg == null ? instRate : alpha * instRate + (1 - alpha) * st.rateAvg;
+  
+    if (st.rateAvg != null && st.rateAvg > 1 && totalBytes > 0) {
+      st.etaSec = (totalBytes - currentBytes) / st.rateAvg;
+    } else {
+      st.etaSec = null;
+    }
+  }
+  
+  export function clearRate(stats: Map<string, RateStats>, id: string) {
+    stats.delete(id);
+  }
+  
+  export function rateEtaText(stats: Map<string, RateStats>, id: string) {
+    const st = stats.get(id);
+    const rateTxt = st?.rateAvg != null ? formatBytesPerSec(st.rateAvg) : "—";
+    const etaTxt = st?.etaSec != null ? formatEta(st.etaSec) : "—";
+    return `${rateTxt} • ETA ${etaTxt}`;
+  }

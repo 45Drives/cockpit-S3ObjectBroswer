@@ -139,8 +139,6 @@ export type PasteItem = {
   error?: string;
 };
 
-
-
 export type UploadStatus = "queued" | "uploading" | "done" | "failed" | "canceled";
 
 export type UploadItem = {
@@ -246,4 +244,11 @@ export type VersionRow = {
   size: number;
   etag: string | null;
   storageClass: string | null;
+};
+
+export type RateStats = {
+  lastT: number;
+  lastB: number;
+  rateAvg: number | null; 
+  etaSec: number | null; 
 };

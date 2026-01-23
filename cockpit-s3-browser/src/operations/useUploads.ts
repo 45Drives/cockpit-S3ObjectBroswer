@@ -1,8 +1,8 @@
 // src/operations/useUploads.ts
-import { computed, onBeforeUnmount, ref } from "vue";
-import type { UploadItem } from "../types";
+import { computed, ref } from "vue";
+import type { RateStats, UploadItem } from "../types";
 import type { uploadObjectFromStdinStreamed as uploadObjectFromStdinStreamedFn } from "../lib/s3Objects";
-import { uid } from "../lib/helpers";
+import {  rateEtaText, uid, updateRateAndEta } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 
@@ -16,12 +16,7 @@ type Deps = {
   refresh?: () => Promise<void> | void;
   onUploaded?: (key: string) => void;
 };
-type RateStats = {
-  lastT: number;
-  lastB: number;
-  rateAvg: number | null; // bytes/sec
-  etaSec: number | null; // seconds
-};
+
 
 export function useUploads(deps: Deps) {
   const taskCenter = useTaskCenterStore();
@@ -148,23 +143,6 @@ export function useUploads(deps: Deps) {
     }
   }
 
-  function progressTextForItem(u: UploadItem) {
-    if (u.status === "uploading") {
-      const total = u.file.size || 0;
-      const cur = typeof u.bytes === "number" ? u.bytes : 0;
-
-      const st = rateStats.get(u.id);
-      const rateTxt = st?.rateAvg != null ? formatBytesPerSec(st.rateAvg) : "—";
-      const etaTxt  = st?.etaSec  != null ? formatEta(st.etaSec)  : "—";
-      if (total > 0)
-        return `${rateTxt} • ETA ${etaTxt}`;
-      return `${cur} bytes • ${rateTxt} • ETA ${etaTxt}`;
-    }
-
-    if (u.status === "queued") return "Queued";
-    return undefined;
-  }
-
   function upsertTaskForItem(u: UploadItem) {
     const total = u.file.size || 0;
     const cur = typeof u.bytes === "number" ? u.bytes : 0;
@@ -175,7 +153,7 @@ export function useUploads(deps: Deps) {
       name: u.file.name,
       state: taskStateForStatus(u.status),
 
-      progressText: progressTextForItem(u),
+      progressText: rateEtaText(rateStats, u.id),
 
       progressCurrent: total > 0 ? cur : null,
       progressTotal: total > 0 ? total : null,
@@ -357,15 +335,12 @@ export function useUploads(deps: Deps) {
       size: file.size,
     };
 
-    // Backpressure tracking
     let bytesSent = 0;
     let bytesReadAck = 0;
 
-    // If inflight grows beyond this, pause feeding stdin until we get more progress acks.
-    const CHUNK_SIZE = 8 * 1024 * 1024; // 8 MiB (reduce overhead vs 1 MiB)
-    const MAX_INFLIGHT = CHUNK_SIZE * 3; // allow some buffering (tweak 2-6 chunks)
+    const CHUNK_SIZE = 8 * 1024 * 1024; 
+    const MAX_INFLIGHT = CHUNK_SIZE * 3; 
 
-    // A simple "wait until progress arrives" primitive
     let unblock: null | (() => void) = null;
     const waitForAck = () =>
       new Promise<void>((resolve) => {
@@ -377,7 +352,6 @@ export function useUploads(deps: Deps) {
       if (fn) fn();
     };
 
-    // Throttle UI updates so progress events don't spam Vue/store
     let pendingUiBytes: number | null = null;
     let uiTimer: number | null = null;
 
@@ -395,7 +369,7 @@ export function useUploads(deps: Deps) {
     const scheduleUi = (b: number) => {
       pendingUiBytes = b;
       if (uiTimer != null) return;
-      uiTimer = window.setTimeout(flushUi, 150); // ~6-7 UI updates/sec
+      uiTimer = window.setTimeout(flushUi, 150); 
     };
 
     const job = deps.uploadObjectFromStdinStreamed({
@@ -409,7 +383,7 @@ export function useUploads(deps: Deps) {
           const b = Number(ev.bytesRead ?? 0);
           if (Number.isFinite(b) && b >= 0) {
             bytesReadAck = b;
-            updateRateAndEta(item.id, b, file.size);
+            updateRateAndEta(rateStats,item.id, b, file.size);
             scheduleUi(b);
             signalAck();
           }
@@ -423,7 +397,6 @@ export function useUploads(deps: Deps) {
             upsertTaskForItem(item);
             rateStats.delete(item.id);
           }
-          // Wake any waiter so the loop can exit promptly.
           signalAck();
         }
       },
@@ -506,69 +479,9 @@ export function useUploads(deps: Deps) {
       return;
     }
 
-    // done/failed/canceled: nothing
   }
 
-  function formatBytesPerSec(bps: number) {
-    if (!Number.isFinite(bps) || bps <= 0) return "—";
-    const units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"];
-    let u = 0;
-    let v = bps;
-    while (v >= 1024 && u < units.length - 1) {
-      v /= 1024;
-      u++;
-    }
-    return `${v.toFixed(u === 0 ? 0 : 1)} ${units[u]}`;
-  }
 
-  function formatEta(sec: number) {
-    if (!Number.isFinite(sec) || sec <= 0) return "—";
-    const s = Math.floor(sec);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const r = s % 60;
-    if (h > 0) return `${h}h ${m}m`;
-    if (m > 0) return `${m}m ${r}s`;
-    return `${r}s`;
-  }
-
-  function updateRateAndEta(
-    uploadId: string,
-    currentBytes: number,
-    totalBytes: number
-  ) {
-    const now = performance.now();
-    const st = rateStats.get(uploadId);
-
-    if (!st) {
-      rateStats.set(uploadId, {
-        lastT: now,
-        lastB: currentBytes,
-        rateAvg: null,
-        etaSec: null,
-      });
-      return;
-    }
-
-    const dtMs = now - st.lastT;
-    const db = currentBytes - st.lastB;
-
-    st.lastT = now;
-    st.lastB = currentBytes;
-
-    if (dtMs <= 0 || db < 0) return;
-
-    const rate = (1000 * db) / dtMs; // bytes/sec
-    const alpha = 0.125; // same style as Navigator code
-    st.rateAvg =
-      st.rateAvg == null ? rate : alpha * rate + (1 - alpha) * st.rateAvg;
-
-    if (st.rateAvg && st.rateAvg > 1 && totalBytes > 0) {
-      st.etaSec = (totalBytes - currentBytes) / st.rateAvg;
-    } else {
-      st.etaSec = null;
-    }
-  }
   function dismiss(id: string) {
     const it = uploadItems.value.find((x) => x.id === id);
     if (!it) return;
@@ -590,11 +503,7 @@ export function useUploads(deps: Deps) {
     }
   }
 
-  onBeforeUnmount(() => {
-    try {
-      cancelAll();
-    } catch {}
-  });
+
 
   return {
     // state

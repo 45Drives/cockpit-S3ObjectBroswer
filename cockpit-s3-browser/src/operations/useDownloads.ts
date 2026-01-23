@@ -14,7 +14,7 @@ import type {
   getDownloadJobStatus as getDownloadJobStatusFn,
   cancelDownloadJob as cancelDownloadJobFn,
 } from "../lib/s3Objects";
-import { newJobId, formatBytes } from "../lib/helpers";
+import { formatBytesPerSec, formatEta, newJobId, rateEtaText, updateRateAndEta } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 
@@ -45,28 +45,6 @@ function toNum(v: unknown): number | null {
   return null;
 }
 
-function formatBytesPerSec(bps: number) {
-  if (!Number.isFinite(bps) || bps <= 0) return "—";
-  const units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"];
-  let u = 0;
-  let v = bps;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return `${v.toFixed(u === 0 ? 0 : 1)} ${units[u]}`;
-}
-
-function formatEta(sec: number) {
-  if (!Number.isFinite(sec) || sec <= 0) return "—";
-  const s = Math.floor(sec);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const r = s % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${r}s`;
-  return `${r}s`;
-}
 
 export function useDownloads(deps: Deps) {
   const taskCenter = useTaskCenterStore();
@@ -100,52 +78,6 @@ export function useDownloads(deps: Deps) {
     schedulePoll(500);
   }
 
-  function updateRateAndEta(jobId: string, currentBytes: number, totalBytes: number) {
-    const now = performance.now();
-    const st = rateStats.get(jobId);
-
-    if (!st) {
-      rateStats.set(jobId, { lastT: now, lastB: currentBytes, rateAvg: null, etaSec: null });
-      return;
-    }
-
-    const dtMs = now - st.lastT;
-    const db = currentBytes - st.lastB;
-
-    st.lastT = now;
-    st.lastB = currentBytes;
-
-    if (dtMs <= 0 || db < 0) return;
-
-    const rate = (1000 * db) / dtMs; // bytes/sec
-    const alpha = 0.125;
-    st.rateAvg = st.rateAvg == null ? rate : alpha * rate + (1 - alpha) * st.rateAvg;
-
-    if (st.rateAvg && st.rateAvg > 1 && totalBytes > 0) {
-      st.etaSec = (totalBytes - currentBytes) / st.rateAvg;
-    } else {
-      st.etaSec = null;
-    }
-  }
-
-  function progressTextForJob(j: DownloadJob) {
-    const cur = typeof j.bytes === "number" ? j.bytes : null;
-    const tot =
-      typeof j.totalBytes === "number" && j.totalBytes > 0 ? j.totalBytes : null;
-
-    const st = rateStats.get(j.id);
-    const rateTxt = st?.rateAvg ? formatBytesPerSec(st.rateAvg) : "—";
-    const etaTxt = st?.etaSec ? formatEta(st.etaSec) : "—";
-
-    if (cur != null && tot != null) {
-      return `${rateTxt} • ETA ${etaTxt}`;
-    }
-    if (cur != null) {
-      return ` ${rateTxt} • ETA ${etaTxt}`;
-    }
-    return undefined;
-  }
-
   function syncTask(j: DownloadJob) {
     const cur = typeof j.bytes === "number" ? j.bytes : null;
     const tot =
@@ -165,7 +97,7 @@ export function useDownloads(deps: Deps) {
       progressPct: pct,
 
       // includes rate + ETA (TaskCenter must render it)
-      progressText: progressTextForJob(j),
+      progressText: rateEtaText(rateStats, j.id),
 
       error: j.error || undefined,
       actions: {
@@ -251,7 +183,7 @@ export function useDownloads(deps: Deps) {
         // update rate+eta when we have numbers
         if (typeof j.bytes === "number") {
           const total = typeof j.totalBytes === "number" ? j.totalBytes : 0;
-          updateRateAndEta(j.id, j.bytes, total);
+          updateRateAndEta(rateStats,j.id, j.bytes, total);
         }
 
         if (j.state !== prevState) {
