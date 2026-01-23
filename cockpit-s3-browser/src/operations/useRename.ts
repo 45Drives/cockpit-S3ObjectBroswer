@@ -20,56 +20,135 @@ type Deps = {
   renameObjectStreamed: typeof renameObjectStreamedFn;
 
   setBusy?: (busy: boolean) => void;
-
   onRenamed?: (srcKey: string, dstKey: string) => void;
+};
+
+type TaskState = "running" | "canceling" | "done" | "failed" | "canceled";
+
+type ProgressSnap = {
+  done: number | null;
+  total: number | null;
+  bytes: number | null;
+  size: number | null;
 };
 
 export function useRename(deps: Deps) {
   const taskCenter = useTaskCenterStore();
 
+  // Optional inline UI (if you show it somewhere else)
   const renameProgress = ref<RenameProgress | null>(null);
   const renameCancel = ref<null | (() => void)>(null);
 
   const currentTaskId = ref<string | null>(null);
   const currentTaskName = ref<string>("");
 
+  // For task UI: keep last-known progress even after inline UI is cleared
+  const snap = ref<ProgressSnap>({
+    done: null,
+    total: null,
+    bytes: null,
+    size: null,
+  });
+
   // Rate/ETA stats for this one rename task
   const rateStats = new Map<string, RateStats>();
 
   const renamePct = computed(() => {
     const p = renameProgress.value;
-    if (!p || p.size <= 0) return null;
-    return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
+    if (!p) return null;
+
+    // Prefer bytes if available
+    if (p.size > 0) {
+      return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
+    }
+
+    // Fall back to parts-based percentage
+    if (p.total > 0) {
+      return Math.max(0, Math.min(100, Math.floor((p.done / p.total) * 100)));
+    }
+
+    return null;
   });
 
-  function buildProgressText() {
-    const id = currentTaskId.value;
-    const p = renameProgress.value;
+  function taskProgressFor(state: TaskState) {
+    const s = snap.value;
 
-    // If we have byte-based progress, prefer rate+ETA (like upload/download)
-    if (id && p && p.size > 0) {
+    // Byte-based progress if we have total size
+    if (typeof s.size === "number" && s.size > 0) {
+      const tot = s.size;
+      let cur = typeof s.bytes === "number" ? s.bytes : 0;
+
+      // clamp while running, force to 100% on done
+      if (state === "done") cur = tot;
+      else cur = Math.min(cur, tot);
+
+      let pct = Math.round((cur * 100) / tot);
+      pct = Math.max(0, Math.min(100, pct));
+      if (state === "done") pct = 100;
+
+      return {
+        progressCurrent: cur,
+        progressTotal: tot,
+        progressPct: pct,
+        mode: "bytes" as const,
+      };
+    }
+
+    // Otherwise parts-based progress (show bar using progressPct only)
+    if (typeof s.total === "number" && s.total > 0) {
+      const done = typeof s.done === "number" ? s.done : 0;
+      let pct = Math.round((done * 100) / s.total);
+      pct = Math.max(0, Math.min(100, pct));
+      if (state === "done") pct = 100;
+
+      return {
+        progressCurrent: null as number | null,
+        progressTotal: null as number | null,
+        progressPct: pct,
+        mode: "parts" as const,
+      };
+    }
+
+    // Unknown progress
+    return {
+      progressCurrent: null as number | null,
+      progressTotal: null as number | null,
+      progressPct: state === "done" ? 100 : null,
+      mode: "none" as const,
+    };
+  }
+
+  function buildProgressText(state: TaskState) {
+    const id = currentTaskId.value;
+
+    if (state === "done") return "Rename completed";
+    if (state === "canceling") return "Canceling…";
+    if (state === "canceled") return "Rename canceled";
+    if (state === "failed") return "Rename failed";
+
+    // running
+    const s = snap.value;
+
+    if (id && typeof s.size === "number" && s.size > 0) {
       const re = rateEtaText(rateStats, id);
-      const pct = Math.floor((p.bytes / p.size) * 100);
-      // Keep a little context without being noisy
+      const cur = typeof s.bytes === "number" ? Math.min(s.bytes, s.size) : 0;
+      const pct = Math.max(0, Math.min(100, Math.floor((cur / s.size) * 100)));
       return `Renaming… ${pct}% • ${re}`;
     }
 
-    // Otherwise fall back to parts progress
-    if (p && p.total > 0) return `Renaming… ${p.done} / ${p.total} parts`;
+    if (typeof s.total === "number" && s.total > 0) {
+      const done = typeof s.done === "number" ? s.done : 0;
+      return `Renaming… ${done} / ${s.total} parts`;
+    }
+
     return "Renaming…";
   }
 
-  function upsertTask(
-    state: "running" | "canceling" | "done" | "failed" | "canceled",
-    error?: string
-  ) {
+  function upsertTask(state: TaskState, error?: string) {
     const id = currentTaskId.value;
     if (!id) return;
 
-    const p = renameProgress.value;
-
-    const cur = p && typeof p.bytes === "number" ? p.bytes : null;
-    const tot = p && typeof p.size === "number" && p.size > 0 ? p.size : null;
+    const prog = taskProgressFor(state);
 
     taskCenter.upsert({
       id,
@@ -77,10 +156,10 @@ export function useRename(deps: Deps) {
       name: currentTaskName.value || "Rename",
       state,
 
-      progressText: buildProgressText(),
-      progressCurrent: tot != null ? cur : null,
-      progressTotal: tot,
-      progressPct: typeof renamePct.value === "number" ? renamePct.value : null,
+      progressText: buildProgressText(state),
+      progressCurrent: prog.progressCurrent,
+      progressTotal: prog.progressTotal,
+      progressPct: prog.progressPct,
 
       error,
       actions: {
@@ -90,9 +169,9 @@ export function useRename(deps: Deps) {
     });
   }
 
-  // Throttle expensive UI writes (taskCenter.upsert + reactivity)
+  // Throttle expensive UI writes
   let uiTimer: number | null = null;
-  let pendingState: "running" | "canceling" | "done" | "failed" | "canceled" = "running";
+  let pendingState: TaskState = "running";
   let pendingError: string | undefined;
 
   function flushUi() {
@@ -101,14 +180,11 @@ export function useRename(deps: Deps) {
     pendingError = undefined;
   }
 
-  function scheduleUi(
-    state: "running" | "canceling" | "done" | "failed" | "canceled",
-    error?: string
-  ) {
+  function scheduleUi(state: TaskState, error?: string) {
     pendingState = state;
     pendingError = error;
     if (uiTimer != null) return;
-    uiTimer = window.setTimeout(flushUi, 150); // ~6-7 updates/sec
+    uiTimer = window.setTimeout(flushUi, 250);
   }
 
   function cancelRename() {
@@ -116,7 +192,6 @@ export function useRename(deps: Deps) {
     if (!id) return;
 
     scheduleUi("canceling");
-
     try {
       renameCancel.value?.();
     } catch {
@@ -134,6 +209,8 @@ export function useRename(deps: Deps) {
     currentTaskName.value = "";
     renameProgress.value = null;
     renameCancel.value = null;
+
+    snap.value = { done: null, total: null, bytes: null, size: null };
     rateStats.delete(id);
 
     if (uiTimer != null) {
@@ -153,19 +230,22 @@ export function useRename(deps: Deps) {
     currentTaskId.value = id;
     currentTaskName.value = `${srcKey} → ${dstKey}`;
 
-    // Reset progress + rate state
+    // Reset state
     renameProgress.value = null;
+    renameCancel.value = null;
+    snap.value = { done: null, total: null, bytes: null, size: null };
     rateStats.delete(id);
 
+    // Create the task immediately (even before we have progress)
     taskCenter.upsert({
       id,
       kind: "rename",
       name: currentTaskName.value,
       state: "running",
       progressText: "Renaming…",
-      progressCurrent: 0,
+      progressCurrent: null,
       progressTotal: null,
-      progressPct: null,
+      progressPct: 0, // show the bar right away
       actions: {
         cancel: () => cancelRename(),
         dismiss: () => dismiss(),
@@ -177,24 +257,20 @@ export function useRename(deps: Deps) {
       if (finalized) return;
       finalized = true;
 
-      // stop any pending scheduled UI
       if (uiTimer != null) {
         window.clearTimeout(uiTimer);
         uiTimer = null;
       }
 
-      // Clear inline progress UI (page-level)
+      // IMPORTANT: keep snap for task UI; only clear inline UI
       renameProgress.value = null;
       renameCancel.value = null;
 
-      // Final task state (immediate, not throttled)
       upsertTask(state, msg);
 
-      // Cleanup stats
       rateStats.delete(id);
 
       if (state === "done") {
-        console.log(`[rename] completed ${srcKey} → ${dstKey}`);
         pushNotification(
           new Notification(
             "Rename completed",
@@ -208,27 +284,14 @@ export function useRename(deps: Deps) {
       }
 
       const em = msg || (state === "canceled" ? "Rename canceled" : "Rename failed");
-      if (state === "canceled") {
-        console.log(`[rename] canceled ${srcKey} → ${dstKey}: ${em}`);
-        pushNotification(
-          new Notification(
-            "Rename canceled",
-            `Rename canceled ${srcKey} → ${dstKey}`,
-            "error",
-            5000
-          )
-        );
-      } else {
-        console.error(`[rename] failed ${srcKey} → ${dstKey}: ${em}`);
-        pushNotification(
-          new Notification(
-            "Rename failed",
-            `Rename failed ${srcKey} → ${dstKey}`,
-            "error",
-            5000
-          )
-        );
-      }
+      pushNotification(
+        new Notification(
+          state === "canceled" ? "Rename canceled" : "Rename failed",
+          `${state === "canceled" ? "Rename canceled" : "Rename failed"} ${srcKey} → ${dstKey}: ${em}`,
+          "error",
+          5000
+        )
+      );
     };
 
     const job = deps.renameObjectStreamed({
@@ -242,16 +305,14 @@ export function useRename(deps: Deps) {
           const total = Number(ev.totalParts ?? 0);
           const size = Number(ev.size ?? 0);
 
-          renameProgress.value = {
-            done: 0,
-            total: Number.isFinite(total) ? total : 0,
-            bytes: 0,
-            size: Number.isFinite(size) ? size : 0,
-          };
+          const totalOk = Number.isFinite(total) ? total : 0;
+          const sizeOk = Number.isFinite(size) ? size : 0;
 
-          // create initial rate state when we know total size
-          if (renameProgress.value.size > 0) {
-            updateRateAndEta(rateStats, id, 0, renameProgress.value.size);
+          renameProgress.value = { done: 0, total: totalOk, bytes: 0, size: sizeOk };
+          snap.value = { done: 0, total: totalOk || null, bytes: 0, size: sizeOk || null };
+
+          if (sizeOk > 0) {
+            updateRateAndEta(rateStats, id, 0, sizeOk);
           }
 
           scheduleUi("running");
@@ -268,14 +329,23 @@ export function useRename(deps: Deps) {
           const bytes = Number(ev.bytesCopied ?? renameProgress.value.bytes);
           const size = Number(ev.size ?? renameProgress.value.size);
 
-          renameProgress.value.done = Number.isFinite(done) ? done : renameProgress.value.done;
-          renameProgress.value.total = Number.isFinite(total) ? total : renameProgress.value.total;
-          renameProgress.value.bytes = Number.isFinite(bytes) ? bytes : renameProgress.value.bytes;
-          renameProgress.value.size = Number.isFinite(size) ? size : renameProgress.value.size;
+          const doneOk = Number.isFinite(done) ? done : renameProgress.value.done;
+          const totalOk = Number.isFinite(total) ? total : renameProgress.value.total;
+          const bytesOk = Number.isFinite(bytes) ? bytes : renameProgress.value.bytes;
+          const sizeOk = Number.isFinite(size) ? size : renameProgress.value.size;
 
-          // rate/eta if we have total size
-          if (renameProgress.value.size > 0) {
-            updateRateAndEta(rateStats, id, renameProgress.value.bytes, renameProgress.value.size);
+          renameProgress.value.done = doneOk;
+          renameProgress.value.total = totalOk;
+          renameProgress.value.bytes = bytesOk;
+          renameProgress.value.size = sizeOk;
+
+          snap.value.done = Number.isFinite(doneOk) ? doneOk : snap.value.done;
+          snap.value.total = totalOk > 0 ? totalOk : snap.value.total;
+          snap.value.bytes = Number.isFinite(bytesOk) ? bytesOk : snap.value.bytes;
+          snap.value.size = sizeOk > 0 ? sizeOk : snap.value.size;
+
+          if (typeof snap.value.size === "number" && snap.value.size > 0 && typeof snap.value.bytes === "number") {
+            updateRateAndEta(rateStats, id, snap.value.bytes, snap.value.size);
           }
 
           scheduleUi("running");

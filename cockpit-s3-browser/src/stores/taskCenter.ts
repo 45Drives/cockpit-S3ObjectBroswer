@@ -1,11 +1,21 @@
-//src/stores/taskCenter.ts
+// src/stores/taskCenter.ts
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import type { TaskKind, TaskState, UiTask } from "../types";
+import type { TaskKind, UiTask } from "../types";
 
 export type TaskActions = {
   cancel?: () => void;
   dismiss?: () => void;
+};
+
+export type DeleteTaskMeta = {
+  op: "delete";
+  connectionId: string;
+  bucket: string;
+  target:
+    | { kind: "file"; key: string }
+    | { kind: "folder"; prefix: string }
+    | { kind: "versions"; key: string };
 };
 
 export type TaskRecord = UiTask & {
@@ -14,6 +24,8 @@ export type TaskRecord = UiTask & {
   progressPct?: number | null;
   progressCurrent?: number | null;
   progressTotal?: number | null;
+
+  meta?: DeleteTaskMeta | Record<string, unknown>;
 };
 
 function clampPct(n: number): number {
@@ -34,6 +46,7 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
         ...prev,
         ...task,
         actions: { ...prev.actions, ...task.actions },
+        meta: task.meta ?? prev.meta,
       };
     } else {
       items.value.unshift(task);
@@ -47,16 +60,15 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
   function cancel(id: string) {
     const i = items.value.findIndex((x) => x.id === id);
     if (i < 0) return;
-  
+
     const t = items.value[i];
-  
+
     if (t.state === "running") {
       items.value[i] = { ...t, state: "canceling" };
     }
-  
+
     t.actions?.cancel?.();
   }
-    
 
   function dismiss(id: string) {
     const t = items.value.find((x) => x.id === id);
@@ -68,6 +80,7 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
       (t) => t.state === "running" || t.state === "canceling",
     );
   }
+
   const hasAny = computed(() => items.value.length > 0);
   const hasActive = computed(() =>
     items.value.some((t) => t.state === "running" || t.state === "canceling"),
@@ -79,11 +92,6 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
     ),
   );
 
-  const tasks = computed<TaskRecord[]>(() => items.value);
-
-
-
-
   const countsByKind = computed(() => {
     const m: Record<TaskKind, number> = {
       delete: 0,
@@ -92,7 +100,7 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
       copy: 0,
       move: 0,
       rename: 0,
-      transfer: 0
+      transfer: 0,
     };
     for (const t of items.value) {
       if (t.state === "running" || t.state === "canceling") m[t.kind] += 1;
@@ -123,17 +131,14 @@ export const useTaskCenterStore = defineStore("taskCenter", () => {
   });
 
   return {
-    // state
     items,
 
-    // actions
     upsert,
     remove,
     cancel,
     dismiss,
     clearFinished,
 
-    // derived
     hasAny,
     hasActive,
     activeTotal,

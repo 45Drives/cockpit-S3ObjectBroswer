@@ -369,7 +369,7 @@ export function useUploads(deps: Deps) {
     const scheduleUi = (b: number) => {
       pendingUiBytes = b;
       if (uiTimer != null) return;
-      uiTimer = window.setTimeout(flushUi, 150); 
+      uiTimer = window.setTimeout(flushUi, 250); 
     };
 
     const job = deps.uploadObjectFromStdinStreamed({

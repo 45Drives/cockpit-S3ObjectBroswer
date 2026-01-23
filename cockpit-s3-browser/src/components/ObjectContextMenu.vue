@@ -137,20 +137,8 @@
 import { Menu, MenuItem, MenuItems } from "@headlessui/vue";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { ArrowDownOnSquareIcon, ClipboardDocumentIcon, ScissorsIcon, TrashIcon, TagIcon, CircleStackIcon, ClipboardIcon, PencilSquareIcon, ArrowTurnUpRightIcon } from "@heroicons/vue/20/solid";
-export type MenuMode = "objects" | "versions";
+import { MenuAction, MenuMode, MenuPos } from "../types";
 
-export type MenuAction =
-  | "download"
-  | "delete"
-  | "rename"
-  | "copy"
-  | "paste"
-  | "cut"
-  | "tags"
-  | "storageClass"
-  | "rollback";
-
-export type MenuPos = { x: number; y: number };
 
 const props = withDefaults(
   defineProps<{

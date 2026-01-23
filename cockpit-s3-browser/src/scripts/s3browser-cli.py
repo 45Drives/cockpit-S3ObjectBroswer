@@ -20,7 +20,6 @@ from botocore.exceptions import BotoCoreError, ClientError # type: ignore
 MIN_PART_SIZE = 64 * 1024 * 1024  # 64 MiB
 MAX_PARTS = 10000
 DEFAULT_CONCURRENCY = 6
-_current_abort = None  # type: Optional[callable]
 JOB_DIR = "/run/s3browser/downloads"
 
 BASE_DIR = "/etc/45drives/s3-object-browser/connections"
@@ -619,76 +618,86 @@ def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
     return
 
 def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, argv: List[str]) -> None:
-  record = read_json(cfg_path(conn_id))
-  cfg = record.get("config") or {}
-  client = make_client(cfg)
-  emitted_result = False
+    record = read_json(cfg_path(conn_id))
+    cfg = record.get("config") or {}
+    client = make_client(cfg)
+    emitted_result = False
 
-  if not src_key or not dst_key:
-    raise ValueError("Missing src or dst key")
-  if src_key == dst_key:
-    sys.stdout.write(json.dumps({"ok": True}) + "\n")
-    return
+    if not src_key or not dst_key:
+        raise ValueError("Missing src or dst key")
+    if src_key == dst_key:
+        sys.stdout.write(json.dumps({"ok": True}) + "\n")
+        return
 
-  stream = "--stream" in argv
-  conc_raw = get_flag_value(argv, "--concurrency", str(DEFAULT_CONCURRENCY)) or str(DEFAULT_CONCURRENCY)
-  try:
-    concurrency = int(conc_raw)
-  except ValueError:
-    raise ValueError("Invalid --concurrency")
-  if concurrency < 1:
-    concurrency = 1
-  if concurrency > 32:
-    concurrency = 32
+    stream = "--stream" in argv
+    conc_raw = get_flag_value(argv, "--concurrency", str(DEFAULT_CONCURRENCY)) or str(DEFAULT_CONCURRENCY)
+    try:
+        concurrency = int(conc_raw)
+    except ValueError:
+        raise ValueError("Invalid --concurrency")
+    if concurrency < 1:
+        concurrency = 1
+    if concurrency > 32:
+        concurrency = 32
 
-  def emit(obj: Dict[str, Any]) -> None:
-    nonlocal emitted_result
-    if obj.get("type") == "result":
-      emitted_result = True
-    emit_ndjson(obj)
+    def emit(obj: Dict[str, Any]) -> None:
+        nonlocal emitted_result
+        if obj.get("type") == "result":
+            emitted_result = True
+        emit_ndjson(obj)
 
-  head = client.head_object(Bucket=bucket, Key=src_key)
-  size = int(head.get("ContentLength") or 0)
+    # Head to check size of the object
+    try:
+        head = client.head_object(Bucket=bucket, Key=src_key)
+        size = int(head.get("ContentLength") or 0)
+    except client.exceptions.NoSuchKey:
+        sys.stdout.write(json.dumps({"ok": False, "error": "Source object not found"}) + "\n")
+        return
 
-  MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
+    MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
 
+    try:
+        if size >= MULTIPART_THRESHOLD:
+            # Handle multipart copy for large files (5GB+)
+            multipart_copy_parallel(client, bucket, src_key, bucket, dst_key, concurrency, emit if stream else None)
+        else:
+            if stream:
+                emit({
+                    "type": "start",
+                    "ok": True,
+                    "multipart": False,
+                    "src": src_key,
+                    "dst": dst_key,
+                    "size": size,
+                    "totalParts": 1,
+                    "concurrency": 1,
+                })
 
-  try:
-    if size >= MULTIPART_THRESHOLD:
-      multipart_copy_parallel(client, bucket, src_key, dst_key, concurrency, emit if stream else None)
-    else:
-      if stream:
-        emit({
-          "type": "start",
-          "ok": True,
-          "multipart": False,
-          "src": src_key,
-          "dst": dst_key,
-          "size": size,
-          "totalParts": 1,
-          "concurrency": 1,
-        })
-      client.copy_object(
-        Bucket=bucket,
-        Key=dst_key,
-        CopySource={"Bucket": bucket, "Key": src_key},
-        MetadataDirective="COPY",
-      )
-      if stream:
-        emit({"type": "progress", "ok": True, "partsDone": 1, "totalParts": 1, "bytesCopied": size, "size": size})
-       
-    # Delete source only after successful copy
-    client.delete_object(Bucket=bucket, Key=src_key)
-    if stream:
-      emit({"type": "result", "ok": True, "src": src_key, "dst": dst_key, "size": size})
+            # Copy the object
+            client.copy_object(
+                Bucket=bucket,
+                Key=dst_key,
+                CopySource={"Bucket": bucket, "Key": src_key},
+                MetadataDirective="COPY",
+            )
 
-    if not stream:
-      sys.stdout.write(json.dumps({"ok": True, "src": src_key, "dst": dst_key}) + "\n")
+            if stream:
+                emit({"type": "progress", "ok": True, "partsDone": 1, "totalParts": 1, "bytesCopied": size, "size": size})
 
-  except Exception as e:
-    if stream and not emitted_result:
-      emit({"type": "result", "ok": False, "src": src_key, "dst": dst_key, "size": size, "error": str(e)})
-    return
+        # Delete the source object after successful copy
+        client.delete_object(Bucket=bucket, Key=src_key)
+
+        # Emit the final result (success)
+        if stream:
+            emit({"type": "result", "ok": True, "src": src_key, "dst": dst_key, "size": size})
+
+        if not stream:
+            sys.stdout.write(json.dumps({"ok": True, "src": src_key, "dst": dst_key}) + "\n")
+
+    except Exception as e:
+        if stream and not emitted_result:
+            emit({"type": "result", "ok": False, "src": src_key, "dst": dst_key, "size": size, "error": str(e)})
+        sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
 
 def read_exact(stream, n: int) -> bytes:
   chunks = []
@@ -3235,4 +3244,3 @@ if __name__ == "__main__":
     else:
       sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
     sys.exit(1)
-

@@ -124,7 +124,7 @@ export function useTransfers(deps: Deps) {
       pendingUi = false;
       transferJobs.value = [...transferJobs.value];
       // (we also upsert tasks during polling / state changes)
-    }, 150);
+    }, 250);
   };
 
   // polling loop (non-overlapping)
@@ -150,36 +150,71 @@ export function useTransfers(deps: Deps) {
   }
 
   function progressTextForJob(j: TransferJobEx) {
-    const phase = j.phase ? String(j.phase) : "";
+    // Force a final phase label based on state
+    const phase =
+      j.state === "done"
+        ? "done"
+        : j.state === "failed"
+          ? "failed"
+          : j.state === "canceled"
+            ? "canceled"
+            : (j.phase ? String(j.phase) : "");
+  
     const re = rateEtaText(rateStats, j.id);
-    const pct =
+  
+    let pct =
       typeof j.bytes === "number" &&
       typeof j.totalBytes === "number" &&
       j.totalBytes > 0
         ? Math.floor((j.bytes * 100) / j.totalBytes)
         : null;
-
+  
+    if (j.state === "done") pct = 100;
+  
+    // For final states, don't keep showing ETA/rate noise
+    if (j.state === "done") {
+      return pct != null ? `Done • ${pct}%` : "Done";
+    }
+    if (j.state === "failed") {
+      return "Failed";
+    }
+    if (j.state === "canceled") {
+      return "Canceled";
+    }
+  
+    // Running/canceling text
     if (pct != null && phase) return `${phase}… ${pct}% • ${re}`;
     if (pct != null) return `${pct}% • ${re}`;
     if (phase) return `${phase}… • ${re}`;
     return re;
   }
 
-  function syncTask(j: TransferJobEx) {
+    function syncTask(j: TransferJobEx) {
     const tid = taskIdForJob(j);
   
-    const cur = typeof j.bytes === "number" ? j.bytes : null;
-    const tot = typeof j.totalBytes === "number" && j.totalBytes > 0 ? j.totalBytes : null;
+    let cur = typeof j.bytes === "number" ? j.bytes : null;
+    const tot =
+      typeof j.totalBytes === "number" && j.totalBytes > 0 ? j.totalBytes : null;
   
-    const pct = cur != null && tot != null
-      ? Math.max(0, Math.min(100, Math.round((cur * 100) / tot)))
-      : null;
+    // If the job is finished, force progress to 100% for UI consistency.
+    // Also clamp displayed bytes to total when we know the total.
+    if (j.state === "done") {
+      if (tot != null) cur = tot;
+    } else if (cur != null && tot != null) {
+      // While running, never show more than total
+      cur = Math.min(cur, tot);
+    }
   
-    const taskKind = j.kind === "move" ? "move" : "copy";
+    let pct =
+      cur != null && tot != null
+        ? Math.max(0, Math.min(100, Math.round((cur * 100) / tot)))
+        : null;
+  
+    if (j.state === "done") pct = 100;
   
     taskCenter.upsert({
       id: tid,
-      kind: taskKind,
+      kind: "transfer",
       name: j.name,
       state: j.state,
   
@@ -188,6 +223,7 @@ export function useTransfers(deps: Deps) {
       progressPct: pct,
   
       progressText: progressTextForJob(j),
+  
       error: j.error || undefined,
   
       actions: {
@@ -196,6 +232,7 @@ export function useTransfers(deps: Deps) {
       },
     });
   }
+  
 
   
   function removeTaskForJob(id: string) {
@@ -453,7 +490,6 @@ export function useTransfers(deps: Deps) {
 
           if (p.itemType === "file") {
             if (kind === "cut") {
-              // same bucket rename/move: rename already has its own stream events (not job polling)
               const job = deps.renameObjectStreamed({
                 connectionId: deps.connectionId.value,
                 bucket: dstBucket,
@@ -496,7 +532,6 @@ export function useTransfers(deps: Deps) {
               const res = await job.run;
               if (res.isErr()) throw new Error(res.error.message);
             } else {
-              // copy file (job-based progress)
               tj.phase = "copying";
               syncTask(tj);
 

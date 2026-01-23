@@ -286,14 +286,13 @@ import { useClipboardStore } from "../stores/clipboard";
 import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
-import ObjectContextMenu, { type MenuAction } from "../components/ObjectContextMenu.vue";
+import ObjectContextMenu from "../components/ObjectContextMenu.vue";
 import ConfirmDeleteModal from "../components/Modals/ConfirmDeleteModal.vue";
-import { useDeleteTasksStore } from "../stores/deleteTasks";
 import {
     formatBytes, formatDate, normalizePrefix, guessFileTypeFromKey, fileExt,
     isSystemFile, isTextFile, isApplicationFile, nameFromKey, nameFromPrefix,
 } from "../lib/helpers";
-import { DeleteKind, FileRow, FolderRow, Row, UiTask, VersionRow, ViewMode } from "../types";
+import { DeleteKind, FileRow, FolderRow, MenuAction, Row, UiTask, VersionRow, ViewMode } from "../types";
 import { useDownloads } from "../operations/useDownloads";
 import { useUploads } from "../operations/useUploads";
 import { useTransfers } from "../operations/useTransfers";
@@ -351,7 +350,6 @@ const activeVersionId = computed<string | null>(() => {
     const one = [...selectedVersionIds.value][0];
     return one || null;
 });
-const delStore = useDeleteTasksStore();
 const detailsRef = ref<{ refreshTags: () => Promise<void> } | null>(null);
 const versionsMenuEnabled = computed(() => {
     const n = selectedVersionIds.value.size;
@@ -362,8 +360,6 @@ const versionsMenuEnabled = computed(() => {
         tags: n === 1,
     } as Partial<Record<MenuAction, boolean>>;
 });
-
-
 
 // confirm modal pending target (separate from tasks)
 const pendingDeleteItems = ref<Row[]>([]);
@@ -410,6 +406,7 @@ const selectedVersionCount = computed(() => selectedVersionIds.value.size);
 const canPasteHere = computed(() =>
     clip.canPaste(connectionId.value)
 );
+const tagsTargets = ref<FileRow[]>([]);
 const tagsVersionId = ref<string | null>(null);
 // Keep folders/files separately so we can always render folder-first.
 const rows = ref<Row[]>([]);
@@ -506,7 +503,6 @@ const renamer = useRename({
 const deletes = useDeletes({
     connectionId,
     bucket,
-    delStore,
     deletePrefixStreamed,
     deleteObject,
     refresh,
@@ -1050,27 +1046,57 @@ async function onMenuAction(action: MenuAction) {
         return;
     }
     if (action === "tags") {
-        const items = effectiveSelection();
-        if (items.length !== 1) {
-            pushNotification(new Notification("Not allowed", "Select a single item to edit tags.", "error", 5000));
-            return;
-        }
+  const items = effectiveSelection();
+  if (items.length === 0) {
+    pushNotification(new Notification("Not allowed", "Select one or more files.", "error", 5000));
+    return;
+  }
 
-        const it = items[0];
-        if (it.type === "folder") {
-            pushNotification(new Notification("Not allowed", "Folders (prefixes) cannot be tagged. Only objects can be tagged", "error", 5000));
-            return;
-        }
+  // Only allow files (S3 tags are per-object; folders/prefixes are not real objects)
+  const files = items.filter(isFileRow);
+  const hasFolder = items.some((x) => x.type === "folder");
 
-        tagsKey.value = it.key;
-        tagsVersionId.value = null;          // important
-        tagsTitle.value = it.key;
+  if (files.length === 0) {
+    pushNotification(new Notification("Not allowed", "Select one or more files to edit tags.", "error", 5000));
+    return;
+  }
 
-        await tags.loadObjectTags(it.key);   // latest
-        tagsInitial.value = [...tags.currentTags.value];
-        tagsOpen.value = true;
-        return;
-    }
+  if (hasFolder) {
+    pushNotification(
+      new Notification(
+        "Not allowed",
+        "Folders (prefixes) cannot be tagged. Select only files.",
+        "error",
+        5000
+      )
+    );
+    return;
+  }
+
+  // store targets for save
+  tagsTargets.value = files;
+
+  // versions not involved here
+  tagsVersionId.value = null;
+
+  if (files.length === 1) {
+    const it = files[0];
+    tagsKey.value = it.key;
+    tagsTitle.value = it.key;
+
+    await tags.loadObjectTags(it.key); // load existing tags for single
+    tagsInitial.value = [...tags.currentTags.value];
+  } else {
+    tagsKey.value = "";
+    tagsTitle.value = `${files.length} objects`;
+    tagsInitial.value = []; // for multi: start blank (apply same tags to all)
+    tags.currentTags.value = [];
+  }
+
+  tagsOpen.value = true;
+  return;
+}
+
 
 
     if (action === "storageClass") {
@@ -1332,13 +1358,15 @@ function removeFolderRowByPrefix(pfx: string) {
 
 
 async function onSaveTags(payload: { tags: TagKV[] }) {
+  // Versions mode: still single version tagging (your existing behavior)
+  if (mode.value === "versions") {
     const key = tagsKey.value;
     if (!key) return;
 
     await tags.applyObjectTags({
-        key,
-        versionId: tagsVersionId.value, // null means latest
-        tags: payload.tags,
+      key,
+      versionId: tagsVersionId.value, // null means latest
+      tags: payload.tags,
     });
 
     tagsInitial.value = [...tags.currentTags.value];
@@ -1346,8 +1374,42 @@ async function onSaveTags(payload: { tags: TagKV[] }) {
 
     const r = detailsRow.value;
     if (r?.type === "file" && r.key === key) {
-        await detailsRef.value?.refreshTags();
+      await detailsRef.value?.refreshTags();
     }
+    return;
+  }
+
+  // Objects mode: single or multiple files
+  const targets = tagsTargets.value;
+  if (!targets.length) return;
+
+  if (targets.length === 1) {
+    const key = targets[0].key;
+
+    await tags.applyObjectTags({
+      key,
+      versionId: null,
+      tags: payload.tags,
+    });
+
+    tagsInitial.value = [...tags.currentTags.value];
+  } else {
+    await tags.applyTagsToSelection({
+      items: targets, // FileRow[] is also Row[]
+      tags: payload.tags,
+      includeFolders: false,
+    });
+
+    tags.currentTags.value = payload.tags;
+    tagsInitial.value = payload.tags;
+  }
+
+  tagsOpen.value = false;
+
+  const r = detailsRow.value;
+  if (r?.type === "file" && targets.some((t) => t.key === r.key)) {
+    await detailsRef.value?.refreshTags();
+  }
 }
 
 async function loadVersionsForKey(key: string, name: string) {

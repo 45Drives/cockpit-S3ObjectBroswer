@@ -152,7 +152,7 @@ export type UploadItem = {
     cancel?: () => void;
 };
 
-export type TransferJobState = "running" | "done" | "failed" | "canceling";
+export type TransferJobState = "running" | "done" | "failed" | "canceling" | "canceled";;
 
 export type TransferJob = {
   id: string;
@@ -161,7 +161,7 @@ export type TransferJob = {
   name: string;
   src: string;
   dst: string;
-  state: "running" | "done" | "failed" | "canceling";
+  state: TaskState;
   error?: string;
   startedAt: number;
   finishedAt?: number;
@@ -252,3 +252,18 @@ export type RateStats = {
   rateAvg: number | null; 
   etaSec: number | null; 
 };
+
+export type MenuMode = "objects" | "versions";
+
+export type MenuAction =
+  | "download"
+  | "delete"
+  | "rename"
+  | "copy"
+  | "paste"
+  | "cut"
+  | "tags"
+  | "storageClass"
+  | "rollback";
+
+export type MenuPos = { x: number; y: number };
