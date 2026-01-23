@@ -21,7 +21,7 @@ function pyCmd(args: string[], superuser: "try" | "require" = "try") {
   );
 }
 
-const S3BROWSER_CLI_PATH = "/conn.py";
+const S3BROWSER_CLI_PATH = "/opt/45drives/houston/s3Navigator/scripts/main.py";
 
 export function listObjects(params: {
 connectionId: string;

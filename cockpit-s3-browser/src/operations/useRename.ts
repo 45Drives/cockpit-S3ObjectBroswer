@@ -223,19 +223,19 @@ export function useRename(deps: Deps) {
     if (!deps.connectionId.value || !deps.bucket.value) return;
     if (!srcKey || !dstKey) return;
     if (srcKey === dstKey) return;
-
+  
     deps.setBusy?.(true);
-
+  
     const id = `rename:${Date.now()}:${Math.random().toString(16).slice(2)}`;
     currentTaskId.value = id;
     currentTaskName.value = `${srcKey} → ${dstKey}`;
-
+  
     // Reset state
     renameProgress.value = null;
     renameCancel.value = null;
     snap.value = { done: null, total: null, bytes: null, size: null };
     rateStats.delete(id);
-
+  
     // Create the task immediately (even before we have progress)
     taskCenter.upsert({
       id,
@@ -251,25 +251,25 @@ export function useRename(deps: Deps) {
         dismiss: () => dismiss(),
       },
     });
-
+  
     let finalized = false;
     const finalize = (state: "done" | "failed" | "canceled", msg?: string) => {
       if (finalized) return;
       finalized = true;
-
+  
       if (uiTimer != null) {
         window.clearTimeout(uiTimer);
         uiTimer = null;
       }
-
+  
       // IMPORTANT: keep snap for task UI; only clear inline UI
       renameProgress.value = null;
       renameCancel.value = null;
-
+  
       upsertTask(state, msg);
-
+  
       rateStats.delete(id);
-
+  
       if (state === "done") {
         pushNotification(
           new Notification(
@@ -279,10 +279,13 @@ export function useRename(deps: Deps) {
             5000
           )
         );
-        deps.onRenamed?.(srcKey, dstKey);
+        
+        // Trigger a refresh of the list after renaming
+        deps.onRenamed?.(srcKey, dstKey);  // This will now trigger a refresh in the calling component.
+  
         return;
       }
-
+  
       const em = msg || (state === "canceled" ? "Rename canceled" : "Rename failed");
       pushNotification(
         new Notification(
@@ -293,7 +296,7 @@ export function useRename(deps: Deps) {
         )
       );
     };
-
+  
     const job = deps.renameObjectStreamed({
       connectionId: deps.connectionId.value,
       bucket: deps.bucket.value,
@@ -304,54 +307,54 @@ export function useRename(deps: Deps) {
         if (ev.type === "start") {
           const total = Number(ev.totalParts ?? 0);
           const size = Number(ev.size ?? 0);
-
+  
           const totalOk = Number.isFinite(total) ? total : 0;
           const sizeOk = Number.isFinite(size) ? size : 0;
-
+  
           renameProgress.value = { done: 0, total: totalOk, bytes: 0, size: sizeOk };
           snap.value = { done: 0, total: totalOk || null, bytes: 0, size: sizeOk || null };
-
+  
           if (sizeOk > 0) {
             updateRateAndEta(rateStats, id, 0, sizeOk);
           }
-
+  
           scheduleUi("running");
           return;
         }
-
+  
         if (ev.type === "progress") {
           if (!renameProgress.value) {
             renameProgress.value = { done: 0, total: 0, bytes: 0, size: 0 };
           }
-
+  
           const done = Number(ev.partsDone ?? renameProgress.value.done);
           const total = Number(ev.totalParts ?? renameProgress.value.total);
           const bytes = Number(ev.bytesCopied ?? renameProgress.value.bytes);
           const size = Number(ev.size ?? renameProgress.value.size);
-
+  
           const doneOk = Number.isFinite(done) ? done : renameProgress.value.done;
           const totalOk = Number.isFinite(total) ? total : renameProgress.value.total;
           const bytesOk = Number.isFinite(bytes) ? bytes : renameProgress.value.bytes;
           const sizeOk = Number.isFinite(size) ? size : renameProgress.value.size;
-
+  
           renameProgress.value.done = doneOk;
           renameProgress.value.total = totalOk;
           renameProgress.value.bytes = bytesOk;
           renameProgress.value.size = sizeOk;
-
+  
           snap.value.done = Number.isFinite(doneOk) ? doneOk : snap.value.done;
           snap.value.total = totalOk > 0 ? totalOk : snap.value.total;
           snap.value.bytes = Number.isFinite(bytesOk) ? bytesOk : snap.value.bytes;
           snap.value.size = sizeOk > 0 ? sizeOk : snap.value.size;
-
+  
           if (typeof snap.value.size === "number" && snap.value.size > 0 && typeof snap.value.bytes === "number") {
             updateRateAndEta(rateStats, id, snap.value.bytes, snap.value.size);
           }
-
+  
           scheduleUi("running");
           return;
         }
-
+  
         if (ev.type === "result") {
           if (ev.ok) {
             finalize("done");
@@ -363,7 +366,7 @@ export function useRename(deps: Deps) {
         }
       },
     });
-
+  
     renameCancel.value = () => {
       try {
         job.cancel();
@@ -371,10 +374,10 @@ export function useRename(deps: Deps) {
         // ignore
       }
     };
-
+  
     try {
       const res = await job.run;
-
+  
       // If stream didn't send a final "result" event, finalize here.
       if (res.isErr()) {
         const msg = res.error.message || "Rename failed";
@@ -382,12 +385,13 @@ export function useRename(deps: Deps) {
         finalize(canceled ? "canceled" : "failed", msg);
         return;
       }
-
+  
       finalize("done");
     } finally {
       deps.setBusy?.(false);
     }
   }
+  
 
   return {
     renameProgress,

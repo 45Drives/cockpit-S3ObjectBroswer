@@ -493,12 +493,16 @@ const transferBusy = transfers.transferBusy;
 const pasteBusy = transfers.pasteBusy;
 
 const renamer = useRename({
-    connectionId,
-    bucket,
-    renameObjectStreamed,
-    setBusy: (b) => (busy.value = b),
-    onRenamed: (srcKey, dstKey) => updateRowAfterRename(srcKey, dstKey),
+  connectionId,
+  bucket,
+  renameObjectStreamed,
+  setBusy: (busy) => { /* handle busy state */ },
+  onRenamed: async (srcKey, dstKey) => {
+    // Trigger a refresh of the object list after rename
+    await refresh();
+  },
 });
+
 
 const deletes = useDeletes({
     connectionId,
