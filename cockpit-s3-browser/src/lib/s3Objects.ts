@@ -420,7 +420,7 @@ export function downloadPrefixTarGz(params: {
   }
 
   return okAsync(undefined).map(() => {
-    server.downloadCommandOutput(pyCmd(args, "try"), filename);
+    server.downloadCommandOutputSelfUrl(pyCmd(args, "try"), filename);
   });
 }
 
@@ -444,7 +444,7 @@ export function downloadObject(params: {
   ];
 
   return okAsync(undefined).map(() => {
-    server.downloadCommandOutput(pyCmd(args, "try"), filename);
+    server.downloadCommandOutputSelfUrl(pyCmd(args, "try"), filename);
   });
 }
 
@@ -885,7 +885,7 @@ export function downloadObjectVersion(params: {
   ];
 
   return okAsync(undefined).map(() => {
-    server.downloadCommandOutput(pyCmd(args, "try"), filename);
+    server.downloadCommandOutputSelfUrl(pyCmd(args, "try"), filename);
   });
 }
 
