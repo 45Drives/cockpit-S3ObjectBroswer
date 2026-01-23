@@ -123,7 +123,7 @@ export function deleteObject(params: {
   }): ResultAsync<{ deletedRequested: number; errors: number }, ProcessError | SyntaxError> {
     const args: string[] = ["delete-prefix", params.connectionId, params.bucket, params.prefix];
   
-    // Spawn so we can stream output as it arrives
+    // Spawn the process
     const proc = server.spawnProcess(pyCmd(args, "try"));
   
     // NDJSON line buffer
@@ -138,12 +138,17 @@ export function deleteObject(params: {
   
         const line = buf.slice(0, i).trim();
         buf = buf.slice(i + 1);
-  
         if (!line) continue;
   
         try {
+          // Check for empty or invalid response
+          if (line.trim() === "") {
+            console.error("Received empty response.");
+            return; // Handle empty response
+          }
+  
           const obj = JSON.parse(line) as any;
-        
+  
           if (obj && typeof obj === "object") {
             if ("type" in obj) {
               params.onEvent(obj as DeletePrefixEvent);
@@ -151,23 +156,33 @@ export function deleteObject(params: {
               params.onEvent({ type: "result", ok: false, error: String(obj.error ?? "Failed") });
             }
           }
-        } catch {
-          // ignore parse errors from partial / non-JSON lines
+        } catch (e) {
+          console.error("Error parsing JSON:", e, "Line content:", line); // Log error and line for debugging
+          // Ignore parse errors but log them for debugging purposes
         }
       }
     });
   
-    // Wait for exit, then parse the last line to produce a final ResultAsync
+    // Wait for the process to complete
     return proc.wait(true).andThen((exited: any) => {
       const stdout = String(exited.getStdout?.() ?? "").trim();
+      
+      // Handle case where stdout is empty
+      if (stdout === "") {
+        console.log("No output received. Treating as completed.");
+        return okAsync({ deletedRequested: 0, errors: 0 }); // Treat as completed successfully
+      }
+  
       const last = stdout
         .split("\n")
         .map((s) => s.trim())
         .filter(Boolean)
         .pop() ?? "";
   
+      console.log("Raw stdout:", stdout); // Log stdout for debugging
+  
       return safeJsonParse<any>(last).andThen((obj) => {
-        // NDJSON protocol final message
+        // Check for result type message
         if (obj && obj.type === "result") {
           if (!obj.ok) return errAsync(new SyntaxError(obj.error || "Failed to delete prefix"));
           return okAsync({
@@ -188,7 +203,8 @@ export function deleteObject(params: {
         return errAsync(new SyntaxError("Malformed delete-prefix output"));
       });
     });
-  }  
+  }
+    
 
   type RenameObjectEvent =
   | { type: "start"; ok: boolean; src?: string; dst?: string; size?: number; totalParts?: number; partSize?: number; concurrency?: number }

@@ -93,9 +93,9 @@
                         <!-- left: list -->
                         <ObjectVersionsList v-if="mode === 'versions'" :busy="versionsLoading" :err="versionsErr"
                             :items="versionRows" :selectedVersionIds="selectedVersionIds"
-                            @select="(ids) => (selectedVersionIds = ids)" @contextmenu="onVersionsContextMenu" />
+                            @select="(ids) => (selectedVersionIds = ids)" @contextmenu="onVersionsContextMenu"  />
                         <template v-else>
-                            <div :class="detailsOpen ? 'w-[70%] flex-none min-w-0 pr-0' : 'flex-1 min-w-0 pr-0'">
+                            <div class=" w-[70%] flex-none min-w-0 pr-0">
                                 <!-- TABLE VIEW -->
                                 <div v-if="viewMode === 'table'" class="rounded-md border border-default">
                                     <div class="bg-well text-left text-default w-full"
@@ -244,12 +244,11 @@
                                 </div>
                             </div>
                         </template>
-                        <div v-if="detailsOpen" class="w-[30%] flex-none min-w-0">
+                        <div  class="w-[30%] flex-none min-w-0">
                             <ObjectDetailsPanel ref="detailsRef" :connectionId="connectionId" :bucket="bucket"
                                 :row="detailsRow"
                                 :versionId="mode === 'versions' && selectedVersionCount === 1 ? activeVersionId : null"
                                 :inVersionsMode="mode === 'versions'" :selectionSummary="detailsSelectionSummary"
-                                @close="detailsOpen = false"
                                 @openVersions="(p) => activeRow && activeRow.type === 'file' && openVersionsModeForFile(activeRow)"
                                 @backToObjects="exitVersionsMode()" />
                         </div>
@@ -400,7 +399,6 @@ const menuRow = ref<Row | null>(null);
 const selectedIds = ref<Set<string>>(new Set());
 const anchorIndex = ref<number | null>(null);
 const clip = useClipboardStore();
-const detailsOpen = ref(true);
 const selectedObjectCount = computed(() => selectedRows.value.length);
 const selectedVersionCount = computed(() => selectedVersionIds.value.size);
 const canPasteHere = computed(() =>
@@ -447,7 +445,6 @@ const downloads = useDownloads({
     downloadObjectVersion,
 });
 
-const downloadJobs = downloads.downloadJobs;
 const downloadBusy = downloads.downloadBusy;
 
 
@@ -457,7 +454,10 @@ const uploads = useUploads({
     prefix,
     uploadObjectFromStdinStreamed,
     refresh,
-    onUploaded: (key) => upsertFileRowByKey(key),
+    onUploaded: (key) => {
+    upsertFileRowByKey(key); 
+    refresh();
+  },
 
 });
 
@@ -486,8 +486,6 @@ const transfers = useTransfers({
     cancelDownloadJob
 });
 
-
-const transferJobs = transfers.transferJobs;
 const transferBusy = transfers.transferBusy;
 
 const pasteBusy = transfers.pasteBusy;
@@ -1162,7 +1160,6 @@ function selectRange(from: number, to: number, replace: boolean) {
 
 function onRowClick(e: MouseEvent, r: Row, index: number) {
     if (isDeletingRow(r)) return;
-    detailsOpen.value = true;
 
     const id = rowId(r);
     const isToggle = e.ctrlKey || e.metaKey;
@@ -1539,7 +1536,6 @@ async function openVersionsModeForFile(file: FileRow) {
     mode.value = "versions";
     versionsKey.value = file.key;
     versionsName.value = file.name;
-    detailsOpen.value = true;
 
     await loadVersionsForKey(file.key, file.name);
 }

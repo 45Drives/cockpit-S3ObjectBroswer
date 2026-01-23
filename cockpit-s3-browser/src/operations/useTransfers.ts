@@ -214,7 +214,7 @@ export function useTransfers(deps: Deps) {
   
     taskCenter.upsert({
       id: tid,
-      kind: "transfer",
+      kind: j.kind,
       name: j.name,
       state: j.state,
   

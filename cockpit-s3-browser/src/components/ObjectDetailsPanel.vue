@@ -22,14 +22,6 @@
             'Versions' }}
           </button>
         </div>
-
-
-
-        <button type="button"
-          class="inline-flex items-center btn-secondary justify-center rounded-md border border-default px-2 py-1.5 text-sm font-semibold text-default"
-          @click="$emit('close')">
-          Close <ArrowRightEndOnRectangleIcon class="h-4 w-4"></ArrowRightEndOnRectangleIcon>
-        </button>
       </div>
     </div>
 
@@ -277,7 +269,6 @@ const showBackToObjects = computed(() => Boolean(props.inVersionsMode));
 const versionId = computed(() => props.versionId ?? null);
 
 const emit = defineEmits<{
-  (e: "close"): void;
   (e: "openVersions", payload: { key: string; name: string }): void;
   (e: "backToObjects"): void;
 }>();
