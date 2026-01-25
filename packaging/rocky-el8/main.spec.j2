@@ -23,6 +23,8 @@ make OS_PACKAGE_RELEASE=el8
 %install
 make DESTDIR=%{buildroot} install
 
+%files
+/opt/45drives/houston/s3Navigator/*
 
 %changelog
 * Fri Jan 23 2026 Rachit Hans <rhans@45drives.com> 1.1.0-1
