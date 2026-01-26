@@ -1,3 +1,3 @@
-## s3-browser 1.1.0-2
+## s3-browser 1.1.0-3
 
-*  building test package
+*  building test package + fixed files loacations for downloads jobs and connection ids

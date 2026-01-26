@@ -1,3 +1,10 @@
+cockpit-s3-browser (1.1.0-3jammy) jammy; urgency=medium
+
+  *  building test package + fixed files loacations for downloads jobs and connection
+    ids
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 26 Jan 2026 08:22:08 -0400
+
 cockpit-s3-browser (1.1.0-2jammy) jammy; urgency=medium
 
   *  building test package
