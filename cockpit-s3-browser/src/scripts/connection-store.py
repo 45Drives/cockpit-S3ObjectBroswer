@@ -8,7 +8,18 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Optional
 
-BASE_DIR = "/etc/45drives/s3-object-browser/connections"
+def ensure_store() -> None:
+  os.makedirs(BASE_DIR, mode=0o700, exist_ok=True)
+  if not os.path.exists(INDEX_PATH):
+    atomic_write(INDEX_PATH, "[]\n")
+
+def get_base_dir() -> str:
+  xdg = os.environ.get("XDG_CONFIG_HOME")
+  if xdg:
+    return os.path.join(xdg, "45drives", "s3-object-browser", "connections")
+  return os.path.join(os.path.expanduser("~/.config"), "45drives", "s3-object-browser", "connections")
+
+BASE_DIR = get_base_dir()
 INDEX_PATH = os.path.join(BASE_DIR, "index.json")
 
 def now_iso() -> str:
@@ -74,10 +85,12 @@ def decode_payload(arg: str) -> str:
   return base64.b64decode(b64.encode("ascii")).decode("utf-8")
 
 def cmd_list() -> None:
+  ensure_store()
   entries = index_load()
   sys.stdout.write(json.dumps(entries) + "\n")
 
 def cmd_get(conn_id: str) -> None:
+  ensure_store()
   p = cfg_path(conn_id)
   cfg = read_json(p)
   if cfg is None:
@@ -132,6 +145,7 @@ def cmd_upsert(payload_arg: str) -> None:
 
 def cmd_delete(conn_id: str) -> None:
   try:
+    ensure_store()
     os.unlink(cfg_path(conn_id))
   except FileNotFoundError:
     pass
@@ -142,6 +156,7 @@ def cmd_delete(conn_id: str) -> None:
   sys.stdout.write("OK\n")
 
 def cmd_touch_last_used(conn_id: str) -> None:
+  ensure_store()
   p = cfg_path(conn_id)
   record = read_json(p)
   if record is None:

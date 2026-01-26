@@ -4,8 +4,7 @@ import os
 import sys
 from typing import Any, List
 import signal
-
-JOB_DIR = "/run/s3browser/downloads"
+from utils import JOB_DIR
 
 def cmd_cancel_download_job(job_id: str) -> None:
   job_id = (job_id or "").strip()

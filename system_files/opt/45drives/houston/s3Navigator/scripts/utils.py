@@ -9,10 +9,31 @@ import signal
 import time
 import botocore.session # type: ignore
 from botocore.config import Config # type: ignore
+import pwd
 from botocore.exceptions import  ClientError # type: ignore
+import tempfile
 
-BASE_DIR = "/etc/45drives/s3-object-browser/connections"
-JOB_DIR = "/run/s3browser/downloads"
+def get_base_dir() -> str:
+  xdg = os.environ.get("XDG_CONFIG_HOME")
+  if xdg:
+    base = xdg
+  else:
+    home = os.environ.get("HOME") or pwd.getpwuid(os.getuid()).pw_dir
+    base = os.path.join(home, ".config")
+
+  return os.path.join(base, "45drives", "s3-object-browser", "connections")
+
+def get_job_dir() -> str:
+  rt = os.environ.get("XDG_RUNTIME_DIR")
+  if rt:
+    return os.path.join(rt, "s3browser", "downloads")
+  return os.path.join(tempfile.gettempdir(), f"s3browser-{os.getuid()}", "downloads")
+
+JOB_DIR = get_job_dir()
+
+
+BASE_DIR = get_base_dir()
+JOB_DIR = get_job_dir()
 
 DEFAULT_CONCURRENCY = 6
 MIN_PART_SIZE = 5 * 1024 * 1024
@@ -30,10 +51,10 @@ def get_job_id(argv: List[str]) -> str:
   return (get_flag_value(argv, "--job-id", "") or "").strip() or new_job_id()
 
 def read_json(path: str) -> Dict[str, Any]:
-    if not os.path.exists(path):
-        raise ValueError("Connection not found")
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
+  if not os.path.exists(path):
+    raise ValueError("Connection not found")
+  with open(path, "r", encoding="utf-8") as f:
+    return json.load(f)
 
 def make_client(cfg: Dict[str, Any]):
     endpoint = endpoint_url_from_cfg(cfg)
@@ -292,7 +313,6 @@ NDJSON_STDOUT_CMDS = {
 
 def cfg_path(conn_id: str) -> str:
   return os.path.join(BASE_DIR, f"{conn_id}.json")
-
 
 def choose_part_size(size: int) -> int:
   if size <= 0:

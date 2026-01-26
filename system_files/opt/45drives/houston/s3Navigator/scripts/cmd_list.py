@@ -2,17 +2,31 @@
 import json
 import sys
 from typing import Any, Dict, List
-
+import os
 from utils import cfg_path, get_flag_value, read_json, make_client
 
-def cmd_list_buckets(conn_id: str) -> None:
-    record = read_json(f"/etc/45drives/s3-object-browser/connections/{conn_id}.json")
-    cfg = record.get("config", {})
-    client = make_client(cfg)
 
-    resp = client.list_buckets()
-    buckets = [{"name": b["Name"], "creationDate": b["CreationDate"].isoformat()} for b in resp.get("Buckets", [])]
-    sys.stdout.write(json.dumps({"ok": True, "buckets": buckets}) + "\n")
+
+def cmd_list_buckets(conn_id: str) -> None:
+  try:
+    record = read_json(cfg_path(conn_id))
+  except Exception as e:
+    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    return
+
+  cfg = (record.get("config") or {}) if isinstance(record, dict) else {}
+  if not cfg:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Connection not found"}) + "\n")
+    return
+
+  client = make_client(cfg)
+  resp = client.list_buckets()
+  buckets = [
+    {"name": b["Name"], "creationDate": b["CreationDate"].isoformat()}
+    for b in (resp.get("Buckets") or [])
+  ]
+  sys.stdout.write(json.dumps({"ok": True, "buckets": buckets}) + "\n")
+
 
 def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
