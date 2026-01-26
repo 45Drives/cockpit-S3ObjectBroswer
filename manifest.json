@@ -10,7 +10,7 @@
     "license": "GPL-3.0+",
     "architecture": {
         "ubuntu": "all",
-        "rocky": "noarch",
+        "rocky": "noarch"
     },
     "description": "s3-browser",
     "defaults": {
@@ -50,7 +50,7 @@
             "group": "rocky",
             "os_name": "rocky-el9",
             "image": "ci.cr.45d.io/ci/simple/rocky-el9:1"
-        },
+        }
     ],
     "repos": [
         "community",
