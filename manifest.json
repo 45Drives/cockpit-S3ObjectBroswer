@@ -6,7 +6,7 @@
     "version": "1.1.0",
     "build_number": "1",
     "author": "Rachit Hans <rhans@45drives.com>",
-    "git_url": "https://github.com/45Drives/cockpit-zfs-45d",
+    "git_url": "https://github.com/45Drives/cockpit-s3-browsee",
     "license": "GPL-3.0+",
     "architecture": {
         "ubuntu": "all",
