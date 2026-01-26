@@ -11,7 +11,6 @@
     "architecture": {
         "ubuntu": "all",
         "rocky": "noarch",
-        "debian": "all"
     },
     "description": "s3-browser",
     "defaults": {
@@ -52,11 +51,6 @@
             "os_name": "rocky-el9",
             "image": "ci.cr.45d.io/ci/simple/rocky-el9:1"
         },
-        {
-            "group": "debian",
-            "os_name": "debian-bookworm",
-            "image": "ci.cr.45d.io/ci/simple/ubuntu-jammy:1"
-        }
     ],
     "repos": [
         "community",
