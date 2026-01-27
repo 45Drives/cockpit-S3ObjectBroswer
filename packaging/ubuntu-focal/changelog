@@ -1,3 +1,9 @@
+cockpit-s3-browser (1.1.0-4focal) focal; urgency=medium
+
+  *  added new folder creation and fixed upload/delet bugs + building pacakge
+
+ -- Rachit Hans <rhans@45drives.com>  Tue, 27 Jan 2026 10:59:44 -0400
+
 cockpit-s3-browser (1.1.0-3focal) focal; urgency=medium
 
   *  building test package + fixed files loacations for downloads jobs and connection

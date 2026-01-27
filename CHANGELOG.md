@@ -1,3 +1,3 @@
-## s3-browser 1.1.0-3
+## s3-browser 1.1.0-4
 
-*  building test package + fixed files loacations for downloads jobs and connection ids
+*  added new folder creation and fixed upload/delet bugs + building pacakge
