@@ -901,3 +901,23 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
       "updatedAt": int(time.time() * 1000),
     })
     raise
+
+def cmd_create_folder(conn_id: str, bucket: str, prefix: str, name: str) -> None:
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  base = normalize_prefix(prefix or "") 
+  n = (name or "").strip()
+
+  if not n:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Missing folder name"}) + "\n")
+    return
+
+  folder_prefix = f"{base}{n}/"
+
+  try:
+    client.put_object(Bucket=bucket, Key=folder_prefix, Body=b"")
+    sys.stdout.write(json.dumps({"ok": True, "bucket": bucket, "prefix": folder_prefix}) + "\n")
+  except Exception as e:
+    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")

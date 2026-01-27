@@ -7,7 +7,7 @@ from cmd_version import cmd_list_object_versions, cmd_delete_object_version, cmd
 from cmd_tag import cmd_put_object_tags, cmd_get_object_tags
 from cmd_lock import cmd_get_object_legal_hold, cmd_put_object_legal_hold, cmd_get_object_retention, cmd_put_object_retention, cmd_get_bucket_object_lock
 from download_job import cmd_download_job_status, cmd_cancel_download_job
-from cmd_prefix import cmd_copy_prefix, cmd_delete_prefix, cmd_download_prefix_targz, cmd_move_prefix
+from cmd_prefix import cmd_copy_prefix, cmd_delete_prefix, cmd_download_prefix_targz, cmd_move_prefix, cmd_create_folder
 from cmd_storage_class import cmd_change_storage_class
 from utils import BINARY_STDOUT_CMDS, _emit_json_stderr, _emit_json_stdout, _emit_ndjson, _format_err, _wants_ndjson, get_flag_value
 from cmd_version import cmd_delete_object_version, cmd_download_object_version,cmd_list_object_versions,cmd_rollback_object_version
@@ -31,7 +31,7 @@ def main() -> None:
 
     if cmd == "list-objects":
       if len(sys.argv) < 4:
-        raise ValueError("Usage: s3browser-cli list-objects <connectionId> <bucket> [--prefix P] [--delimiter /] [--max-keys N] [--continuation-token T]")
+        raise ValueError("Usage: s3browser-cli list-objects <connectionId> <bucket> [--prefix P] [--delimiter /] [--continuation-token T]")
       conn_id = sys.argv[2]
       bucket = sys.argv[3]
       cmd_list_objects(conn_id, bucket, sys.argv[4:])
@@ -131,21 +131,12 @@ def main() -> None:
 
     if cmd == "list-object-versions":
       if len(sys.argv) < 5:
-        raise ValueError("Usage: s3browser-cli list-object-versions <connectionId> <bucket> <key> [--max-keys N]")
+        raise ValueError("Usage: s3browser-cli list-object-versions <connectionId> <bucket> <key> ")
       conn_id = sys.argv[2]
       bucket = sys.argv[3]
       key = sys.argv[4]
       argv = sys.argv[5:]
-
-      max_keys = 200
-      try:
-        mk = get_flag_value(argv, "--max-keys")
-        if mk is not None and str(mk).strip() != "":
-          max_keys = int(mk)
-      except Exception:
-        max_keys = 200
-
-      cmd_list_object_versions(conn_id, bucket, key, max_keys=max_keys)
+      cmd_list_object_versions(conn_id, bucket, key)
       return
 
     if cmd == "delete-object-version":
@@ -195,8 +186,14 @@ def main() -> None:
         raise ValueError("Usage: s3browser-cli put-object-retention <connectionId> <bucket> <key> --mode (GOVERNANCE|COMPLIANCE) --retain-until ISO [--version-id VID] [--bypass-governance 1]")
       cmd_put_object_retention(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:])
       return
+    
+    if cmd == "create-folder":
+      if len(sys.argv) < 6:
+        raise ValueError("Usage: s3browser-cli create-folder <connectionId> <bucket> <prefix> <name>")
+      cmd_create_folder(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+      return
 
-    # Unknown command -> convert to JSON error instead of raising
+
     raise ValueError("Unknown command")
 
   except BaseException as e:
