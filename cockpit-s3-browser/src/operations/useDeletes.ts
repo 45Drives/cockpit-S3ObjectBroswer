@@ -37,6 +37,11 @@ function isAbortish(e: any): boolean {
   );
 }
 
+function isResultLike(res: any): boolean {
+  // We cannot rely on res.value being truthy for Result<void, E>
+  return !!res && typeof res.isErr === "function";
+}
+
 export function useDeletes(deps: Deps) {
   const taskCenter = useTaskCenterStore();
   const { items: tcItems } = storeToRefs(taskCenter);
@@ -79,6 +84,7 @@ export function useDeletes(deps: Deps) {
 
     return false;
   }
+
   function upsertDeleteTask(opts: {
     id: string;
     name: string;
@@ -106,12 +112,115 @@ export function useDeletes(deps: Deps) {
     });
   }
 
+  function notifyDelete(
+    target:
+      | { kind: "file"; name: string; key: string }
+      | { kind: "folder"; name: string; prefix: string }
+      | { kind: "versions"; name: string; key: string; total: number },
+    state: "done" | "failed" | "canceled",
+    errMsg?: string
+  ) {
+    const bucket = deps.bucket.value;
+
+    if (state === "done") {
+      const msg =
+        target.kind === "file"
+          ? `Deleted ${target.name} (${bucket}:${target.key})`
+          : target.kind === "folder"
+            ? `Deleted ${target.name} (${bucket}:${target.prefix})`
+            : `Deleted ${target.total} version(s) for ${target.name} (${bucket}:${target.key})`;
+
+      pushNotification(
+        new Notification("Delete completed", msg, "success", 5000)
+      );
+      return;
+    }
+
+    if (state === "canceled") {
+      const msg =
+        target.kind === "file"
+          ? `Canceled delete of ${target.name} (${bucket}:${target.key})`
+          : target.kind === "folder"
+            ? `Canceled delete of ${target.name} (${bucket}:${target.prefix})`
+            : `Canceled delete of ${target.total} version(s) for ${target.name} (${bucket}:${target.key})`;
+
+      pushNotification(new Notification("Delete canceled", msg, "error", 5000));
+      return;
+    }
+
+    const msgBase =
+      target.kind === "file"
+        ? `Failed to delete ${target.name} (${bucket}:${target.key})`
+        : target.kind === "folder"
+          ? `Failed to delete ${target.name} (${bucket}:${target.prefix})`
+          : `Failed to delete ${target.total} version(s) for ${target.name} (${bucket}:${target.key})`;
+
+    pushNotification(
+      new Notification(
+        "Delete failed",
+        `${msgBase}${errMsg ? ` - ${errMsg}` : ""}`,
+        "error",
+        5000
+      )
+    );
+  }
+
+  function notifyDeleteBatchSummary(opts: {
+    total: number;
+    done: number;
+    failed: number;
+    canceled: number;
+  }) {
+    if (opts.total <= 1) return;
+
+    if (opts.failed > 0) {
+      pushNotification(
+        new Notification(
+          "Delete finished with errors",
+          `Deleted ${opts.done} of ${opts.total} item(s) (${opts.failed} failed, ${opts.canceled} canceled).`,
+          "error",
+          5000
+        )
+      );
+      return;
+    }
+
+    if (opts.canceled > 0) {
+      pushNotification(
+        new Notification(
+          "Delete canceled",
+          `Deleted ${opts.done} of ${opts.total} item(s) (${opts.canceled} canceled).`,
+          "error",
+          5000
+        )
+      );
+      return;
+    }
+
+    pushNotification(
+      new Notification(
+        "Delete completed",
+        `Deleted ${opts.total} item(s).`,
+        "success",
+        5000
+      )
+    );
+  }
+
   async function deleteNow(items: Row[]) {
     if (!deps.connectionId.value || !deps.bucket.value) return;
     if (!items.length) return;
 
     const conn = deps.connectionId.value;
     const bucket = deps.bucket.value;
+
+    const isMulti = items.length > 1;
+
+    let doneCount = 0;
+    let failedCount = 0;
+    let canceledCount = 0;
+
+    const jobs: Promise<void>[] = [];
 
     for (const it of items) {
       if (isDeletingRow(it)) continue;
@@ -135,7 +244,7 @@ export function useDeletes(deps: Deps) {
           name: displayName,
           state: "running",
           progressText: "Deleting…",
-          progressPct: 0, // Start from 0% for folder
+          progressPct: 0,
           meta,
           cancel: () => {
             canceled = true;
@@ -146,112 +255,151 @@ export function useDeletes(deps: Deps) {
           dismiss: () => taskCenter.remove(tcId),
         });
 
-        void (async () => {
-          try {
-            const res = await (deps.deletePrefixStreamed as any)({
-              connectionId: conn,
-              bucket,
-              prefix: it.prefix,
-              signal: ac.signal,
-              onEvent: (ev: any) => {
-                if (canceled) return;
+        jobs.push(
+          (async () => {
+            try {
+              const res = await (deps.deletePrefixStreamed as any)({
+                connectionId: conn,
+                bucket,
+                prefix: it.prefix,
+                signal: ac.signal,
+                onEvent: (ev: any) => {
+                  if (canceled) return;
 
-                if (ev?.type === "start") {
-                  upsertDeleteTask({
-                    id: tcId,
-                    name: displayName,
-                    state: "running",
-                    progressText: "Deleting…",
-                    progressPct: 0,
-                    meta,
-                    dismiss: () => taskCenter.remove(tcId),
-                  });
-                  return;
+                  if (ev?.type === "start") {
+                    upsertDeleteTask({
+                      id: tcId,
+                      name: displayName,
+                      state: "running",
+                      progressText: "Deleting…",
+                      progressPct: 0,
+                      meta,
+                      dismiss: () => taskCenter.remove(tcId),
+                    });
+                    return;
+                  }
+
+                  if (ev?.type === "progress") {
+                    upsertDeleteTask({
+                      id: tcId,
+                      name: displayName,
+                      state: "running",
+                      progressText: `Deleting folder…`,
+                      progressPct: 50,
+                      meta,
+                      dismiss: () => taskCenter.remove(tcId),
+                    });
+                  }
+                },
+              });
+
+              if (!isResultLike(res)) {
+                throw new Error("Invalid response from deletePrefixStreamed");
+              }
+
+              if (canceled) {
+                canceledCount += 1;
+                upsertDeleteTask({
+                  id: tcId,
+                  name: displayName,
+                  state: "canceled",
+                  progressText: "Canceled",
+                  progressPct: 0,
+                  meta,
+                  dismiss: () => taskCenter.remove(tcId),
+                });
+                if (!isMulti) {
+                  notifyDelete(
+                    { kind: "folder", name: displayName, prefix: it.prefix },
+                    "canceled"
+                  );
                 }
+                return;
+              }
 
-                // Simplified to always update the progress to 100% once deletion starts
-                if (ev?.type === "progress") {
-                  upsertDeleteTask({
-                    id: tcId,
-                    name: displayName,
-                    state: "running",
-                    progressText: `Deleting folder…`,
-                    progressPct: 100, // Always set to 100% for folder deletion
-                    meta,
-                    dismiss: () => taskCenter.remove(tcId),
-                  });
+              if (res.isErr()) {
+                failedCount += 1;
+                const msg = res.error?.message || "Delete failed";
+                upsertDeleteTask({
+                  id: tcId,
+                  name: displayName,
+                  state: "failed",
+                  progressText: "Failed",
+                  progressPct: 0,
+                  error: msg,
+                  meta,
+                  dismiss: () => taskCenter.remove(tcId),
+                });
+                if (!isMulti) {
+                  notifyDelete(
+                    { kind: "folder", name: displayName, prefix: it.prefix },
+                    "failed",
+                    msg
+                  );
                 }
-              },
-            });
+                return;
+              }
 
-            // Ensure the response is valid before processing
-            if (!res || !res.value) {
-              throw new Error("Invalid response from deletePrefixStreamed");
-            }
-
-            if (canceled) {
+              doneCount += 1;
               upsertDeleteTask({
                 id: tcId,
                 name: displayName,
-                state: "canceled",
-                progressText: "Canceled",
-                progressPct: 0,
+                state: "done",
+                progressText: `Done. Deleted prefix.`,
+                progressPct: 100,
                 meta,
                 dismiss: () => taskCenter.remove(tcId),
               });
-              return;
-            }
+              deps.onDeleted?.({ type: "folder", prefix: it.prefix });
+              if (!isMulti) {
+                notifyDelete(
+                  { kind: "folder", name: displayName, prefix: it.prefix },
+                  "done"
+                );
+              }
+            } catch (e: any) {
+              if (canceled || isAbortish(e)) {
+                canceledCount += 1;
+                upsertDeleteTask({
+                  id: tcId,
+                  name: displayName,
+                  state: "canceled",
+                  progressText: "Canceled",
+                  progressPct: 0,
+                  meta,
+                  dismiss: () => taskCenter.remove(tcId),
+                });
+                if (!isMulti) {
+                  notifyDelete(
+                    { kind: "folder", name: displayName, prefix: it.prefix },
+                    "canceled"
+                  );
+                }
+                return;
+              }
 
-            if (res?.isErr?.()) {
+              failedCount += 1;
+              const msg = e?.message || "Delete failed";
               upsertDeleteTask({
                 id: tcId,
                 name: displayName,
                 state: "failed",
                 progressText: "Failed",
                 progressPct: 0,
-                error: res.error?.message || "Delete failed",
+                error: msg,
                 meta,
                 dismiss: () => taskCenter.remove(tcId),
               });
-              return;
+              if (!isMulti) {
+                notifyDelete(
+                  { kind: "folder", name: displayName, prefix: it.prefix },
+                  "failed",
+                  msg
+                );
+              }
             }
-
-            upsertDeleteTask({
-              id: tcId,
-              name: displayName,
-              state: "done",
-              progressText: `Done. Deleted prefix.`,
-              progressPct: 100,
-              meta,
-              dismiss: () => taskCenter.remove(tcId),
-            });
-            deps.onDeleted?.({ type: "folder", prefix: it.prefix });
-          } catch (e: any) {
-            if (canceled || isAbortish(e)) {
-              upsertDeleteTask({
-                id: tcId,
-                name: displayName,
-                state: "canceled",
-                progressText: "Canceled",
-                progressPct: 0,
-                meta,
-                dismiss: () => taskCenter.remove(tcId),
-              });
-              return;
-            }
-
-            upsertDeleteTask({
-              id: tcId,
-              name: displayName,
-              state: "failed",
-              progressText: "Failed",
-              progressPct: 0,
-              error: e?.message || "Delete failed",
-              meta,
-              dismiss: () => taskCenter.remove(tcId),
-            });
-          }
-        })();
+          })()
+        );
       } else {
         const ac = new AbortController();
         let canceled = false;
@@ -268,7 +416,7 @@ export function useDeletes(deps: Deps) {
           name: displayName,
           state: "running",
           progressText: "Deleting…",
-          progressPct: 0, // Start from 0% for file
+          progressPct: 0,
           meta,
           cancel: () => {
             canceled = true;
@@ -279,86 +427,140 @@ export function useDeletes(deps: Deps) {
           dismiss: () => taskCenter.remove(tcId),
         });
 
-        void (async () => {
-          try {
-            const res = await (deps.deleteObject as any)({
-              connectionId: conn,
-              bucket,
-              key: it.key,
-              signal: ac.signal,
-            });
+        jobs.push(
+          (async () => {
+            try {
+              const res = await (deps.deleteObject as any)({
+                connectionId: conn,
+                bucket,
+                key: it.key,
+                signal: ac.signal,
+              });
 
-            // Check if the response is valid
-            if (!res || !res.value) {
-              throw new Error("Invalid response from deleteObject");
-            }
+              if (!isResultLike(res)) {
+                throw new Error("Invalid response from deleteObject");
+              }
 
-            if (canceled) {
+              if (canceled) {
+                canceledCount += 1;
+                upsertDeleteTask({
+                  id: tcId,
+                  name: displayName,
+                  state: "canceled",
+                  progressText: "Canceled",
+                  progressPct: 0,
+                  meta,
+                  dismiss: () => taskCenter.remove(tcId),
+                });
+                if (!isMulti) {
+                  notifyDelete(
+                    { kind: "file", name: displayName, key: it.key },
+                    "canceled"
+                  );
+                }
+                return;
+              }
+
+              if (res.isErr()) {
+                failedCount += 1;
+                const msg = res.error?.message || "Delete failed";
+                upsertDeleteTask({
+                  id: tcId,
+                  name: displayName,
+                  state: "failed",
+                  progressText: "Failed",
+                  progressPct: 0,
+                  error: msg,
+                  meta,
+                  dismiss: () => taskCenter.remove(tcId),
+                });
+                if (!isMulti) {
+                  notifyDelete(
+                    { kind: "file", name: displayName, key: it.key },
+                    "failed",
+                    msg
+                  );
+                }
+                return;
+              }
+
+              doneCount += 1;
               upsertDeleteTask({
                 id: tcId,
                 name: displayName,
-                state: "canceled",
-                progressText: "Canceled",
-                progressPct: 0,
+                state: "done",
+                progressText: "Done",
+                progressPct: 100,
                 meta,
                 dismiss: () => taskCenter.remove(tcId),
               });
-              return;
-            }
+              deps.onDeleted?.({ type: "file", key: it.key });
+              if (!isMulti) {
+                notifyDelete(
+                  { kind: "file", name: displayName, key: it.key },
+                  "done"
+                );
+              }
+            } catch (e: any) {
+              if (canceled || isAbortish(e)) {
+                canceledCount += 1;
+                upsertDeleteTask({
+                  id: tcId,
+                  name: displayName,
+                  state: "canceled",
+                  progressText: "Canceled",
+                  progressPct: 0,
+                  meta,
+                  dismiss: () => taskCenter.remove(tcId),
+                });
+                if (!isMulti) {
+                  notifyDelete(
+                    { kind: "file", name: displayName, key: it.key },
+                    "canceled"
+                  );
+                }
+                return;
+              }
 
-            if (res?.isErr?.()) {
+              failedCount += 1;
+              const msg = e?.message || "Delete failed";
               upsertDeleteTask({
                 id: tcId,
                 name: displayName,
                 state: "failed",
                 progressText: "Failed",
                 progressPct: 0,
-                error: res.error?.message || "Delete failed",
+                error: msg,
                 meta,
                 dismiss: () => taskCenter.remove(tcId),
               });
-              return;
+              if (!isMulti) {
+                notifyDelete(
+                  { kind: "file", name: displayName, key: it.key },
+                  "failed",
+                  msg
+                );
+              }
             }
-
-            upsertDeleteTask({
-              id: tcId,
-              name: displayName,
-              state: "done",
-              progressText: "Done",
-              progressPct: 100, // Set progress to 100% when done
-              meta,
-              dismiss: () => taskCenter.remove(tcId),
-            });
-            deps.onDeleted?.({ type: "file", key: it.key });
-          } catch (e: any) {
-            if (canceled || isAbortish(e)) {
-              upsertDeleteTask({
-                id: tcId,
-                name: displayName,
-                state: "canceled",
-                progressText: "Canceled",
-                progressPct: 0,
-                meta,
-                dismiss: () => taskCenter.remove(tcId),
-              });
-              return;
-            }
-
-            upsertDeleteTask({
-              id: tcId,
-              name: displayName,
-              state: "failed",
-              progressText: "Failed",
-              progressPct: 0,
-              error: e?.message || "Delete failed",
-              meta,
-              dismiss: () => taskCenter.remove(tcId),
-            });
-          }
-        })();
+          })()
+        );
       }
     }
+
+    if (jobs.length > 0) {
+      await Promise.all(jobs);
+    }
+
+    if (isMulti) {
+      notifyDeleteBatchSummary({
+        total: jobs.length,
+        done: doneCount,
+        failed: failedCount,
+        canceled: canceledCount,
+      });
+    }
   }
+
   async function deleteVersionsForKey(opts: {
     key: string;
     versionIds: string[];
@@ -389,7 +591,7 @@ export function useDeletes(deps: Deps) {
       name: `Delete ${total} version(s): ${name}`,
       state: "running",
       progressText: `0 / ${total}`,
-      progressPct: 0, // Start from 0% for versions
+      progressPct: 0,
       meta,
       cancel: () => {
         canceled = true;
@@ -402,6 +604,13 @@ export function useDeletes(deps: Deps) {
 
     let done = 0;
 
+    const notifyTarget = {
+      kind: "versions" as const,
+      name,
+      key: opts.key,
+      total,
+    };
+
     for (const vid of opts.versionIds) {
       if (canceled) {
         upsertDeleteTask({
@@ -413,20 +622,74 @@ export function useDeletes(deps: Deps) {
           meta,
           dismiss: () => taskCenter.remove(tcId),
         });
+
+        notifyDelete(notifyTarget, "canceled");
         return;
       }
 
-      const res = await (deps.deleteObjectVersion as any)({
-        connectionId: conn,
-        bucket,
-        key: opts.key,
-        versionId: vid,
-        signal: ac.signal,
-      });
+      let res: any;
+      try {
+        res = await (deps.deleteObjectVersion as any)({
+          connectionId: conn,
+          bucket,
+          key: opts.key,
+          versionId: vid,
+          signal: ac.signal,
+        });
+      } catch (e: any) {
+        if (canceled || isAbortish(e)) {
+          upsertDeleteTask({
+            id: tcId,
+            name: `Delete ${total} version(s): ${name}`,
+            state: "canceled",
+            progressText: `Canceled at ${done} / ${total}`,
+            progressPct: (done / total) * 100,
+            meta,
+            dismiss: () => taskCenter.remove(tcId),
+          });
 
-      // Check if the response is valid
-      if (!res || !res.value) {
-        throw new Error("Invalid response from deleteObjectVersion");
+          notifyDelete(notifyTarget, "canceled");
+          return;
+        }
+
+        const msg = e?.message || "Delete failed";
+
+        upsertDeleteTask({
+          id: tcId,
+          name: `Delete ${total} version(s): ${name}`,
+          state: "failed",
+          progressText: `Failed at ${done} / ${total}`,
+          progressPct: (done / total) * 100,
+          error: msg,
+          meta,
+          dismiss: () => taskCenter.remove(tcId),
+        });
+
+        console.error(
+          `Failed to delete version ${vid} for ${opts.key}: ${msg}`,
+          e
+        );
+
+        notifyDelete(notifyTarget, "failed", msg);
+        return;
+      }
+
+      if (!isResultLike(res)) {
+        const msg = "Invalid response from deleteObjectVersion";
+
+        upsertDeleteTask({
+          id: tcId,
+          name: `Delete ${total} version(s): ${name}`,
+          state: "failed",
+          progressText: `Failed at ${done} / ${total}`,
+          progressPct: (done / total) * 100,
+          error: msg,
+          meta,
+          dismiss: () => taskCenter.remove(tcId),
+        });
+
+        notifyDelete(notifyTarget, "failed", msg);
+        return;
       }
 
       if (canceled) {
@@ -439,10 +702,12 @@ export function useDeletes(deps: Deps) {
           meta,
           dismiss: () => taskCenter.remove(tcId),
         });
+
+        notifyDelete(notifyTarget, "canceled");
         return;
       }
 
-      if (res?.isErr?.()) {
+      if (res.isErr()) {
         const e = res.error;
         const msg = e instanceof Error ? e.message : String(e);
 
@@ -461,14 +726,8 @@ export function useDeletes(deps: Deps) {
           `Failed to delete version ${vid} for ${opts.key}: ${msg}`,
           e
         );
-        pushNotification(
-          new Notification(
-            "Failed Delete Version",
-            `Failed to delete version ${vid} for ${opts.key}: ${msg}`,
-            "error",
-            5000
-          )
-        );
+
+        notifyDelete(notifyTarget, "failed", msg);
         return;
       }
 
@@ -479,7 +738,7 @@ export function useDeletes(deps: Deps) {
         name: `Delete ${total} version(s): ${name}`,
         state: "running",
         progressText: `${done} / ${total}`,
-        progressPct: (done / total) * 100, // Update progress bar
+        progressPct: (done / total) * 100,
         meta,
         dismiss: () => taskCenter.remove(tcId),
       });
@@ -490,19 +749,12 @@ export function useDeletes(deps: Deps) {
       name: `Delete ${total} version(s): ${name}`,
       state: "done",
       progressText: "Done",
-      progressPct: 100, // Done, set to 100%
+      progressPct: 100,
       meta,
       dismiss: () => taskCenter.remove(tcId),
     });
 
-    pushNotification(
-      new Notification(
-        "Version Deleted",
-        `Deleted ${done} version(s) for ${opts.key}`,
-        "success",
-        5000
-      )
-    );
+    notifyDelete(notifyTarget, "done");
   }
 
   return {
