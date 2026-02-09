@@ -1,10 +1,3 @@
-### Building on Rocky:
+# cockpit-s3-browser
 
-```
-dnf install libzfs5-devel python3-devel -y
-pip3 install Cython==0.29.35
-git clone https://github.com/45Drives/python3-libzfs.git && cd python3-libzfs
-./configure --prefix=/usr
-make
-make install
-```
+cockpit-s3-browser is a Cockpit plugin that provides a file-manager style S3 Explorer for browsing buckets and objects. It focuses on a familiar folder-like experience while supporting core S3 workflows such as listing, uploads, downloads, object operations, metadata, and version-aware management.
