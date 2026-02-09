@@ -67,9 +67,10 @@
                 <td class="px-4 py-3">
                   <span
                     class="inline-flex items-center rounded-md border border-default bg-default px-2 py-0.5 text-xs font-semibold"
-                    :class="c.useTls ? 'text-red-700' : 'text-default'">
-                    {{ c.useTls ? "Insecure" : "Verify" }}
+                    :class="c.useTls ? 'text-default' : 'text-red-700'">
+                    {{ c.useTls ? "HTTPS" : "HTTP" }}
                   </span>
+
                 </td>
 
                 <td class="px-4 py-3 text-default">{{ formatDate(c.updatedAt) }}</td>
