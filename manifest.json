@@ -2,9 +2,9 @@
     "schema_version": "45D_AP_V2.0",
     "name": "cockpit-s3-browser",
     "title": "s3-browser",
-    "stable": false,
+    "stable": true,
     "version": "1.1.0",
-    "build_number": "4",
+    "build_number": "5",
     "author": "Rachit Hans <rhans@45drives.com>",
     "git_url": "https://github.com/45Drives/cockpit-s3-browser",
     "license": "GPL-3.0+",
@@ -59,7 +59,7 @@
     "changelog": {
         "urgency": "medium",
         "version": "1.1.0",
-        "build_number": "4",
+        "build_number": "5",
         "date": null,
         "packager": "Rachit Hans <rhans@45drives.com>",
         "changes": []

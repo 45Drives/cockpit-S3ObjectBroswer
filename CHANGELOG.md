@@ -1,3 +1,3 @@
-## s3-browser 1.1.0-4
+## s3-browser 1.1.0-5
 
-*  added new folder creation and fixed upload/delet bugs + building pacakge
+* building package

@@ -1,3 +1,9 @@
+cockpit-s3-browser (1.1.0-5focal) focal; urgency=medium
+
+  * building package
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 09 Feb 2026 06:44:55 -0400
+
 cockpit-s3-browser (1.1.0-4focal) focal; urgency=medium
 
   *  added new folder creation and fixed upload/delet bugs + building pacakge
