@@ -171,7 +171,7 @@
 
                                                 <div class="px-3 py-2 text-default min-w-0 truncate">
                                                     <span v-if="r.type === 'file'">{{ formatDate(r.lastModified)
-                                                        }}</span>
+                                                    }}</span>
                                                     <span v-else>—</span>
                                                 </div>
 
@@ -269,6 +269,13 @@
         @close="tagsOpen = false" @save="onSaveTags" />
     <StorageClassModal :open="storageClassModal.open" :busy="busy" :current="storageClassModal.current"
         :keyLabel="storageClassModal.key" @close="closeStorageClassModal" @submit="applyStorageClass" />
+    <NewFolderModal :open="newFolderOpen" :busy="newFolderBusy" :prefix="prefix" @close="closeNewFolderModal"
+        @create="({ name }) => submitNewFolder(name)" />
+
+
+    <RenameModal :open="renameOpen" :busy="renameBusy" :initialName="renameName"
+        :subtitle="renameTarget ? renameTarget.key : ''" @close="closeRenameModal" @submit="submitRename" />
+
 
 </template>
 
@@ -279,7 +286,7 @@ import { useRoute, useRouter } from "vue-router";
 import {
     listObjects, deleteObject, deletePrefixStreamed, renameObjectStreamed, uploadObjectFromStdinStreamed, downloadPrefixTarGz, downloadObject, getDownloadJobStatus
     , copyPrefix, movePrefix, copyObject, getObjectTags, putObjectTags, statObject, changeStorageClass, cancelDownloadJob, getObjectVersions,
-    downloadObjectVersion, deleteObjectVersion, rollbackObjectVersion
+    downloadObjectVersion, deleteObjectVersion, rollbackObjectVersion, createFolder
 } from "../lib/s3Objects";
 import { useClipboardStore } from "../stores/clipboard";
 import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon } from "@heroicons/vue/20/solid";
@@ -304,6 +311,8 @@ import ObjectVersionsList from "../components/ObjectVersionsList.vue";
 import StorageClassModal from "../components/Modals/StorageClassModal.vue";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 import TaskCenter from "../components/TaskCenter.vue";
+import NewFolderModal from "../components/Modals/NewFolderModal.vue";
+import RenameModal from "../components/Modals/RenameModal.vue";
 
 const iconScroller = ref<any>(null);
 const gridItems = ref(1);
@@ -337,7 +346,7 @@ onBeforeUnmount(() => {
 const menuMode = computed(() => (mode.value === "versions" ? "versions" : "objects"));
 const mode = ref<"objects" | "versions">("objects");
 const lastObjectSelectionId = ref<string | null>(null);
-const versionsKey = ref<string>("");          // object key whose versions we are viewing
+const versionsKey = ref<string>("");
 const versionsName = ref<string>("");         // display name (basename)
 const versionsLoading = ref(false);
 const versionsErr = ref("");
@@ -413,6 +422,15 @@ const continuationToken = ref<string | null>(null);
 const hasMore = ref(false);
 let runId = 0;
 const deleteOpen = ref(false);
+const newFolderOpen = ref(false);
+const newFolderBusy = ref(false);
+const newFolderName = ref("");
+const renameOpen = ref(false);
+const renameBusy = ref(false);
+const renameName = ref("");
+const renameTarget = ref<FileRow | null>(null);
+
+
 
 const detailsSelectionSummary = computed(() => {
     if (mode.value === "versions") {
@@ -452,9 +470,11 @@ const uploads = useUploads({
     refresh,
     onUploaded: (key) => {
         upsertFileRowByKey(key);
-        refresh();
     },
-
+    onBatchFinished: async ({ isBulk }) => {
+        // folder uploads: refresh once
+        if (isBulk) await refresh();
+    },
 });
 
 const uploadBusy = uploads.uploadBusy;
@@ -722,7 +742,6 @@ async function fetchPage(reset: boolean) {
             bucket: bucket.value,
             prefix: effectivePrefix,
             continuationToken: reset ? null : continuationToken.value,
-            maxKeys: 1000,
             delimiter: effectiveDelimiter,
         });
 
@@ -936,7 +955,7 @@ async function onMenuAction(action: MenuAction) {
     }
 
     const r = menuRow.value;
-    if (action !== "paste" && !r) return;
+    if (action !== "paste" && action !== "newFolder" && !r) return;
 
     if (action === "copy") {
         const items = effectiveSelection();
@@ -974,62 +993,21 @@ async function onMenuAction(action: MenuAction) {
         return;
     }
 
-
     if (action === "rename") {
         const items = effectiveSelection();
         const files = items.filter(isFileRow);
+
         if (files.length !== 1 || items.length !== 1) {
-            error.value = "Select a single file to rename.";
             pushNotification(
-                new Notification(
-                    "Not Allowed",
-                    `Select a single file to rename.`,
-                    "error",
-                    5000
-                ))
-            return;
-        }
-
-        const f = files[0];
-        const newName = window.prompt("Rename to:", f.name);
-        if (!newName) return;
-
-        const basePrefix = prefix.value || "";
-
-        // Allow slashes (move into "folders"), but sanitize
-        let cleaned = newName.trim();
-
-        // strip leading slashes so user can't accidentally create "/foo" keys in your UI
-        cleaned = cleaned.replace(/^\/+/, "");
-
-        // collapse multiple slashes
-        cleaned = cleaned.replace(/\/{2,}/g, "/");
-
-        // forbid path traversal
-        if (
-            !cleaned ||
-            cleaned === "." ||
-            cleaned === ".." ||
-            cleaned.startsWith("../") ||
-            cleaned.includes("/../") ||
-            cleaned.endsWith("/..")
-        ) {
-            pushNotification(
-                new Notification("Not allowed ", `Invalid name`, "success", 5000
-                )
+                new Notification("Not Allowed", "Select a single file to rename.", "error", 5000)
             );
             return;
         }
 
-        // If user typed a path (contains "/"), treat as absolute-from-bucket.
-        // If they typed just a filename, rename within the current prefix.
-        const dstKey = cleaned.includes("/")
-            ? cleaned
-            : (basePrefix ? basePrefix : "") + cleaned;
-
-        await renamer.renameFile(f.key, dstKey);
+        openRenameModal(files[0]);
         return;
     }
+
 
 
     if (action === "paste") {
@@ -1097,6 +1075,10 @@ async function onMenuAction(action: MenuAction) {
         }
 
         openStorageClassModal(files[0]);
+        return;
+    }
+    if (action === "newFolder") {
+        openNewFolderModal();
         return;
     }
 
@@ -1410,7 +1392,6 @@ async function loadVersionsForKey(key: string, name: string) {
             connectionId: connectionId.value,
             bucket: bucket.value,
             key,
-            maxKeys: 500,
         });
 
         if (res.isErr()) {
@@ -1537,5 +1518,75 @@ function exitVersionsMode() {
         selectedIds.value = new Set([lastObjectSelectionId.value]);
     }
 }
+
+function openNewFolderModal() {
+    newFolderName.value = "";
+    newFolderOpen.value = true;
+}
+
+function closeNewFolderModal() {
+    if (newFolderBusy.value) return;
+    newFolderOpen.value = false;
+}
+
+async function submitNewFolder(name: string) {
+    newFolderBusy.value = true;
+    try {
+        const res = await createFolder({
+            connectionId: connectionId.value,
+            bucket: bucket.value,
+            prefix: prefix.value || "",
+            name,
+        });
+
+        if (res.isErr()) {
+            pushNotification(new Notification("Create folder failed", res.error.message, "error", 5000));
+            return;
+        }
+
+        await refresh();
+        pushNotification(new Notification("Folder created", `${name}/`, "success", 3000));
+
+        newFolderOpen.value = false;
+    } finally {
+        newFolderBusy.value = false;
+        menuOpen.value = false;
+    }
+}
+function openRenameModal(file: FileRow) {
+    if (busy.value) return;
+    renameTarget.value = file;
+    renameName.value = file.name; // prefill
+    renameOpen.value = true;
+}
+
+function closeRenameModal() {
+  renameOpen.value = false;
+  renameTarget.value = null;
+  renameName.value = "";
+}
+
+async function submitRename(cleanedName: string) {
+  const f = renameTarget.value;
+  if (!f) return;
+
+  const basePrefix = prefix.value || "";
+  const dstKey = cleanedName.includes("/")
+    ? cleanedName
+    : (basePrefix ? basePrefix : "") + cleanedName;
+
+  closeRenameModal();
+
+  renameBusy.value = true;
+  try {
+    await renamer.renameFile(f.key, dstKey);
+    await refresh();
+  } finally {
+    renameBusy.value = false;
+    menuOpen.value = false;
+  }
+}
+
+
 
 </script>

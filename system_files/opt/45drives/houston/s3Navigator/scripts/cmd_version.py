@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from botocore.exceptions import ClientError # type: ignore
 from utils import cfg_path, get_flag_value, get_job_id, install_cancel_handler, make_client, read_json, write_job
 
-def cmd_list_object_versions(conn_id: str, bucket: str, key: str, max_keys: int = 200) -> None:
+def cmd_list_object_versions(conn_id: str, bucket: str, key: str) -> None:
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
@@ -15,7 +15,7 @@ def cmd_list_object_versions(conn_id: str, bucket: str, key: str, max_keys: int 
   out = []
   key_marker = None
   version_marker = None
-
+  max_keys = 1000
   while True:
     kwargs = {
       "Bucket": bucket,

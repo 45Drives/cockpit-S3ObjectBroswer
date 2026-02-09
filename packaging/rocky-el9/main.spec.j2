@@ -1,0 +1,40 @@
+Name: {{ name }}
+Version: {{ version }}
+Release: {{ build_number }}%{?dist}
+Summary: {{ description }}
+License: {{ license }}
+URL: {{ git_url }}
+Source0: %{name}-%{version}.tar.gz
+BuildArch: {{ architecture.rocky }}
+Requires: {{ dependencies.rocky_common | join(', ') }}
+
+BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
+
+%description
+{{ title }}
+{{ description }}
+
+%prep
+%setup -q
+
+%build
+make OS_PACKAGE_RELEASE=el8
+
+%install
+make DESTDIR=%{buildroot} install
+
+%files
+/opt/45drives/houston/s3Navigator/*
+/usr/share/cockpit/cockpit-s3-browser/*
+
+
+%changelog
+* Tue Jan 27 2026 Rachit Hans <rhans@45drives.com> 1.1.0-4
+-  added new folder creation and fixed upload/delet bugs + building pacakge
+* Mon Jan 26 2026 Rachit Hans <rhans@45drives.com> 1.1.0-3
+-  building test package + fixed files loacations for downloads jobs and connection
+  ids
+* Mon Jan 26 2026 Rachit Hans <rhans@45drives.com> 1.1.0-2
+-  building test package
+* Fri Jan 23 2026 Rachit Hans <rhans@45drives.com> 1.1.0-1
+- building test package

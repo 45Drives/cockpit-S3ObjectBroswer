@@ -239,3 +239,20 @@ export function rateEtaText(stats: Map<string, RateStats>, id: string) {
   const etaTxt = st?.etaSec != null ? formatEta(st.etaSec) : "—";
   return `${rateTxt} • ETA ${etaTxt}`;
 }
+
+
+export function sanitize(raw: string) {
+  let s = (raw || "").trim();
+  s = s.replace(/^\/+/, "");
+  s = s.replace(/\/{2,}/g, "/");
+  return s;
+}
+
+export function validate(cleaned: string, allowSlashes): string | null {
+  if (!cleaned) return "Name is required.";
+  if (cleaned === "." || cleaned === "..") return "Invalid name.";
+  if (!allowSlashes.value && cleaned.includes("/")) return "Name cannot include '/'.";
+  if (cleaned.startsWith("../") || cleaned.includes("/../") || cleaned.endsWith("/.."))
+      return "Invalid name.";
+  return null;
+}

@@ -2,17 +2,31 @@
 import json
 import sys
 from typing import Any, Dict, List
-
+import os
 from utils import cfg_path, get_flag_value, read_json, make_client
 
-def cmd_list_buckets(conn_id: str) -> None:
-    record = read_json(f"/etc/45drives/s3-object-browser/connections/{conn_id}.json")
-    cfg = record.get("config", {})
-    client = make_client(cfg)
 
-    resp = client.list_buckets()
-    buckets = [{"name": b["Name"], "creationDate": b["CreationDate"].isoformat()} for b in resp.get("Buckets", [])]
-    sys.stdout.write(json.dumps({"ok": True, "buckets": buckets}) + "\n")
+
+def cmd_list_buckets(conn_id: str) -> None:
+  try:
+    record = read_json(cfg_path(conn_id))
+  except Exception as e:
+    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    return
+
+  cfg = (record.get("config") or {}) if isinstance(record, dict) else {}
+  if not cfg:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Connection not found"}) + "\n")
+    return
+
+  client = make_client(cfg)
+  resp = client.list_buckets()
+  buckets = [
+    {"name": b["Name"], "creationDate": b["CreationDate"].isoformat()}
+    for b in (resp.get("Buckets") or [])
+  ]
+  sys.stdout.write(json.dumps({"ok": True, "buckets": buckets}) + "\n")
+
 
 def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:
   record = read_json(cfg_path(conn_id))
@@ -20,24 +34,13 @@ def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:
 
   prefix = (get_flag_value(argv, "--prefix", "") or "").strip()
   delimiter = (get_flag_value(argv, "--delimiter", None) or None)
-  max_keys_raw = (get_flag_value(argv, "--max-keys", "200") or "200").strip()
   token = (get_flag_value(argv, "--continuation-token", None) or None)
-
-  try:
-    max_keys = int(max_keys_raw)
-  except ValueError:
-    raise ValueError("Invalid --max-keys")
-
-  if max_keys <= 0:
-    max_keys = 200
-  if max_keys > 1000:
-    max_keys = 1000  # S3 max for ListObjectsV2
 
   client = make_client(cfg)
 
   req: Dict[str, Any] = {
     "Bucket": bucket,
-    "MaxKeys": max_keys,
+    "MaxKeys": 1000,  
   }
   if prefix:
     req["Prefix"] = prefix
@@ -60,18 +63,20 @@ def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:
     if not key:
       continue
 
-    lm = o.get("LastModified")
-    et = o.get("ETag")
-    sc = o.get("StorageClass")
+    # Hide folder markers
+    if str(key).endswith("/") and int(o.get("Size") or 0) == 0:
+      continue
 
-
+    lastModified = o.get("LastModified")
+    etag = o.get("ETag")
+    storageClass= o.get("StorageClass")
 
     contents.append({
       "key": key,
       "size": int(o.get("Size") or 0),
-      "lastModified": (lm.isoformat() if lm else None),
-      "etag": (str(et).strip('"') if et else None),
-      "storageClass": (str(sc) if sc else None),
+      "lastModified": (lastModified.isoformat() if lastModified else None),
+      "etag": (str(etag).strip('"') if etag else None),
+      "storageClass": (str(storageClass) if storageClass else None),
     })
 
   out = {

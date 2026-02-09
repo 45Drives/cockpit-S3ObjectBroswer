@@ -66,7 +66,7 @@ export function upsertConnection(
   const arg = `b64:${toB64Utf8(JSON.stringify(payload))}`;
 
   return server
-    .execute(pyCmd(["upsert", arg], "require"))
+    .execute(pyCmd(["upsert", arg], "try"))
     .map((proc) => proc.getStdout().trim())
     .andThen(safeJsonParse<UpsertResult>)
     .andThen((res) => {
@@ -77,9 +77,9 @@ export function upsertConnection(
 }
 
 export function deleteConnection(id: string): ResultAsync<null, ProcessError> {
-  return server.execute(pyCmd(["delete", id], "require")).map(() => null);
+  return server.execute(pyCmd(["delete", id], "try")).map(() => null);
 }
 
 export function touchLastUsed(id: string): ResultAsync<null, ProcessError> {
-  return server.execute(pyCmd(["touch", id], "require")).map(() => null);
+  return server.execute(pyCmd(["touch", id], "try")).map(() => null);
 }

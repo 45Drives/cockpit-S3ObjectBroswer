@@ -49,6 +49,13 @@
                 <span>Paste</span>
               </button>
               </MenuItem>
+              <MenuItem v-slot="{ active }">
+              <button type="button" class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                :class="active ? 'bg-accent text-default' : 'text-default'" @click="doAction('newFolder')">
+                <FolderPlusIcon class="h-4 w-4" />
+                <span>New folder…</span>
+              </button>
+              </MenuItem>
 
               <div class="my-1 h-px bg-default"></div>
 
@@ -136,7 +143,9 @@
 <script setup lang="ts">
 import { Menu, MenuItem, MenuItems } from "@headlessui/vue";
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { ArrowDownOnSquareIcon, ClipboardDocumentIcon, ScissorsIcon, TrashIcon, TagIcon, CircleStackIcon, ClipboardIcon, PencilSquareIcon, ArrowTurnUpRightIcon } from "@heroicons/vue/20/solid";
+import { ArrowDownOnSquareIcon, ClipboardDocumentIcon, ScissorsIcon, TrashIcon, TagIcon, CircleStackIcon, ClipboardIcon, PencilSquareIcon, ArrowTurnUpRightIcon 
+  ,FolderPlusIcon
+} from "@heroicons/vue/20/solid";
 import { MenuAction, MenuMode, MenuPos } from "../types";
 
 

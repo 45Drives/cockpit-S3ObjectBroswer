@@ -474,7 +474,6 @@ async function loadVersionsForModal(r: FileRow, myReq: number) {
       connectionId: props.connectionId,
       bucket: props.bucket,
       key: r.key,
-      maxKeys: 200,
     });
 
     if (reqId !== myReq) return;
@@ -552,7 +551,6 @@ async function loadObjectLockInfo(r: FileRow, myReq: number) {
     objectLock.value = bucketRes.value;
 
     if (!bucketRes.value.supported || !bucketRes.value.enabled) {
-      // Don’t call per-object APIs (they’ll fail); show message instead.
       meta.value = {
         ...(meta.value ?? { size: 0, lastModified: null, etag: null, storageClass: null }),
         legalHold: null,

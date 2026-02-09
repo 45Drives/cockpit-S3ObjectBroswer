@@ -239,7 +239,8 @@ export type MenuAction =
   | "cut"
   | "tags"
   | "storageClass"
-  | "rollback";
+  | "rollback"
+  | "newFolder";
 
 export type MenuPos = { x: number; y: number };
 

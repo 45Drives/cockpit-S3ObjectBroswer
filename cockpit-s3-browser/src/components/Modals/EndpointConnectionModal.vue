@@ -33,7 +33,7 @@
                   <p class="mt-1 text-xs text-default/70">
                     A descriptive name used to identify this connection within the application.
                   </p>
-                  <input id="m-name" v-model.trim="form.name" type="text" autocomplete="off" placeholder="My MinIO"
+                  <input id="m-name" v-model.trim="form.name" type="text" autocomplete="off" placeholder="My connection"
                     :class="inputClass(false)" />
                 </div>
 
@@ -192,7 +192,7 @@ const errors = reactive<Record<string, string>>({
 
 function inputClass(invalid: boolean): string {
   return [
-    "block w-full  rounded-md border px-3 py-2   placeholder:text-default",
+    "block w-full  rounded-md border px-3 py-2   placeholder:text-muted",
     "input-textlike bg-default text-default",
     invalid
       ? "border-red-300 text-default focus:border-red-400 focus:ring-red-100"

@@ -46,7 +46,6 @@ export function listObjects(params: {
   prefix?: string;
   delimiter?: string | null; // "/" for folder view, null/"" for flat view
   continuationToken?: string | null;
-  maxKeys?: number;
 }): ResultAsync<ListObjectsResponse, ProcessError | SyntaxError> {
   const args: string[] = [
     "list-objects",
@@ -54,8 +53,7 @@ export function listObjects(params: {
     params.bucket,
     "--prefix",
     params.prefix ?? "",
-    "--max-keys",
-    String(params.maxKeys ?? 1000),
+
   ];
 
   if (params.delimiter) {
@@ -869,15 +867,12 @@ export function getObjectVersions(params: {
   connectionId: string;
   bucket: string;
   key: string;
-  maxKeys?: number;
 }): ResultAsync<{ versions: ObjectVersionItem[] }, ProcessError | SyntaxError> {
   const args: string[] = [
     "list-object-versions",
     params.connectionId,
     params.bucket,
     params.key,
-    "--max-keys",
-    String(params.maxKeys ?? 200),
   ];
 
   return server
@@ -1231,3 +1226,36 @@ export function putObjectRetention(params: {
       return okAsync({ mode, retainUntil, bypassGovernance });
     });
 }
+export function createFolder(params: {
+  connectionId: string;
+  bucket: string;
+  prefix: string; // current prefix ("" or "photos/2025/")
+  name: string;   // folder name (already validated/sanitized by UI)
+}): ResultAsync<{ prefix: string }, ProcessError | SyntaxError> {
+  const args: string[] = [
+    "create-folder",
+    params.connectionId,
+    params.bucket,
+    params.prefix || "",
+    params.name,
+  ];
+
+  return server
+    .execute(pyCmd(args, "try"))
+    .map((p) => p.getStdout().trim())
+    .andThen((s) =>
+      safeJsonParse<{ ok: boolean; prefix?: string; error?: string }>(s)
+    )
+    .andThen((res) => {
+      if (!res.ok)
+        return errAsync(
+          new SyntaxError(res.error || "Failed to create folder")
+        );
+
+      // Python returns the full folder prefix (ending with "/")
+      return okAsync({
+        prefix: String(res.prefix ?? ""),
+      });
+    });
+}
+

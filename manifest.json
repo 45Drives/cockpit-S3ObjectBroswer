@@ -2,11 +2,11 @@
     "schema_version": "45D_AP_V2.0",
     "name": "cockpit-s3-browser",
     "title": "s3-browser",
-    "stable": true,
+    "stable": false,
     "version": "1.1.0",
-    "build_number": "9",
+    "build_number": "4",
     "author": "Rachit Hans <rhans@45drives.com>",
-    "git_url": "https://github.com/45Drives/cockpit-zfs-45d",
+    "git_url": "https://github.com/45Drives/cockpit-s3-browser",
     "license": "GPL-3.0+",
     "architecture": {
         "ubuntu": "all",
@@ -50,11 +50,6 @@
             "group": "rocky",
             "os_name": "rocky-el9",
             "image": "ci.cr.45d.io/ci/simple/rocky-el9:1"
-        },
-        {
-            "group": "debian",
-            "os_name": "debian-bookworm",
-            "image": "ci.cr.45d.io/ci/simple/ubuntu-jammy:1"
         }
     ],
     "repos": [
@@ -63,9 +58,9 @@
     ],
     "changelog": {
         "urgency": "medium",
-        "version": "4.5.2",
-        "build_number": "1",
-        "date": "2026-01-06T17:45:59.623399",
+        "version": "1.1.0",
+        "build_number": "4",
+        "date": null,
         "packager": "Rachit Hans <rhans@45drives.com>",
         "changes": []
     }

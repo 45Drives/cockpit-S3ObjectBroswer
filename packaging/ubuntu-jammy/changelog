@@ -1,0 +1,24 @@
+cockpit-s3-browser (1.1.0-4jammy) jammy; urgency=medium
+
+  *  added new folder creation and fixed upload/delet bugs + building pacakge
+
+ -- Rachit Hans <rhans@45drives.com>  Tue, 27 Jan 2026 10:59:44 -0400
+
+cockpit-s3-browser (1.1.0-3jammy) jammy; urgency=medium
+
+  *  building test package + fixed files loacations for downloads jobs and connection
+    ids
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 26 Jan 2026 08:22:08 -0400
+
+cockpit-s3-browser (1.1.0-2jammy) jammy; urgency=medium
+
+  *  building test package
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 26 Jan 2026 06:27:56 -0400
+
+cockpit-s3-browser (1.1.0-1jammy) jammy; urgency=medium
+
+  * building test package
+
+ -- Rachit Hans <rhans@45drives.com>  Fri, 23 Jan 2026 13:26:36 -0400

@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import type { RateStats, UploadItem } from "../types";
 import type { uploadObjectFromStdinStreamed as uploadObjectFromStdinStreamedFn } from "../lib/s3Objects";
-import {  rateEtaText, uid, updateRateAndEta } from "../lib/helpers";
+import { rateEtaText, uid, updateRateAndEta } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 
@@ -15,8 +15,16 @@ type Deps = {
 
   refresh?: () => Promise<void> | void;
   onUploaded?: (key: string) => void;
+  onBatchFinished?: (info: {
+    isBulk: boolean;
+    total: number;
+    done: number;
+    failed: number;
+    canceled: boolean;
+  }) => void;
 };
 
+const BULK_UPLOAD_THRESHOLD = 50; // still used for pickFiles only
 
 export function useUploads(deps: Deps) {
   const taskCenter = useTaskCenterStore();
@@ -33,27 +41,86 @@ export function useUploads(deps: Deps) {
   const uploadCancelAll = ref<null | (() => void)>(null);
   const rateStats = new Map<string, RateStats>();
 
+  // Bulk/batch state (per hook instance)
+  const currentIsBulk = ref(false);
+  const bulkTaskId = ref<string | null>(null);
+  const bulkTotalBytes = ref(0);
+
+  let bulkUploadedBytes = 0;
+  let bulkCompleted = 0;
+  let bulkFailed = 0;
+
+  function resetBulkState() {
+    bulkTaskId.value = null;
+    bulkTotalBytes.value = 0;
+    bulkUploadedBytes = 0;
+    bulkCompleted = 0;
+    bulkFailed = 0;
+  }
+
+  function maybeUpsertItemTask(u: UploadItem, isBulk: boolean) {
+    if (isBulk) return;
+    upsertTaskForItem(u);
+  }
+
+  function upsertBulkTask(
+    name: string,
+    state: "running" | "done" | "failed" | "canceled" | "canceling",
+    text?: string
+  ) {
+    const id = bulkTaskId.value;
+    if (!id) return;
+
+    taskCenter.upsert({
+      id,
+      kind: "upload",
+      name,
+      state,
+      progressCurrent:
+        bulkTotalBytes.value > 0
+          ? Math.min(bulkUploadedBytes, bulkTotalBytes.value)
+          : 0,
+      progressTotal: bulkTotalBytes.value > 0 ? bulkTotalBytes.value : null,
+      progressPct:
+        bulkTotalBytes.value > 0
+          ? Math.max(
+              0,
+              Math.min(
+                100,
+                Math.floor((bulkUploadedBytes * 100) / bulkTotalBytes.value)
+              )
+            )
+          : null,
+      progressText: text || "",
+      actions:
+        state === "running" || state === "canceling"
+          ? { cancel: () => uploadCancelAll.value?.() }
+          : { dismiss: () => taskCenter.remove(id) },
+    });
+  }
+
   const uploadPct = computed(() => {
     const p = uploadProgress.value;
     if (!p || p.size <= 0) return null;
     return Math.max(0, Math.min(100, Math.floor((p.bytes / p.size) * 100)));
   });
 
-  const overallBytes = computed(() =>
-    uploadItems.value.reduce((s, u) => s + (u.file.size || 0), 0)
-  );
+  // Avoid expensive reducers in bulk mode (and for folder bulk)
+  const overallBytes = computed(() => {
+    if (uploadItems.value.length >= BULK_UPLOAD_THRESHOLD) return 0;
+    return uploadItems.value.reduce((s, u) => s + (u.file.size || 0), 0);
+  });
 
-  const overallSent = computed(() =>
-    uploadItems.value.reduce((s, u) => s + (u.bytes || 0), 0)
-  );
+  const overallSent = computed(() => {
+    if (uploadItems.value.length >= BULK_UPLOAD_THRESHOLD) return 0;
+    return uploadItems.value.reduce((s, u) => s + (u.bytes || 0), 0);
+  });
 
   const overallPct = computed(() => {
+    if (uploadItems.value.length >= BULK_UPLOAD_THRESHOLD) return null;
     const t = overallBytes.value;
     if (!t) return null;
-    return Math.max(
-      0,
-      Math.min(100, Math.floor((overallSent.value / t) * 100))
-    );
+    return Math.max(0, Math.min(100, Math.floor((overallSent.value / t) * 100)));
   });
 
   const notified = new Set<string>();
@@ -90,13 +157,54 @@ export function useUploads(deps: Deps) {
       return;
     }
 
-    // failed
     const msg = u.error || "Upload failed";
     pushNotification(
       new Notification(
         "Upload failed",
         `Failed ${name} (${bucket}:${key}) - ${msg}`,
         "error",
+        5000
+      )
+    );
+  }
+
+  function notifyBatchSummary(opts: {
+    total: number;
+    done: number;
+    failed: number;
+    canceled: boolean;
+  }) {
+    if (opts.total <= 1) return;
+
+    if (opts.canceled) {
+      pushNotification(
+        new Notification(
+          "Upload canceled",
+          `Canceled upload. ${opts.done} done, ${opts.failed} failed, ${opts.total} total.`,
+          "error",
+          5000
+        )
+      );
+      return;
+    }
+
+    if (opts.failed > 0) {
+      pushNotification(
+        new Notification(
+          "Upload finished with errors",
+          `Uploaded ${opts.done} of ${opts.total} files (${opts.failed} failed).`,
+          "error",
+          5000
+        )
+      );
+      return;
+    }
+
+    pushNotification(
+      new Notification(
+        "Upload completed",
+        `Uploaded ${opts.total} files.`,
+        "success",
         5000
       )
     );
@@ -152,16 +260,13 @@ export function useUploads(deps: Deps) {
       kind: "upload",
       name: u.file.name,
       state: taskStateForStatus(u.status),
-
       progressText: rateEtaText(rateStats, u.id),
-
       progressCurrent: total > 0 ? cur : null,
       progressTotal: total > 0 ? total : null,
       progressPct:
         total > 0
           ? Math.max(0, Math.min(100, Math.round((cur * 100) / total)))
           : null,
-
       error: u.error,
       actions: {
         cancel: () => cancelById(u.id),
@@ -185,6 +290,9 @@ export function useUploads(deps: Deps) {
       const files = Array.from(input.files ?? []);
       if (files.length === 0) return;
 
+      currentIsBulk.value = false;
+      resetBulkState();
+
       const base = deps.prefix.value || "";
 
       uploadItems.value = files.map((f) => ({
@@ -199,7 +307,7 @@ export function useUploads(deps: Deps) {
       for (const u of uploadItems.value) upsertTaskForItem(u);
 
       const conc = chooseSafeConcurrency(files);
-      await uploadManyWithPool(conc);
+      await uploadManyWithPool(conc, { isBulk: false });
     };
 
     input.click();
@@ -218,6 +326,13 @@ export function useUploads(deps: Deps) {
       const files = Array.from(input.files ?? []);
       if (files.length === 0) return;
 
+      // Folder uploads always use a single TaskCenter entry.
+      const isBulk = true;
+      const isBatch = true;
+
+      currentIsBulk.value = isBulk;
+      resetBulkState();
+
       const base = deps.prefix.value || "";
 
       uploadItems.value = files.map((f) => {
@@ -235,16 +350,30 @@ export function useUploads(deps: Deps) {
         } satisfies UploadItem;
       });
 
-      for (const u of uploadItems.value) upsertTaskForItem(u);
+      bulkTaskId.value = uid();
+      bulkTotalBytes.value = files.reduce((s, f) => s + (f.size || 0), 0);
+
+      upsertBulkTask(
+        `Uploading folder (${files.length} files)`,
+        "running",
+        "Starting…"
+      );
 
       const conc = chooseSafeConcurrency(files);
-      await uploadManyWithPool(conc);
+      await uploadManyWithPool(conc, { isBulk, isBatch });
     };
 
     input.click();
   }
 
-  async function uploadManyWithPool(limit: number) {
+  async function uploadManyWithPool(
+    limit: number,
+    opts?: { isBulk?: boolean; isBatch?: boolean }
+  ) {
+    const isBulk = Boolean(opts?.isBulk);
+    const isBatch = Boolean(opts?.isBatch);
+    const isMulti = uploadItems.value.length > 1;
+
     uploadBusy.value = true;
     uploadProgress.value = null;
     uploadCancel.value = null;
@@ -253,6 +382,14 @@ export function useUploads(deps: Deps) {
 
     uploadCancelAll.value = () => {
       canceledAll = true;
+
+      if (isBulk && bulkTaskId.value) {
+        upsertBulkTask(
+          `Uploading ${uploadItems.value.length} files`,
+          "canceling",
+          "Canceling…"
+        );
+      }
 
       for (const u of uploadItems.value) {
         if (u.status === "uploading") {
@@ -264,8 +401,8 @@ export function useUploads(deps: Deps) {
         if (u.status === "queued") {
           u.canceled = true;
           u.status = "canceled";
-          upsertTaskForItem(u);
-          notify(u, "canceled");
+          maybeUpsertItemTask(u, isBulk);
+          if (!isBulk && !isBatch && !isMulti) notify(u, "canceled");
         }
       }
 
@@ -283,30 +420,55 @@ export function useUploads(deps: Deps) {
 
         item.status = "uploading";
         item.error = undefined;
-        upsertTaskForItem(item);
+        maybeUpsertItemTask(item, isBulk);
 
         try {
-          await uploadOneItemViaStdin(item);
+          await uploadOneItemViaStdin(item, isBulk);
 
           if (!item.canceled) {
             item.status = "done";
-            upsertTaskForItem(item);
-            notify(item, "done");
-            deps.onUploaded?.(item.dstKey);
+            maybeUpsertItemTask(item, isBulk);
+
+            // Track batch counts always for accurate onBatchFinished
+            bulkCompleted += 1;
+
+            if (isBulk) {
+              upsertBulkTask(
+                `Uploading ${uploadItems.value.length} files`,
+                "running",
+                `${bulkCompleted} done, ${bulkFailed} failed`
+              );
+            } else {
+              if (!isBatch && !isMulti) notify(item, "done");
+            }
+
+            if (!isBatch) deps.onUploaded?.(item.dstKey);
           } else {
             item.status = "canceled";
-            upsertTaskForItem(item);
+            maybeUpsertItemTask(item, isBulk);
           }
         } catch (e: any) {
           if (!item.canceled) {
             item.status = "failed";
             item.error = e?.message || "Upload failed";
-            upsertTaskForItem(item);
-            notify(item, "failed");
+            maybeUpsertItemTask(item, isBulk);
+
+            // Track batch counts always for accurate onBatchFinished
+            bulkFailed += 1;
+
+            if (isBulk) {
+              upsertBulkTask(
+                `Uploading ${uploadItems.value.length} files`,
+                "running",
+                `${bulkCompleted} done, ${bulkFailed} failed`
+              );
+            } else {
+              if (!isBatch) notify(item, "failed");
+            }
           } else {
             item.status = "canceled";
-            upsertTaskForItem(item);
-            notify(item, "canceled");
+            maybeUpsertItemTask(item, isBulk);
+            if (!isBulk && !isBatch && !isMulti) notify(item, "canceled");
           }
         } finally {
           rateStats.delete(item.id);
@@ -318,6 +480,46 @@ export function useUploads(deps: Deps) {
       const n = Math.max(1, Math.min(limit, uploadItems.value.length));
       await Promise.all(Array.from({ length: n }, () => worker()));
     } finally {
+      if (isBulk && bulkTaskId.value) {
+        if (canceledAll) {
+          upsertBulkTask(
+            `Upload canceled (${uploadItems.value.length} files)`,
+            "canceled",
+            `${bulkCompleted} done, ${bulkFailed} failed`
+          );
+        } else if (bulkFailed > 0) {
+          upsertBulkTask(
+            `Uploaded ${bulkCompleted} files (${bulkFailed} failed)`,
+            "failed",
+            `${bulkCompleted} done, ${bulkFailed} failed`
+          );
+        } else {
+          upsertBulkTask(
+            `Uploaded ${bulkCompleted} files`,
+            "done",
+            `${bulkCompleted} files uploaded`
+          );
+        }
+      }
+
+      deps.onBatchFinished?.({
+        isBulk: isBulk,
+        total: uploadItems.value.length,
+        done: bulkCompleted,
+        failed: bulkFailed,
+        canceled: canceledAll,
+      });
+
+      // Single summary notification for multi-file runs (folder or multi-select)
+      if (isMulti) {
+        notifyBatchSummary({
+          total: uploadItems.value.length,
+          done: bulkCompleted,
+          failed: bulkFailed,
+          canceled: canceledAll,
+        });
+      }
+
       uploadBusy.value = false;
       uploadCancelAll.value = null;
       uploadCancel.value = null;
@@ -325,9 +527,9 @@ export function useUploads(deps: Deps) {
     }
   }
 
-  async function uploadOneItemViaStdin(item: UploadItem) {
+  async function uploadOneItemViaStdin(item: UploadItem, isBulk: boolean) {
     const file = item.file;
-    upsertTaskForItem(item);
+    maybeUpsertItemTask(item, isBulk);
 
     uploadProgress.value = {
       filename: file.name,
@@ -338,8 +540,8 @@ export function useUploads(deps: Deps) {
     let bytesSent = 0;
     let bytesReadAck = 0;
 
-    const CHUNK_SIZE = 8 * 1024 * 1024; 
-    const MAX_INFLIGHT = CHUNK_SIZE * 3; 
+    const CHUNK_SIZE = 8 * 1024 * 1024;
+    const MAX_INFLIGHT = CHUNK_SIZE * 3;
 
     let unblock: null | (() => void) = null;
     const waitForAck = () =>
@@ -363,14 +565,16 @@ export function useUploads(deps: Deps) {
 
       item.bytes = b;
       uploadProgress.value = { filename: file.name, bytes: b, size: file.size };
-      upsertTaskForItem(item);
+      maybeUpsertItemTask(item, isBulk);
     };
 
     const scheduleUi = (b: number) => {
       pendingUiBytes = b;
       if (uiTimer != null) return;
-      uiTimer = window.setTimeout(flushUi, 250); 
+      uiTimer = window.setTimeout(flushUi, 250);
     };
+
+    let lastAck = 0;
 
     const job = deps.uploadObjectFromStdinStreamed({
       connectionId: deps.connectionId.value,
@@ -380,21 +584,36 @@ export function useUploads(deps: Deps) {
       contentType: file.type || "application/octet-stream",
       onEvent: (ev) => {
         if (ev.type === "progress") {
-          const b = Number(ev.bytesRead ?? 0);
+          const b = Number((ev as any).bytesRead ?? 0);
           if (Number.isFinite(b) && b >= 0) {
             bytesReadAck = b;
-            updateRateAndEta(rateStats,item.id, b, file.size);
+
+            const delta = Math.max(0, b - lastAck);
+            lastAck = b;
+
+            updateRateAndEta(rateStats, item.id, b, file.size);
+
             scheduleUi(b);
+
+            if (isBulk && bulkTaskId.value) {
+              bulkUploadedBytes += delta;
+              upsertBulkTask(
+                `Uploading ${uploadItems.value.length} files`,
+                "running",
+                `${bulkCompleted} done, ${bulkFailed} failed`
+              );
+            }
+
             signalAck();
           }
           return;
         }
 
         if (ev.type === "result") {
-          if (!ev.ok) {
+          if (!(ev as any).ok) {
             item.status = "failed";
-            item.error = ev.error || "Upload failed";
-            upsertTaskForItem(item);
+            item.error = (ev as any).error || "Upload failed";
+            maybeUpsertItemTask(item, isBulk);
             rateStats.delete(item.id);
           }
           signalAck();
@@ -405,7 +624,7 @@ export function useUploads(deps: Deps) {
     item.cancel = () => {
       item.canceled = true;
       item.status = "canceled";
-      upsertTaskForItem(item);
+      maybeUpsertItemTask(item, isBulk);
       try {
         job.cancel();
       } catch {}
@@ -421,7 +640,6 @@ export function useUploads(deps: Deps) {
       while (offset < file.size) {
         if (item.canceled) throw new Error("Canceled");
 
-        // Backpressure gate: if too much inflight, wait for server to read more
         while (!item.canceled && bytesSent - bytesReadAck > MAX_INFLIGHT) {
           await waitForAck();
         }
@@ -442,7 +660,6 @@ export function useUploads(deps: Deps) {
       const res = await job.run;
       if (res.isErr()) throw new Error(res.error.message);
 
-      // Ensure final UI flush if we have pending bytes
       flushUi();
     } finally {
       if (uiTimer != null) window.clearTimeout(uiTimer);
@@ -461,26 +678,24 @@ export function useUploads(deps: Deps) {
     const it = uploadItems.value.find((x) => x.id === id);
     if (!it) return;
 
-    // queued: mark canceled immediately
+    const isBulk = currentIsBulk.value;
+
     if (it.status === "queued") {
       it.canceled = true;
       it.status = "canceled";
-      upsertTaskForItem(it);
-      notify(it, "canceled");
+      maybeUpsertItemTask(it, isBulk);
+      if (!isBulk) notify(it, "canceled");
       return;
     }
 
-    // uploading: invoke per-item cancel handler
     if (it.status === "uploading") {
       try {
         it.cancel?.();
       } catch {}
-      upsertTaskForItem(it);
+      maybeUpsertItemTask(it, isBulk);
       return;
     }
-
   }
-
 
   function dismiss(id: string) {
     const it = uploadItems.value.find((x) => x.id === id);
@@ -503,21 +718,16 @@ export function useUploads(deps: Deps) {
     }
   }
 
-
-
   return {
-    // state
     uploadBusy,
     uploadItems,
     uploadProgress,
     uploadCancel,
     uploadCancelAll,
 
-    // derived
     uploadPct,
     overallPct,
 
-    // actions
     pickFiles,
     pickFolder,
     cancelAll,
