@@ -1,3 +1,9 @@
+cockpit-s3-browser (1.1.0-6jammy) jammy; urgency=medium
+
+  * fixed the app version showing undefined + build package
+
+ -- Rachit Hans <rhans@45drives.com>  Tue, 10 Feb 2026 06:47:39 -0400
+
 cockpit-s3-browser (1.1.0-5jammy) jammy; urgency=medium
 
   * building package

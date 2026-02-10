@@ -1,3 +1,3 @@
-## s3-browser 1.1.0-5
+## s3-browser 1.1.0-6
 
-* building package
+* fixed the app version showing undefined + build package
