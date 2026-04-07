@@ -2,7 +2,7 @@
 import sys
 
 from cmd_list import cmd_list_buckets, cmd_list_objects
-from cmd_object import cmd_download_object, cmd_copy_object, cmd_rename_object, cmd_delete_object, cmd_upload_stdin, cmd_stat_object
+from cmd_object import cmd_download_object, cmd_copy_object, cmd_rename_object, cmd_delete_object, cmd_upload_stdin, cmd_stat_object, cmd_get_bucket_encryption, cmd_put_bucket_encryption, cmd_delete_bucket_encryption
 from cmd_version import cmd_list_object_versions, cmd_delete_object_version, cmd_rollback_object_version
 from cmd_tag import cmd_put_object_tags, cmd_get_object_tags
 from cmd_lock import cmd_get_object_legal_hold, cmd_put_object_legal_hold, cmd_get_object_retention, cmd_put_object_retention, cmd_get_bucket_object_lock
@@ -191,6 +191,24 @@ def main() -> None:
       if len(sys.argv) < 6:
         raise ValueError("Usage: s3browser-cli create-folder <connectionId> <bucket> <prefix> <name>")
       cmd_create_folder(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+      return
+
+    if cmd == "get-bucket-encryption":
+      if len(sys.argv) < 4:
+        raise ValueError("Usage: s3browser-cli get-bucket-encryption <connectionId> <bucket>")
+      cmd_get_bucket_encryption(sys.argv[2], sys.argv[3])
+      return
+
+    if cmd == "put-bucket-encryption":
+      if len(sys.argv) < 4:
+        raise ValueError("Usage: s3browser-cli put-bucket-encryption <connectionId> <bucket> [--algorithm AES256|aws:kms] [--kms-key-id KEY] [--bucket-key-enabled true|false]")
+      cmd_put_bucket_encryption(sys.argv[2], sys.argv[3], sys.argv[4:])
+      return
+
+    if cmd == "delete-bucket-encryption":
+      if len(sys.argv) < 4:
+        raise ValueError("Usage: s3browser-cli delete-bucket-encryption <connectionId> <bucket>")
+      cmd_delete_bucket_encryption(sys.argv[2], sys.argv[3])
       return
 
 

@@ -114,6 +114,8 @@
                                             modified</div>
                                         <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
                                             Storage class</div>
+                                        <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
+                                            Encryption</div>
                                     </div>
 
                                     <div class="w-full" @contextmenu="openMenuAtPoint">
@@ -177,6 +179,16 @@
 
                                                 <div class="px-3 py-2 text-default min-w-0 truncate">
                                                     <span v-if="r.type === 'file'">{{ r.storageClass || "—" }}</span>
+                                                    <span v-else>—</span>
+                                                </div>
+
+                                                <div class="px-3 py-2 text-default min-w-0 truncate">
+                                                    <span v-if="r.type === 'file' && bucketEncConfig?.encrypted"
+                                                        class="inline-flex items-center gap-1 text-xs rounded-full border border-green-400 text-green-700 bg-green-50 px-2 py-0.5">
+                                                        <LockClosedIcon class="h-3 w-3" />
+                                                        {{ bucketEncConfig?.algorithm === 'aws:kms' ? 'KMS' : 'S3' }}
+                                                    </span>
+                                                    <span v-else-if="r.type === 'file'">—</span>
                                                     <span v-else>—</span>
                                                 </div>
                                             </div>
@@ -288,8 +300,12 @@ import {
     , copyPrefix, movePrefix, copyObject, getObjectTags, putObjectTags, statObject, changeStorageClass, cancelDownloadJob, getObjectVersions,
     downloadObjectVersion, deleteObjectVersion, rollbackObjectVersion, createFolder
 } from "../lib/s3Objects";
+import { getBucketEncryption } from "../lib/s3Buckets";
+import { getConnection } from "../lib/endpointConnection";
+import type { BucketEncryptionConfig } from "../lib/controlplane-types";
+import type { EndpointConfig } from "../types";
 import { useClipboardStore } from "../stores/clipboard";
-import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon } from "@heroicons/vue/20/solid";
+import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon, LockClosedIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu from "../components/ObjectContextMenu.vue";
@@ -462,11 +478,65 @@ const downloads = useDownloads({
 });
 
 const downloadBusy = downloads.downloadBusy;
+
+// Bucket-level encryption config — used to auto-pass SSE on uploads/copies
+const bucketEncConfig = ref<BucketEncryptionConfig | null>(null);
+// Connection-level SSE defaults — fallback when bucket has no encryption
+const connConfig = ref<EndpointConfig | null>(null);
+const bucketSse = computed(() => {
+    // Prefer bucket-level encryption, fall back to connection defaults
+    const enc = bucketEncConfig.value;
+    if (enc && enc.encrypted) {
+        const out: { sse?: string; sseKmsKeyId?: string } = {};
+        if (enc.algorithm) out.sse = enc.algorithm;
+        if (enc.kmsKeyId) out.sseKmsKeyId = enc.kmsKeyId;
+        return out;
+    }
+    // Fall back to connection-level default encryption
+    const conn = connConfig.value;
+    if (conn?.defaultSse && conn.defaultSse !== "none") {
+        const out: { sse?: string; sseKmsKeyId?: string } = { sse: conn.defaultSse };
+        if (conn.defaultSse === "aws:kms" && conn.defaultSseKmsKeyId) {
+            out.sseKmsKeyId = conn.defaultSseKmsKeyId;
+        }
+        return out;
+    }
+    return {};
+});
+
+async function loadBucketEncryption() {
+    if (!connectionId.value || !bucket.value) return;
+    const res = await getBucketEncryption(connectionId.value, bucket.value);
+    if (res.isOk()) bucketEncConfig.value = res.value;
+}
+
+async function loadConnectionConfig() {
+    if (!connectionId.value) return;
+    const res = await getConnection(connectionId.value);
+    if (res.isOk()) connConfig.value = res.value;
+}
+
+// Wrapped lib functions that auto-inject SSE params
+const sseUploadObjectFromStdinStreamed: typeof uploadObjectFromStdinStreamed = (params) =>
+    uploadObjectFromStdinStreamed({ ...params, ...bucketSse.value });
+
+const sseCopyObject: typeof copyObject = (params) =>
+    copyObject({ ...params, ...bucketSse.value });
+
+const sseCopyPrefix: typeof copyPrefix = (params) =>
+    copyPrefix({ ...params, ...bucketSse.value });
+
+const sseMovePrefix: typeof movePrefix = (params) =>
+    movePrefix({ ...params, ...bucketSse.value });
+
+const sseRenameObjectStreamed: typeof renameObjectStreamed = (params) =>
+    renameObjectStreamed({ ...params, ...bucketSse.value });
+
 const uploads = useUploads({
     connectionId,
     bucket,
     prefix,
-    uploadObjectFromStdinStreamed,
+    uploadObjectFromStdinStreamed: sseUploadObjectFromStdinStreamed,
     refresh,
     onUploaded: (key) => {
         upsertFileRowByKey(key);
@@ -484,10 +554,10 @@ const transfers = useTransfers({
     bucket,
     prefix,
     clip,
-    copyObject,
-    copyPrefix,
-    movePrefix,
-    renameObjectStreamed,
+    copyObject: sseCopyObject,
+    copyPrefix: sseCopyPrefix,
+    movePrefix: sseMovePrefix,
+    renameObjectStreamed: sseRenameObjectStreamed,
     setBusy: (b) => (busy.value = b),
 
     onCreated: (it) => {
@@ -509,7 +579,7 @@ const pasteBusy = transfers.pasteBusy;
 const renamer = useRename({
     connectionId,
     bucket,
-    renameObjectStreamed,
+    renameObjectStreamed: sseRenameObjectStreamed,
     setBusy: (busy) => { /* handle busy state */ },
     onRenamed: async (srcKey, dstKey) => {
         // Trigger a refresh of the object list after rename
@@ -576,6 +646,7 @@ async function applyStorageClass(next: string) {
             storageClass: next.trim(),
             concurrency: 6,
             force: true,
+            ...bucketSse.value,
         });
 
         if (res.isErr()) {
@@ -1218,7 +1289,8 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
 onMounted(() => {
     document.addEventListener("mousedown", onDocMouseDown);
     window.addEventListener("beforeunload", onBeforeUnload);
-
+    loadBucketEncryption();
+    loadConnectionConfig();
 });
 
 onBeforeUnmount(() => {

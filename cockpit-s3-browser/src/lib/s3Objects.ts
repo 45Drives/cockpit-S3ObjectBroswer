@@ -257,6 +257,8 @@ export function renameObjectStreamed(params: {
   srcKey: string;
   dstKey: string;
   concurrency?: number;
+  sse?: string;
+  sseKmsKeyId?: string;
   onEvent: (ev: RenameObjectEvent) => void;
 }): { run: ResultAsync<void, ProcessError | SyntaxError>; cancel: () => void } {
   const args: string[] = [
@@ -269,6 +271,11 @@ export function renameObjectStreamed(params: {
     "--concurrency",
     String(params.concurrency ?? 6),
   ];
+
+  if (params.sse && params.sse !== "none") {
+    args.push("--sse", params.sse);
+    if (params.sseKmsKeyId) args.push("--sse-kms-key-id", params.sseKmsKeyId);
+  }
 
   const proc = server.spawnProcess(pyCmd(args, "try"));
 
@@ -339,6 +346,8 @@ export function uploadObjectFromStdinStreamed(params: {
   key: string;
   size: number;
   contentType?: string;
+  sse?: string;
+  sseKmsKeyId?: string;
   onEvent: (ev: UploadStdinEvent) => void;
 }): UploadStdinJob {
   const args: string[] = [
@@ -351,6 +360,11 @@ export function uploadObjectFromStdinStreamed(params: {
     "--content-type",
     params.contentType || "application/octet-stream",
   ];
+
+  if (params.sse && params.sse !== "none") {
+    args.push("--sse", params.sse);
+    if (params.sseKmsKeyId) args.push("--sse-kms-key-id", params.sseKmsKeyId);
+  }
 
   const proc = server.spawnProcess(pyCmd(args, "try"));
 
@@ -531,6 +545,8 @@ export function copyObject(params: {
   dstKey: string;
   jobId: string;
   concurrency?: number;
+  sse?: string;
+  sseKmsKeyId?: string;
 }): ResultAsync<void, ProcessError | SyntaxError> {
   const conc = params.concurrency ?? 6;
 
@@ -546,6 +562,11 @@ export function copyObject(params: {
     "--concurrency",
     String(conc),
   ];
+
+  if (params.sse && params.sse !== "none") {
+    args.push("--sse", params.sse);
+    if (params.sseKmsKeyId) args.push("--sse-kms-key-id", params.sseKmsKeyId);
+  }
 
   return server
     .execute(pyCmd(args, "try"))
@@ -566,6 +587,8 @@ export function copyPrefix(params: {
   dstPrefix: string;
   jobId: string;
   concurrency?: number;
+  sse?: string;
+  sseKmsKeyId?: string;
 }): ResultAsync<void, ProcessError | SyntaxError> {
   const conc = params.concurrency ?? 6;
 
@@ -581,6 +604,11 @@ export function copyPrefix(params: {
     "--concurrency",
     String(conc),
   ];
+
+  if (params.sse && params.sse !== "none") {
+    args.push("--sse", params.sse);
+    if (params.sseKmsKeyId) args.push("--sse-kms-key-id", params.sseKmsKeyId);
+  }
 
   return server
     .execute(pyCmd(args, "try"))
@@ -601,6 +629,8 @@ export function movePrefix(params: {
   dstPrefix: string;
   jobId: string;
   concurrency?: number;
+  sse?: string;
+  sseKmsKeyId?: string;
 }): ResultAsync<void, ProcessError | SyntaxError> {
   const conc = params.concurrency ?? 6;
 
@@ -616,6 +646,11 @@ export function movePrefix(params: {
     "--concurrency",
     String(conc),
   ];
+
+  if (params.sse && params.sse !== "none") {
+    args.push("--sse", params.sse);
+    if (params.sseKmsKeyId) args.push("--sse-kms-key-id", params.sseKmsKeyId);
+  }
 
   return server
     .execute(pyCmd(args, "try"))
@@ -644,6 +679,11 @@ export function statObject(params: {
     contentType: string | null;
     taggingCount: number | null;
     metadata: Record<string, string>;
+
+    // encryption
+    serverSideEncryption: string | null;
+    sseKmsKeyId: string | null;
+    bucketKeyEnabled: boolean;
   },
   ProcessError | SyntaxError
 > {
@@ -670,6 +710,11 @@ export function statObject(params: {
         contentType?: string | null;
         taggingCount?: number | null;
         metadata?: Record<string, string> | null;
+
+        // encryption
+        serverSideEncryption?: string | null;
+        sseKmsKeyId?: string | null;
+        bucketKeyEnabled?: boolean;
 
         error?: string;
       }>(s)
@@ -703,6 +748,10 @@ export function statObject(params: {
           ? (taggingCount as number)
           : null,
         metadata,
+
+        serverSideEncryption: (res.serverSideEncryption ?? null) as string | null,
+        sseKmsKeyId: (res.sseKmsKeyId ?? null) as string | null,
+        bucketKeyEnabled: Boolean(res.bucketKeyEnabled),
       });
     });
 }
@@ -809,6 +858,8 @@ export function changeStorageClass(params: {
   storageClass: string;
   concurrency?: number;
   force?: boolean;
+  sse?: string;
+  sseKmsKeyId?: string;
 }): ResultAsync<{ storageClass: string | null }, ProcessError | SyntaxError> {
   const args: string[] = [
     "change-storage-class",
@@ -818,6 +869,11 @@ export function changeStorageClass(params: {
     "--storage-class",
     params.storageClass,
   ];
+
+  if (params.sse && params.sse !== "none") {
+    args.push("--sse", params.sse);
+    if (params.sseKmsKeyId) args.push("--sse-kms-key-id", params.sseKmsKeyId);
+  }
 
   if (params.concurrency != null)
     args.push("--concurrency", String(params.concurrency));

@@ -5,7 +5,10 @@ export type EndpointConfig = {
     region?: string;
     accessKeyId: string;
     secretAccessKey: string;
-    useTls: boolean
+    useTls: boolean;
+    defaultSse?: 'AES256' | 'aws:kms' | 'none';
+    defaultSseKmsKeyId?: string;
+    backendType?: 'auto' | 'rgw' | 'rustfs' | 'minio' | 'generic';
   };
 
   export type ConnectionSummary = {
@@ -253,6 +256,9 @@ export type Stat = {
   legalHold: "ON" | "OFF" | null;
   retentionMode: string | null;
   retainUntil?: string | null;
+  serverSideEncryption?: string | null;
+  sseKmsKeyId?: string | null;
+  bucketKeyEnabled?: boolean;
 };
 
 export type VersionItem = {

@@ -216,6 +216,15 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
 
   content_type = (get_flag_value(argv, "--content-type", "application/octet-stream") or "application/octet-stream").strip()
 
+  # Server-side encryption flags
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params = {}  # type: Dict[str, str]
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
+
   multipart_threshold = 64 * 1024 * 1024  # 64 MiB
 
   def emit(obj: Dict[str, Any]) -> None:
@@ -262,6 +271,7 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
         Body=buf,
         ContentType=content_type or "application/octet-stream",
         ContentLength=total_size,
+        **sse_params
       )
 
       emit({"type": "result", "ok": True, "bucket": bucket, "key": key, "size": total_size})
@@ -274,6 +284,7 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
       Bucket=bucket,
       Key=key,
       ContentType=content_type or "application/octet-stream",
+      **sse_params
     )
     upload_id = mpu["UploadId"]
     upload_id_holder["id"] = upload_id
@@ -338,6 +349,15 @@ def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
+
+  # Server-side encryption flags for copy destination
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params = {}  # type: Dict[str, str]
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
 
   if not src_key or not dst_key:
     raise ValueError("Missing src or dst key")
@@ -454,6 +474,7 @@ def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str
         Key=dst_key,
         CopySource={"Bucket": src_bucket, "Key": src_key},
         MetadataDirective="COPY",
+        **sse_params
       )
       copied["bytes"] = size
       write_progress(True)
@@ -640,5 +661,111 @@ def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
 
     # user metadata
     "metadata": {str(k): str(v) for (k, v) in user_meta.items()},
+
+    # encryption metadata
+    "serverSideEncryption": head.get("ServerSideEncryption") or None,
+    "sseKmsKeyId": head.get("SSEKMSKeyId") or None,
+    "bucketKeyEnabled": head.get("BucketKeyEnabled") or False,
   }) + "\n")
+
+
+def cmd_get_bucket_encryption(conn_id, bucket):
+  # type: (str, str) -> None
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  try:
+    resp = client.get_bucket_encryption(Bucket=bucket)
+    rules = resp.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+    if rules:
+      rule = rules[0].get("ApplyServerSideEncryptionByDefault", {})
+      algo = rule.get("SSEAlgorithm")
+      kms_key = rule.get("KMSMasterKeyID")
+      bucket_key = rules[0].get("BucketKeyEnabled", False)
+      sys.stdout.write(json.dumps({
+        "ok": True,
+        "encryption": {
+          "algorithm": algo,
+          "kmsMasterKeyId": kms_key,
+          "bucketKeyEnabled": bool(bucket_key),
+        }
+      }) + "\n")
+    else:
+      sys.stdout.write(json.dumps({
+        "ok": True,
+        "encryption": None,
+      }) + "\n")
+  except client.exceptions.ClientError as e:
+    code = e.response.get("Error", {}).get("Code", "")
+    if code == "ServerSideEncryptionConfigurationNotFoundError":
+      sys.stdout.write(json.dumps({
+        "ok": True,
+        "encryption": None,
+      }) + "\n")
+    else:
+      raise
+
+
+def cmd_put_bucket_encryption(conn_id, bucket, argv):
+  # type: (str, str, List[str]) -> None
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  algo = get_flag_value(argv, "--algorithm", "AES256")
+  kms_key = get_flag_value(argv, "--kms-key-id", None)
+  bucket_key_raw = get_flag_value(argv, "--bucket-key-enabled", "false")
+  bucket_key = bucket_key_raw.lower() in ("true", "1", "yes")
+
+  rule = {
+    "ApplyServerSideEncryptionByDefault": {
+      "SSEAlgorithm": algo,
+    },
+  }
+  if kms_key:
+    rule["ApplyServerSideEncryptionByDefault"]["KMSMasterKeyID"] = kms_key
+
+  if bucket_key:
+    rule["BucketKeyEnabled"] = True
+
+  try:
+    client.put_bucket_encryption(
+      Bucket=bucket,
+      ServerSideEncryptionConfiguration={
+        "Rules": [rule],
+      },
+    )
+  except (client.exceptions.ClientError, Exception) as e:
+    # Older boto3 / S3 backends (e.g. Ceph RGW) may not support BucketKeyEnabled
+    msg = str(e)
+    if "BucketKeyEnabled" in msg and "BucketKeyEnabled" in rule:
+      del rule["BucketKeyEnabled"]
+      client.put_bucket_encryption(
+        Bucket=bucket,
+        ServerSideEncryptionConfiguration={
+          "Rules": [rule],
+        },
+      )
+    else:
+      raise
+
+  sys.stdout.write(json.dumps({"ok": True}) + "\n")
+
+
+def cmd_delete_bucket_encryption(conn_id, bucket):
+  # type: (str, str) -> None
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  try:
+    client.delete_bucket_encryption(Bucket=bucket)
+  except client.exceptions.ClientError as e:
+    code = e.response.get("Error", {}).get("Code", "")
+    if code == "ServerSideEncryptionConfigurationNotFoundError":
+      pass  # already removed
+    else:
+      raise
+  sys.stdout.write(json.dumps({"ok": True}) + "\n")
 

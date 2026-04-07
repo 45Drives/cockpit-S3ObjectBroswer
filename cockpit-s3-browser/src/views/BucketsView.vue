@@ -71,6 +71,7 @@
                 <tr class="bg-well text-center text-default">
                   <th class="px-3 py-2 font-semibold border-b border-default w-[22rem]">Bucket</th>
                   <th class="px-3 py-2 font-semibold border-b border-default">Created</th>
+                  <th class="px-3 py-2 font-semibold border-b border-default">Encryption</th>
                   <th class="px-3 py-2 font-semibold border-b border-default">Actions</th>
                 </tr>
               </thead>
@@ -94,11 +95,84 @@
 
                   <td class="px-3 py-2 border-b border-default">
                     <div class="flex justify-center">
+                      <span v-if="encryptionLabel(b.name) === '…'" class="text-xs text-default opacity-50">…</span>
+                      <span v-else-if="isEncrypted(b.name)"
+                        class="inline-flex items-center gap-1 text-xs rounded-full border border-green-400 text-green-700 bg-green-50 px-2 py-0.5">
+                        <LockClosedIcon class="h-3 w-3" />
+                        {{ encryptionLabel(b.name) }}
+                      </span>
+                      <span v-else
+                        class="inline-flex items-center gap-1 text-xs rounded-full border border-default text-default opacity-60 px-2 py-0.5">
+                        <LockOpenIcon class="h-3 w-3" />
+                        None
+                      </span>
+                    </div>
+                  </td>
+
+                  <td class="px-3 py-2 border-b border-default">
+                    <div class="flex justify-center gap-2">
                       <button type="button"
                         class="inline-flex items-center btn-primary justify-center rounded-md border border-default px-3 py-1.5 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
                         :disabled="busy" @click="openBucket(b.name)">
                         Open
                       </button>
+                      <Menu as="div" class="relative">
+                        <MenuButton
+                          class="inline-flex items-center justify-center rounded-md border border-default px-2 py-1.5 text-sm text-default shadow-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-60"
+                          :disabled="busy">
+                          <EllipsisVerticalIcon class="h-4 w-4" />
+                        </MenuButton>
+                        <transition enter-active-class="transition duration-100 ease-out"
+                          enter-from-class="transform scale-95 opacity-0"
+                          enter-to-class="transform scale-100 opacity-100"
+                          leave-active-class="transition duration-75 ease-in"
+                          leave-from-class="transform scale-100 opacity-100"
+                          leave-to-class="transform scale-95 opacity-0">
+                          <MenuItems
+                            class="absolute right-0 z-50 mt-1 min-w-[200px] overflow-hidden rounded-md border border-default bg-default shadow-lg outline-none">
+                            <div class="py-1">
+                              <MenuItem v-slot="{ active }">
+                                <button type="button"
+                                  class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                                  :class="active ? 'bg-accent text-default' : 'text-default'"
+                                  @click="openSetEncryptionModal(b.name)">
+                                  <LockClosedIcon class="h-4 w-4" />
+                                  <span>Set Encryption</span>
+                                </button>
+                              </MenuItem>
+                              <MenuItem v-slot="{ active }">
+                                <button type="button"
+                                  class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                                  :class="active ? 'bg-accent text-default' : 'text-default'"
+                                  @click="confirmRemoveEncryption(b.name)">
+                                  <LockOpenIcon class="h-4 w-4" />
+                                  <span>Remove Encryption</span>
+                                </button>
+                              </MenuItem>
+                              <MenuItem v-if="isEncrypted(b.name) && cpStore.isAvailable" v-slot="{ active }">
+                                <button type="button"
+                                  class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                                  :class="active ? 'bg-accent text-default' : 'text-default'"
+                                  :disabled="verifyBusy === b.name"
+                                  @click="verifyEncryption(b.name)">
+                                  <ArrowPathIcon class="h-4 w-4" />
+                                  <span>{{ verifyBusy === b.name ? 'Verifying…' : 'Verify Encryption' }}</span>
+                                </button>
+                              </MenuItem>
+                              <div class="my-1 h-px bg-default"></div>
+                              <MenuItem v-slot="{ active }">
+                                <button type="button"
+                                  class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                                  :class="active ? 'bg-accent text-default' : 'text-default'"
+                                  @click="openEncryptionManager()">
+                                  <ArrowTopRightOnSquareIcon class="h-4 w-4" />
+                                  <span>Encryption Manager</span>
+                                </button>
+                              </MenuItem>
+                            </div>
+                          </MenuItems>
+                        </transition>
+                      </Menu>
                     </div>
                   </td>
                 </tr>
@@ -109,22 +183,160 @@
       </div>
     </div>
   </div>
+
+  <!-- Set Encryption Modal -->
+  <Teleport to="body">
+    <div v-if="showSetEncModal" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/40" @click="showSetEncModal = false"></div>
+      <div class="relative z-10 w-full max-w-md rounded-lg border border-default bg-default p-6 shadow-xl">
+        <h3 class="text-lg font-semibold text-default mb-4">Set Bucket Encryption</h3>
+        <p class="text-sm text-default mb-4">
+          Bucket: <span class="font-medium">{{ setEncBucket }}</span>
+        </p>
+
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-default mb-1">Algorithm</label>
+            <select v-model="setEncAlgo"
+              class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
+              <option value="AES256">AES-256 (SSE-S3)</option>
+              <option value="aws:kms">SSE-KMS</option>
+            </select>
+          </div>
+
+          <div v-if="setEncAlgo === 'aws:kms'">
+            <label class="block text-sm font-medium text-default mb-1">KMS Key / Policy</label>
+
+            <!-- Control plane available: show policy dropdown -->
+            <template v-if="cpStore.isAvailable && cpStore.policies.length > 0">
+              <select v-model="setEncKmsKeyId"
+                class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
+                <option value="">— Use bucket default —</option>
+                <option v-for="p in cpStore.policies" :key="p.id" :value="p.transit_key_name">
+                  {{ p.name }} ({{ cpProviderName(p.provider_id) }} · {{ p.algorithm }})
+                </option>
+              </select>
+              <p class="mt-1 text-xs text-default opacity-60">Key policies from the Encryption Manager.</p>
+            </template>
+
+            <!-- Fallback: free-text input -->
+            <template v-else>
+              <input v-model.trim="setEncKmsKeyId" type="text" placeholder="KMS key ID or alias"
+                class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm placeholder:text-default/60 focus:outline-none focus:ring-2 focus:ring-default" />
+              <p class="mt-1 text-xs text-default opacity-60">
+                {{ cpStore.isAvailable === false
+                  ? 'Encryption Manager not installed — enter key ID manually.'
+                  : 'No key policies configured. Enter key ID manually.' }}
+              </p>
+            </template>
+          </div>
+
+          <div v-if="setEncAlgo === 'aws:kms'" class="flex items-center gap-2">
+            <input id="bucketKeyEnabled" v-model="setEncBucketKey" type="checkbox"
+              class="h-4 w-4 rounded border-default text-blue-600 focus:ring-default" />
+            <label for="bucketKeyEnabled" class="text-sm text-default">Enable S3 Bucket Key</label>
+          </div>
+
+          <!-- KMS readiness check -->
+          <div v-if="setEncAlgo === 'aws:kms' && !kmsReady"
+            class="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-800">
+            <p class="font-medium">KMS backend not configured</p>
+            <p class="mt-1 text-xs">
+              No encryption policies found. Configure a KMS provider and policy in the
+              <a href="#" class="underline font-medium" @click.prevent="openEncryptionManager()">Encryption Manager</a>
+              before enabling SSE-KMS.
+            </p>
+          </div>
+        </div>
+
+        <div v-if="setEncError" class="mt-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-700">
+          <p>{{ setEncError }}</p>
+          <p v-if="isKmsNotConfiguredError" class="mt-2 text-xs">
+            The S3 backend does not have a KMS provider configured. You can set this up in the
+            <a href="#" class="underline font-medium" @click.prevent="openEncryptionManager()">Encryption Manager</a>.
+          </p>
+        </div>
+
+        <div class="mt-6 flex justify-end gap-3">
+          <button type="button"
+            class="inline-flex items-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90"
+            :disabled="setEncBusy" @click="showSetEncModal = false">
+            Cancel
+          </button>
+          <button type="button"
+            class="inline-flex items-center btn-primary rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="setEncBusy || !kmsReady" @click="applySetEncryption">
+            {{ setEncBusy ? "Applying…" : "Apply" }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <!-- Remove Encryption Confirmation Modal -->
+  <Teleport to="body">
+    <div v-if="showRemoveEncModal" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black/40" @click="showRemoveEncModal = false"></div>
+      <div class="relative z-10 w-full max-w-md rounded-lg border border-default bg-default p-6 shadow-xl">
+        <h3 class="text-lg font-semibold text-default mb-4">Remove Bucket Encryption</h3>
+        <p class="text-sm text-default mb-4">
+          Are you sure you want to remove the default encryption configuration from
+          <span class="font-medium">{{ removeEncBucket }}</span>?
+        </p>
+        <p class="text-sm text-default opacity-70 mb-4">
+          Existing encrypted objects will remain encrypted, but new objects will no longer be
+          automatically encrypted by default.
+        </p>
+
+        <div v-if="removeEncError" class="mb-3 rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-700">
+          {{ removeEncError }}
+        </div>
+
+        <div class="flex justify-end gap-3">
+          <button type="button"
+            class="inline-flex items-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90"
+            :disabled="removeEncBusy" @click="showRemoveEncModal = false">
+            Cancel
+          </button>
+          <button type="button"
+            class="inline-flex items-center rounded-md border border-red-400 bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="removeEncBusy" @click="applyRemoveEncryption">
+            {{ removeEncBusy ? "Removing…" : "Remove" }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listBuckets } from "../lib/s3Buckets";
-import type { BucketSummary } from "../types";
-import { ArchiveBoxIcon, ArrowUturnLeftIcon, MagnifyingGlassIcon, ArrowPathIcon } from "@heroicons/vue/20/solid";
+import { listBuckets, getBucketEncryption, putBucketEncryption, deleteBucketEncryption } from "../lib/s3Buckets";
+import { navigateToEncryptionManager } from "../lib/controlplane-client";
+import { useControlPlaneStore } from "../stores/controlPlane";
+import { getConnection } from "../lib/endpointConnection";
+import type { BucketSummary, EndpointConfig } from "../types";
+import type { BackendType, BucketEncryptionConfig } from "../lib/controlplane-types";
+import { detectBackendType } from "../lib/controlplane-types";
+import { ArchiveBoxIcon, ArrowUturnLeftIcon, MagnifyingGlassIcon, ArrowPathIcon, LockClosedIcon, LockOpenIcon, EllipsisVerticalIcon, ArrowTopRightOnSquareIcon } from "@heroicons/vue/20/solid";
+import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 import TaskCenter from "../components/TaskCenter.vue";
 
 const route = useRoute();
 const router = useRouter();
+const cpStore = useControlPlaneStore();
 
 const connectionId = computed(() => String(route.query.connectionId || ""));
 const connectionName = computed(() => String(route.query.connectionName || ""));
+
+const connConfig = ref<EndpointConfig | null>(null);
+const effectiveBackendType = computed<BackendType>(() => {
+  const cfg = connConfig.value;
+  if (cfg?.backendType && cfg.backendType !== "auto") return cfg.backendType as BackendType;
+  return detectBackendType(connectionName.value, cfg?.endpoint);
+});
 
 const buckets = ref<BucketSummary[]>([]);
 const busy = ref(false);
@@ -137,6 +349,34 @@ const filteredBuckets = computed(() => {
   if (!q) return buckets.value;
   return buckets.value.filter((b) => (b.name || "").toLowerCase().includes(q));
 });
+
+const bucketEncryption = ref<Record<string, BucketEncryptionConfig | null>>({});
+
+function encryptionLabel(name: string): string {
+  const enc = bucketEncryption.value[name];
+  if (enc === undefined) return "…";
+  if (!enc || !enc.encrypted) return "None";
+  if (enc.algorithm === "aws:kms") return "SSE-KMS";
+  if (enc.algorithm === "AES256") return "SSE-S3";
+  return enc.algorithm || "Encrypted";
+}
+
+function isEncrypted(name: string): boolean {
+  const enc = bucketEncryption.value[name];
+  return Boolean(enc && enc.encrypted);
+}
+
+async function fetchBucketEncryptions(bucketNames: string[]) {
+  for (const name of bucketNames) {
+    getBucketEncryption(connectionId.value, name).then((res) => {
+      if (res.isOk()) {
+        bucketEncryption.value = { ...bucketEncryption.value, [name]: res.value };
+      } else {
+        bucketEncryption.value = { ...bucketEncryption.value, [name]: null };
+      }
+    });
+  }
+}
 
 function formatDate(iso?: string | null) {
   if (!iso) return "—";
@@ -157,6 +397,12 @@ async function refresh() {
 
   busy.value = true;
   try {
+    // Load connection config for backend type detection
+    const connRes = await getConnection(connectionId.value);
+    if (connRes.isOk() && connRes.value) {
+      connConfig.value = connRes.value;
+    }
+
     const res = await listBuckets(connectionId.value);
     if (res.isErr()) {
       buckets.value = [];
@@ -168,6 +414,7 @@ async function refresh() {
       return;
     }
     buckets.value = res.value;
+    fetchBucketEncryptions(res.value.map((b) => b.name));
   } finally {
     busy.value = false;
   }
@@ -181,8 +428,153 @@ function openBucket(bucketName: string) {
       connectionName: connectionName.value,
       bucket: bucketName,
       prefix: "",
+      backendType: effectiveBackendType.value,
     },
   });
+}
+
+// ── Set Encryption modal ──────────────────────────────────────────────────
+
+const showSetEncModal = ref(false);
+const setEncBucket = ref("");
+const setEncAlgo = ref<"AES256" | "aws:kms">("AES256");
+const setEncKmsKeyId = ref("");
+const setEncBucketKey = ref(false);
+const setEncBusy = ref(false);
+const setEncError = ref("");
+
+const isKmsNotConfiguredError = computed(() => {
+  const e = setEncError.value.toLowerCase();
+  return e.includes("kms is not configured") || e.includes("kms not configured");
+});
+
+// KMS readiness — based on whether the control plane has providers & policies
+const kmsReady = computed(() => {
+  if (setEncAlgo.value !== "aws:kms") return true;
+  // If the control plane hasn't loaded yet, be permissive (let the API error surface naturally)
+  if (cpStore.available === null) return true;
+  // If CP is available, require at least one policy for SSE-KMS
+  if (cpStore.available && cpStore.policies.length > 0) return true;
+  return false;
+});
+
+function openSetEncryptionModal(bucketName: string) {
+  setEncBucket.value = bucketName;
+  const current = bucketEncryption.value[bucketName];
+  if (current && current.encrypted) {
+    setEncAlgo.value = current.algorithm === "aws:kms" ? "aws:kms" : "AES256";
+    setEncKmsKeyId.value = current.kmsKeyId || "";
+    setEncBucketKey.value = current.bucketKeyEnabled || false;
+  } else {
+    setEncAlgo.value = "AES256";
+    setEncKmsKeyId.value = "";
+    setEncBucketKey.value = false;
+  }
+  setEncError.value = "";
+  setEncBusy.value = false;
+  showSetEncModal.value = true;
+  // Load control plane policies if not yet loaded
+  if (cpStore.available === null || cpStore.policies.length === 0) {
+    cpStore.refresh();
+  }
+}
+
+function cpProviderName(providerId: string): string {
+  const p = cpStore.providers.find((prov) => prov.id === providerId);
+  return p ? p.name : "Unknown provider";
+}
+
+async function applySetEncryption() {
+  setEncBusy.value = true;
+  setEncError.value = "";
+  const res = await putBucketEncryption(
+    connectionId.value,
+    setEncBucket.value,
+    setEncAlgo.value,
+    setEncAlgo.value === "aws:kms" ? setEncKmsKeyId.value || undefined : undefined,
+    setEncAlgo.value === "aws:kms" ? setEncBucketKey.value : undefined
+  );
+  setEncBusy.value = false;
+  if (res.isErr()) {
+    const msg = res.error.message;
+    // Parse common KMS errors into actionable messages
+    if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
+      setEncError.value = "KMS is not configured on this S3 backend. Configure it in the Encryption Manager first.";
+    } else if (/AccessDenied|InvalidAccessKeyId/i.test(msg)) {
+      setEncError.value = "Access denied — check that the S3 credentials have permission to configure encryption.";
+    } else {
+      setEncError.value = msg;
+    }
+    return;
+  }
+  showSetEncModal.value = false;
+  pushNotification(
+    new Notification("Encryption updated", `Default encryption set on "${setEncBucket.value}".`, "success", 4000)
+  );
+  // Refresh the encryption badge for this bucket
+  fetchBucketEncryptions([setEncBucket.value]);
+}
+
+// ── Remove Encryption modal ───────────────────────────────────────────────
+
+const showRemoveEncModal = ref(false);
+const removeEncBucket = ref("");
+const removeEncBusy = ref(false);
+const removeEncError = ref("");
+
+function confirmRemoveEncryption(bucketName: string) {
+  removeEncBucket.value = bucketName;
+  removeEncError.value = "";
+  removeEncBusy.value = false;
+  showRemoveEncModal.value = true;
+}
+
+async function applyRemoveEncryption() {
+  removeEncBusy.value = true;
+  removeEncError.value = "";
+  const res = await deleteBucketEncryption(connectionId.value, removeEncBucket.value);
+  removeEncBusy.value = false;
+  if (res.isErr()) {
+    const msg = res.error.message;
+    if (/AccessDenied/i.test(msg)) {
+      removeEncError.value = "Access denied — check that the S3 credentials have permission to modify encryption.";
+    } else {
+      removeEncError.value = msg;
+    }
+    return;
+  }
+  showRemoveEncModal.value = false;
+  pushNotification(
+    new Notification("Encryption removed", `Default encryption removed from "${removeEncBucket.value}".`, "success", 4000)
+  );
+  // Update the encryption badge
+  bucketEncryption.value = { ...bucketEncryption.value, [removeEncBucket.value]: null };
+}
+
+// ── Encryption Manager deep link ──────────────────────────────────────────
+
+function openEncryptionManager() {
+  navigateToEncryptionManager();
+}
+
+// ── Verify Encryption ─────────────────────────────────────────────────────
+
+const verifyBusy = ref<string | null>(null);
+
+async function verifyEncryption(bucketName: string) {
+  verifyBusy.value = bucketName;
+  const result = await cpStore.verifyBucketEncryptionAction(bucketName, effectiveBackendType.value);
+  verifyBusy.value = null;
+  if (result.success) {
+    pushNotification(
+      new Notification("Encryption verified", result.message || `Bucket "${bucketName}" encryption verified.`, "success", 4000)
+    );
+  } else {
+    pushNotification(
+      new Notification("Verification failed", result.message || `Could not verify "${bucketName}".`, "error", 5000)
+    );
+  }
+  fetchBucketEncryptions([bucketName]);
 }
 
 onMounted(refresh);
