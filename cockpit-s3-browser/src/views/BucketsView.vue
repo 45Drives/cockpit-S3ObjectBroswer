@@ -577,5 +577,8 @@ async function verifyEncryption(bucketName: string) {
   fetchBucketEncryptions([bucketName]);
 }
 
-onMounted(refresh);
+onMounted(() => {
+  cpStore.checkAvailability();
+  refresh();
+});
 </script>
