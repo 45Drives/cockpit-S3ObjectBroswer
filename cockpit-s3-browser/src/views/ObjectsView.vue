@@ -486,14 +486,18 @@ const connConfig = ref<EndpointConfig | null>(null);
 const bucketSse = computed(() => {
     // Prefer bucket-level encryption, fall back to connection defaults
     const enc = bucketEncConfig.value;
+    const conn = connConfig.value;
     if (enc && enc.encrypted) {
         const out: { sse?: string; sseKmsKeyId?: string } = {};
         if (enc.algorithm) out.sse = enc.algorithm;
         if (enc.kmsKeyId) out.sseKmsKeyId = enc.kmsKeyId;
+        // If aws:kms but no key ID from bucket, use connection-level default
+        if (out.sse === "aws:kms" && !out.sseKmsKeyId && conn?.defaultSseKmsKeyId) {
+            out.sseKmsKeyId = conn.defaultSseKmsKeyId;
+        }
         return out;
     }
     // Fall back to connection-level default encryption
-    const conn = connConfig.value;
     if (conn?.defaultSse && conn.defaultSse !== "none") {
         const out: { sse?: string; sseKmsKeyId?: string } = { sse: conn.defaultSse };
         if (conn.defaultSse === "aws:kms" && conn.defaultSseKmsKeyId) {
