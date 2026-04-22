@@ -65,7 +65,7 @@
             No buckets match "{{ query }}".
           </div>
 
-          <div class="overflow-x-auto rounded-md border border-default">
+          <div class="rounded-md border border-default">
             <table class="w-full border-collapse text-sm">
               <thead>
                 <tr class="bg-well text-center text-default">
@@ -77,7 +77,7 @@
               </thead>
 
               <tbody>
-                <tr v-for="b in filteredBuckets" :key="b.name" class="text-center hover:bg-default/20">
+                <tr v-for="(b, bIdx) in filteredBuckets" :key="b.name" class="text-center hover:bg-default/20">
                   <td class="px-3 py-2 text-default font-medium border-b border-default">
                     <div class="flex">
                       <div class="w-1/2 text-right flex justify-end items-center">
@@ -129,7 +129,12 @@
                           leave-from-class="transform scale-100 opacity-100"
                           leave-to-class="transform scale-95 opacity-0">
                           <MenuItems
-                            class="absolute right-0 z-50 mt-1 min-w-[200px] overflow-hidden rounded-md border border-default bg-default shadow-lg outline-none">
+                            :class="[
+                              'absolute right-0 z-50 min-w-[200px] overflow-hidden rounded-md border border-default bg-default shadow-lg outline-none',
+                              shouldOpenMenuUp(bIdx, filteredBuckets.length)
+                                ? 'bottom-full mb-1 origin-bottom-right'
+                                : 'mt-1 origin-top-right'
+                            ]">
                             <div class="py-1">
                               <MenuItem v-slot="{ active }">
                                 <button type="button"
@@ -575,6 +580,10 @@ async function verifyEncryption(bucketName: string) {
     );
   }
   fetchBucketEncryptions([bucketName]);
+}
+
+function shouldOpenMenuUp(index: number, total: number): boolean {
+  return total > 0 && index >= total - 3;
 }
 
 onMounted(() => {

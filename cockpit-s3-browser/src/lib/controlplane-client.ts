@@ -187,7 +187,7 @@ export function getBucketEncryption(
   const method = methodMap[backendType];
   if (!method) return okAsync(null);
 
-  const params: Record<string, unknown> = { bucket };
+  const params: Record<string, unknown> = { bucket, bucketName: bucket };
   if (targetId) params.targetId = targetId;
 
   return guarded(() =>
@@ -213,7 +213,7 @@ export function setBucketEncryption(
   const method = methodMap[backendType];
   if (!method) return okAsync(null);
 
-  const params: Record<string, unknown> = { bucket, algorithm };
+  const params: Record<string, unknown> = { bucket, bucketName: bucket, algorithm };
   if (kmsKeyId) params.kmsKeyId = kmsKeyId;
   if (targetId) params.targetId = targetId;
 
@@ -234,7 +234,7 @@ export function removeBucketEncryption(
   const method = methodMap[backendType];
   if (!method) return okAsync(null);
 
-  const params: Record<string, unknown> = { bucket };
+  const params: Record<string, unknown> = { bucket, bucketName: bucket };
   if (targetId) params.targetId = targetId;
 
   return guarded(() => rpc<ActionResult>(method, params));
@@ -254,7 +254,7 @@ export function verifyBucketEncryption(
   const method = methodMap[backendType];
   if (!method) return okAsync(null);
 
-  const params: Record<string, unknown> = { bucket };
+  const params: Record<string, unknown> = { bucket, bucketName: bucket };
   if (targetId) params.targetId = targetId;
 
   return guarded(() => rpc<ActionResult>(method, params));

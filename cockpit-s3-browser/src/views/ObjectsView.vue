@@ -5,8 +5,25 @@
                 <!-- header -->
                 <div class="border-b border-default px-4 py-3 flex items-center justify-between gap-3">
                     <div class="min-w-0">
-                        <div class="text-base font-semibold text-default truncate">{{ bucket || "—" }}</div>
-                        <div class="text-sm text-default truncate">Connection: {{ connectionName || "—" }}</div>
+                        <div class="flex items-center gap-2">
+                            <div class="text-base font-semibold text-default truncate">{{ bucket || "—" }}</div>
+                            <span class="text-default opacity-40">·</span>
+                            <template v-if="bucketEncConfig?.encrypted">
+                                <span class="inline-flex items-center gap-1.5 text-xs font-medium rounded-md border border-green-500/30 text-green-700 dark:text-green-400 bg-green-500/10 px-2.5 py-1 shrink-0 cursor-default"
+                                    :title="`Algorithm: ${bucketEncConfig.algorithm}${bucketEncConfig.kmsKeyId ? '\nKMS Key: ' + bucketEncConfig.kmsKeyId : ''}${bucketEncConfig.bucketKeyEnabled ? '\nBucket Key: Enabled' : ''}`">
+                                    <ShieldCheckIcon class="h-3.5 w-3.5" />
+                                    <span>{{ bucketEncConfig.algorithm === 'aws:kms' ? 'SSE-KMS' : 'SSE-S3' }}</span>
+                                    <span v-if="bucketEncConfig.kmsKeyId" class="opacity-60 font-normal">· {{ bucketEncConfig.kmsKeyId }}</span>
+                                </span>
+                            </template>
+                            <template v-else-if="bucketEncConfig !== null">
+                                <span class="inline-flex items-center gap-1.5 text-xs font-medium rounded-md border border-default text-default opacity-50 px-2.5 py-1 shrink-0 cursor-default">
+                                    <LockOpenIcon class="h-3.5 w-3.5" />
+                                    <span>No Encryption</span>
+                                </span>
+                            </template>
+                        </div>
+                        <div class="text-sm text-default opacity-70 truncate mt-0.5">Connection: {{ connectionName || "—" }}</div>
                     </div>
 
                     <div class="flex items-center gap-2">
@@ -114,8 +131,6 @@
                                             modified</div>
                                         <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
                                             Storage class</div>
-                                        <div class="px-3 py-2 font-semibold border-b border-default min-w-0 truncate">
-                                            Encryption</div>
                                     </div>
 
                                     <div class="w-full" @contextmenu="openMenuAtPoint">
@@ -182,15 +197,6 @@
                                                     <span v-else>—</span>
                                                 </div>
 
-                                                <div class="px-3 py-2 text-default min-w-0 truncate">
-                                                    <span v-if="r.type === 'file' && bucketEncConfig?.encrypted"
-                                                        class="inline-flex items-center gap-1 text-xs rounded-full border border-green-400 text-green-700 bg-green-50 px-2 py-0.5">
-                                                        <LockClosedIcon class="h-3 w-3" />
-                                                        {{ bucketEncConfig?.algorithm === 'aws:kms' ? 'KMS' : 'S3' }}
-                                                    </span>
-                                                    <span v-else-if="r.type === 'file'">—</span>
-                                                    <span v-else>—</span>
-                                                </div>
                                             </div>
                                         </RecycleScroller>
                                     </div>
@@ -305,7 +311,7 @@ import { getConnection } from "../lib/endpointConnection";
 import type { BucketEncryptionConfig } from "../lib/controlplane-types";
 import type { EndpointConfig } from "../types";
 import { useClipboardStore } from "../stores/clipboard";
-import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon, LockClosedIcon } from "@heroicons/vue/20/solid";
+import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon, LockClosedIcon, LockOpenIcon, ShieldCheckIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu from "../components/ObjectContextMenu.vue";
@@ -403,7 +409,7 @@ const pendingDeleteName = computed(() => {
 });
 
 const colsStyle =
-    "display:grid; grid-template-columns: 1.6fr 0.6fr 0.6fr 0.9fr 0.8fr 0.7fr; width:100%;";
+    "display:grid; grid-template-columns: 1.8fr 0.7fr 0.7fr 1fr 0.8fr; width:100%;";
 
 const viewMode = ref<ViewMode>("table");
 const route = useRoute();
@@ -1609,6 +1615,7 @@ async function submitNewFolder(name: string) {
             bucket: bucket.value,
             prefix: prefix.value || "",
             name,
+            ...bucketSse.value,
         });
 
         if (res.isErr()) {

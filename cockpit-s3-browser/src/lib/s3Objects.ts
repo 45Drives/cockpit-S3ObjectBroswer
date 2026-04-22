@@ -1287,6 +1287,8 @@ export function createFolder(params: {
   bucket: string;
   prefix: string; // current prefix ("" or "photos/2025/")
   name: string;   // folder name (already validated/sanitized by UI)
+  sse?: string;
+  sseKmsKeyId?: string;
 }): ResultAsync<{ prefix: string }, ProcessError | SyntaxError> {
   const args: string[] = [
     "create-folder",
@@ -1295,6 +1297,10 @@ export function createFolder(params: {
     params.prefix || "",
     params.name,
   ];
+  if (params.sse && params.sse !== "none") {
+    args.push("--sse", params.sse);
+    if (params.sseKmsKeyId) args.push("--sse-kms-key-id", params.sseKmsKeyId);
+  }
 
   return server
     .execute(pyCmd(args, "try"))

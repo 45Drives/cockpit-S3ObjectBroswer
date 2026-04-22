@@ -189,8 +189,8 @@ def main() -> None:
     
     if cmd == "create-folder":
       if len(sys.argv) < 6:
-        raise ValueError("Usage: s3browser-cli create-folder <connectionId> <bucket> <prefix> <name>")
-      cmd_create_folder(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5])
+        raise ValueError("Usage: s3browser-cli create-folder <connectionId> <bucket> <prefix> <name> [--sse ALGO] [--sse-kms-key-id KEY]")
+      cmd_create_folder(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:])
       return
 
     if cmd == "get-bucket-encryption":

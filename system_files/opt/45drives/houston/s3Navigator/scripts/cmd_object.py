@@ -395,7 +395,7 @@ def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str
   head = client.head_object(Bucket=src_bucket, Key=src_key)
   size = int(head.get("ContentLength") or 0)
 
-  MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
+  MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100 MiB – avoids CopyObject internal errors on some backends
 
   # Create job file immediately
   write_job(job_id, {
@@ -573,7 +573,7 @@ def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, arg
         sys.stdout.write(json.dumps({"ok": False, "error": "Source object not found"}) + "\n")
         return
 
-    MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
+    MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100 MiB – avoids CopyObject internal errors on some backends
 
     try:
         if size >= MULTIPART_THRESHOLD:
@@ -627,6 +627,26 @@ def cmd_delete_object(conn_id: str, bucket: str, key: str) -> None:
   sys.stdout.write(json.dumps({"ok": True}) + "\n")
 
 
+def _bucket_default_sse(client: Any, bucket: str, field: str) -> Any:
+  """Return a field from the bucket's default SSE config, or None on any error."""
+  try:
+    resp = client.get_bucket_encryption(Bucket=bucket)
+    rules = resp.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+    if not rules:
+      return None
+    rule = rules[0]
+    defaults = rule.get("ApplyServerSideEncryptionByDefault", {})
+    if field == "algorithm":
+      return defaults.get("SSEAlgorithm") or None
+    if field == "kmsKeyId":
+      return defaults.get("KMSMasterKeyID") or None
+    if field == "bucketKeyEnabled":
+      return bool(rule.get("BucketKeyEnabled", False))
+    return None
+  except Exception:
+    return None
+
+
 def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
@@ -662,10 +682,12 @@ def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
     # user metadata
     "metadata": {str(k): str(v) for (k, v) in user_meta.items()},
 
-    # encryption metadata
-    "serverSideEncryption": head.get("ServerSideEncryption") or None,
-    "sseKmsKeyId": head.get("SSEKMSKeyId") or None,
-    "bucketKeyEnabled": head.get("BucketKeyEnabled") or False,
+    # encryption metadata — some backends (e.g. rustfs) don't echo
+    # ServerSideEncryption in HeadObject even when bucket-default encryption
+    # is active, so fall back to the bucket encryption config.
+    "serverSideEncryption": head.get("ServerSideEncryption") or _bucket_default_sse(client, bucket, "algorithm"),
+    "sseKmsKeyId": head.get("SSEKMSKeyId") or _bucket_default_sse(client, bucket, "kmsKeyId"),
+    "bucketKeyEnabled": head.get("BucketKeyEnabled") or _bucket_default_sse(client, bucket, "bucketKeyEnabled") or False,
   }) + "\n")
 
 
