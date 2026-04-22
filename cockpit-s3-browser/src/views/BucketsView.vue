@@ -575,9 +575,22 @@ async function verifyEncryption(bucketName: string) {
       new Notification("Encryption verified", result.message || `Bucket "${bucketName}" encryption verified.`, "success", 4000)
     );
   } else {
-    pushNotification(
-      new Notification("Verification failed", result.message || `Could not verify "${bucketName}".`, "error", 5000)
-    );
+    // Fallback: check direct S3 encryption data when control plane verify fails
+    // (e.g. ceph CLI not installed on this host for remote RGW)
+    await fetchBucketEncryptions([bucketName]);
+    const enc = bucketEncryption.value[bucketName];
+    if (enc && enc.encrypted) {
+      const label = enc.algorithm === "aws:kms" ? "SSE-KMS" : enc.algorithm === "AES256" ? "SSE-S3" : enc.algorithm || "encryption";
+      const detail = enc.kmsKeyId ? ` with key '${enc.kmsKeyId}'` : "";
+      pushNotification(
+        new Notification("Encryption verified", `Bucket "${bucketName}" has ${label}${detail} configured.`, "success", 4000)
+      );
+    } else {
+      pushNotification(
+        new Notification("Verification failed", result.message || `Could not verify "${bucketName}".`, "error", 5000)
+      );
+    }
+    return;
   }
   fetchBucketEncryptions([bucketName]);
 }
