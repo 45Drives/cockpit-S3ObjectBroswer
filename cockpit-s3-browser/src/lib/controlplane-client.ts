@@ -197,6 +197,25 @@ export function getBucketEncryption(
 
 // ─── Bucket encryption write actions ────────────────────────────────────────
 
+export interface KmsKeyValidation {
+  valid: boolean;
+  exists?: boolean;
+  exportable?: boolean;
+  type?: string;
+  error?: string | null;
+}
+
+/** Validate a KMS key exists and is accessible in Vault before setting encryption. */
+export function validateKmsKey(
+  keyName: string,
+  engineType: "transit" | "kv2" = "transit",
+  requireExportable = false
+): ResultAsync<KmsKeyValidation | null, Error> {
+  return guarded(() =>
+    rpc<KmsKeyValidation>("vault.validateKmsKey", { keyName, engineType, requireExportable })
+  );
+}
+
 export function setBucketEncryption(
   bucket: string,
   algorithm: "AES256" | "aws:kms",
@@ -258,6 +277,24 @@ export function verifyBucketEncryption(
   if (targetId) params.targetId = targetId;
 
   return guarded(() => rpc<ActionResult>(method, params));
+}
+
+export interface RoundtripResult {
+  roundtripVerified: boolean;
+  steps?: { step: string; ok: boolean; detail: string }[];
+  sseAlgorithm?: string;
+  sseKmsKeyId?: string;
+  error?: string;
+}
+
+export function verifyRoundtrip(
+  bucket: string,
+  kmsKeyId?: string,
+  targetId?: string
+): ResultAsync<RoundtripResult | null, Error> {
+  const params: Record<string, unknown> = { bucket, kmsKeyId };
+  if (targetId) params.targetId = targetId;
+  return guarded(() => rpc<RoundtripResult>("s3.verifyRoundtrip", params));
 }
 
 // ─── Deep-link helpers ──────────────────────────────────────────────────────

@@ -164,6 +164,16 @@
                                   <span>{{ verifyBusy === b.name ? 'Verifying…' : 'Verify Encryption' }}</span>
                                 </button>
                               </MenuItem>
+                              <MenuItem v-if="isKmsEncrypted(b.name) && cpStore.isAvailable" v-slot="{ active }">
+                                <button type="button"
+                                  class="flex w-full items-center gap-2 px-4 py-2 text-left text-sm"
+                                  :class="active ? 'bg-accent text-default' : 'text-default'"
+                                  :disabled="roundtripBusy === b.name"
+                                  @click="deepVerify(b.name)">
+                                  <ArrowPathIcon class="h-4 w-4" />
+                                  <span>{{ roundtripBusy === b.name ? 'Testing…' : 'Deep Verify (Round-trip)' }}</span>
+                                </button>
+                              </MenuItem>
                               <div class="my-1 h-px bg-default"></div>
                               <MenuItem v-slot="{ active }">
                                 <button type="button"
@@ -236,10 +246,16 @@
             </template>
           </div>
 
-          <div v-if="setEncAlgo === 'aws:kms'" class="flex items-center gap-2">
+          <div v-if="setEncAlgo === 'aws:kms'" class="flex items-start gap-2">
             <input id="bucketKeyEnabled" v-model="setEncBucketKey" type="checkbox"
-              class="h-4 w-4 rounded border-default text-blue-600 focus:ring-default" />
-            <label for="bucketKeyEnabled" class="text-sm text-default">Enable S3 Bucket Key</label>
+              class="h-4 w-4 mt-0.5 rounded border-default text-blue-600 focus:ring-default" />
+            <div>
+              <label for="bucketKeyEnabled" class="text-sm text-default">Enable S3 Bucket Key</label>
+              <p class="text-xs text-default opacity-60">
+                Reduces KMS requests by generating a single bucket-level key instead of
+                calling KMS for every object. Recommended for high-throughput buckets.
+              </p>
+            </div>
           </div>
 
           <!-- KMS readiness check -->
@@ -318,7 +334,7 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { listBuckets, getBucketEncryption, putBucketEncryption, deleteBucketEncryption } from "../lib/s3Buckets";
-import { navigateToEncryptionManager } from "../lib/controlplane-client";
+import { navigateToEncryptionManager, validateKmsKey, verifyRoundtrip } from "../lib/controlplane-client";
 import { useControlPlaneStore } from "../stores/controlPlane";
 import { getConnection } from "../lib/endpointConnection";
 import type { BucketSummary, EndpointConfig } from "../types";
@@ -369,6 +385,11 @@ function encryptionLabel(name: string): string {
 function isEncrypted(name: string): boolean {
   const enc = bucketEncryption.value[name];
   return Boolean(enc && enc.encrypted);
+}
+
+function isKmsEncrypted(name: string): boolean {
+  const enc = bucketEncryption.value[name];
+  return Boolean(enc && enc.encrypted && enc.algorithm === "aws:kms");
 }
 
 async function fetchBucketEncryptions(bucketNames: string[]) {
@@ -492,6 +513,60 @@ function cpProviderName(providerId: string): string {
 async function applySetEncryption() {
   setEncBusy.value = true;
   setEncError.value = "";
+
+  // Pre-validate KMS key if SSE-KMS with a specific key
+  if (setEncAlgo.value === "aws:kms" && setEncKmsKeyId.value && cpStore.isAvailable) {
+    const vr = await validateKmsKey(setEncKmsKeyId.value, "transit", true);
+    if (vr.isOk() && vr.value) {
+      const v = vr.value;
+      if (!v.valid) {
+        setEncBusy.value = false;
+        if (!v.exists) {
+          setEncError.value = `Transit key "${setEncKmsKeyId.value}" does not exist in Vault.`;
+        } else if (v.exportable === false) {
+          setEncError.value = `Transit key "${setEncKmsKeyId.value}" exists but is not exportable. Ceph RGW requires exportable keys. Recreate the key with exportable=true.`;
+        } else {
+          setEncError.value = v.error || "KMS key validation failed.";
+        }
+        return;
+      }
+    }
+    // If validation call itself fails, proceed anyway — the backend will catch it
+  }
+
+  const backend = effectiveBackendType.value;
+
+  // Prefer control plane path when available — uses backend-specific tooling
+  // (mc CLI for MinIO, ceph CLI for RGW) and records audit/governance state
+  if (cpStore.isAvailable) {
+    const cpRes = await cpStore.setBucketEncryptionAction(
+      setEncBucket.value,
+      setEncAlgo.value,
+      backend,
+      setEncAlgo.value === "aws:kms" ? setEncKmsKeyId.value || undefined : undefined,
+    );
+    setEncBusy.value = false;
+    if (!cpRes.success) {
+      const msg = cpRes.message || "Failed to set encryption";
+      if (backend === "minio" && /kms|kes|encrypt/i.test(msg)) {
+        setEncError.value = "MinIO requires KES (Key Encryption Service) configured to support SSE-KMS. "
+          + "Set up KES in the Encryption Manager first, or use AES-256 (SSE-S3) for server-managed encryption.";
+      } else if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
+        setEncError.value = "KMS is not configured on this S3 backend. Configure it in the Encryption Manager first.";
+      } else {
+        setEncError.value = msg;
+      }
+      return;
+    }
+    showSetEncModal.value = false;
+    pushNotification(
+      new Notification("Encryption updated", `Default encryption set on "${setEncBucket.value}".`, "success", 4000)
+    );
+    fetchBucketEncryptions([setEncBucket.value]);
+    return;
+  }
+
+  // Fallback: direct S3 API when control plane is not available
   const res = await putBucketEncryption(
     connectionId.value,
     setEncBucket.value,
@@ -503,7 +578,10 @@ async function applySetEncryption() {
   if (res.isErr()) {
     const msg = res.error.message;
     // Parse common KMS errors into actionable messages
-    if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
+    if (backend === "minio" && /kms|kes|encrypt/i.test(msg)) {
+      setEncError.value = "MinIO requires KES (Key Encryption Service) configured to support SSE-KMS. "
+        + "Set up KES in the Encryption Manager first, or use AES-256 (SSE-S3) for server-managed encryption.";
+    } else if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
       setEncError.value = "KMS is not configured on this S3 backend. Configure it in the Encryption Manager first.";
     } else if (/AccessDenied|InvalidAccessKeyId/i.test(msg)) {
       setEncError.value = "Access denied — check that the S3 credentials have permission to configure encryption.";
@@ -593,6 +671,37 @@ async function verifyEncryption(bucketName: string) {
     return;
   }
   fetchBucketEncryptions([bucketName]);
+}
+
+// ── Deep Verify (Round-trip) ──────────────────────────────────────────────
+
+const roundtripBusy = ref<string | null>(null);
+
+async function deepVerify(bucketName: string) {
+  roundtripBusy.value = bucketName;
+  const enc = bucketEncryption.value[bucketName];
+  const kmsKeyId = enc?.kmsKeyId || undefined;
+  const res = await verifyRoundtrip(bucketName, kmsKeyId);
+  roundtripBusy.value = null;
+  if (res.isOk() && res.value) {
+    if (res.value.roundtripVerified) {
+      const algo = res.value.sseAlgorithm || "SSE-KMS";
+      const key = res.value.sseKmsKeyId ? ` (key: ${res.value.sseKmsKeyId})` : "";
+      pushNotification(
+        new Notification("Round-trip verified", `PUT→HEAD→GET→DELETE succeeded on "${bucketName}" with ${algo}${key}.`, "success", 5000)
+      );
+    } else {
+      const detail = res.value.error || "Unknown failure";
+      const stepSummary = (res.value.steps || []).map(s => `${s.step}: ${s.ok ? "✓" : "✗"}`).join(", ");
+      pushNotification(
+        new Notification("Round-trip failed", `${detail}\nSteps: ${stepSummary}`, "error", 8000)
+      );
+    }
+  } else {
+    pushNotification(
+      new Notification("Round-trip failed", res.isErr() ? res.error.message : "Control plane unavailable", "error", 5000)
+    );
+  }
 }
 
 function shouldOpenMenuUp(index: number, total: number): boolean {
