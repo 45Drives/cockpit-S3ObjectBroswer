@@ -1,3 +1,9 @@
+cockpit-s3-browser (1.1.0-7focal) focal; urgency=medium
+
+  * test
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 27 Apr 2026 09:22:33 -0300
+
 cockpit-s3-browser (1.1.0-6focal) focal; urgency=medium
 
   * test
