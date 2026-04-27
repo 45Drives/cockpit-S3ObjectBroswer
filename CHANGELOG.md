@@ -1,3 +1,3 @@
-## s3-browser 1.1.0-7
+## s3-browser 1.1.0-8
 
-* test
+* build fix
