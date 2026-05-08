@@ -223,11 +223,11 @@
             <label class="block text-sm font-medium text-default mb-1">KMS Key / Policy</label>
 
             <!-- Control plane available: show policy dropdown -->
-            <template v-if="cpStore.isAvailable && cpStore.policies.length > 0">
+            <template v-if="cpStore.isAvailable && compatiblePolicies.length > 0">
               <select v-model="setEncKmsKeyId"
                 class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
                 <option value="">— Use bucket default —</option>
-                <option v-for="p in cpStore.policies" :key="p.id" :value="p.transit_key_name">
+                <option v-for="p in compatiblePolicies" :key="p.id" :value="p.transit_key_name">
                   {{ p.name }} ({{ cpProviderName(p.provider_id) }} · {{ p.algorithm }})
                 </option>
               </select>
@@ -359,6 +359,24 @@ const effectiveBackendType = computed<BackendType>(() => {
   return detectBackendType(connectionName.value, cfg?.endpoint);
 });
 
+/** Only show policies whose key_engine is compatible with the current backend. */
+const compatiblePolicies = computed(() => {
+  const bt = effectiveBackendType.value;
+  return cpStore.policies.filter((p) => {
+    const engine = p.key_engine || "transit";
+    switch (bt) {
+      case "rustfs":
+        return engine === "kv2_rustfs";
+      case "rgw":
+        return engine === "transit";
+      case "minio":
+        return engine === "kv1_kes";
+      default:
+        return true; // generic: show all
+    }
+  });
+});
+
 const buckets = ref<BucketSummary[]>([]);
 const busy = ref(false);
 const error = ref("");
@@ -479,8 +497,8 @@ const kmsReady = computed(() => {
   if (setEncAlgo.value !== "aws:kms") return true;
   // If the control plane hasn't loaded yet, be permissive (let the API error surface naturally)
   if (cpStore.available === null) return true;
-  // If CP is available, require at least one policy for SSE-KMS
-  if (cpStore.available && cpStore.policies.length > 0) return true;
+  // If CP is available, require at least one compatible policy for SSE-KMS
+  if (cpStore.available && compatiblePolicies.value.length > 0) return true;
   return false;
 });
 
@@ -516,13 +534,17 @@ async function applySetEncryption() {
 
   // Pre-validate KMS key if SSE-KMS with a specific key
   if (setEncAlgo.value === "aws:kms" && setEncKmsKeyId.value && cpStore.isAvailable) {
-    const vr = await validateKmsKey(setEncKmsKeyId.value, "transit", true);
+    // Determine engine type from the selected policy
+    const selectedPolicy = cpStore.policies.find((p) => p.transit_key_name === setEncKmsKeyId.value);
+    const engineType = (selectedPolicy?.key_engine || "transit") as "transit" | "kv2" | "kv2_rustfs" | "kv1_kes";
+    const requireExportable = engineType === "transit";
+    const vr = await validateKmsKey(setEncKmsKeyId.value, engineType, requireExportable);
     if (vr.isOk() && vr.value) {
       const v = vr.value;
       if (!v.valid) {
         setEncBusy.value = false;
         if (!v.exists) {
-          setEncError.value = `Transit key "${setEncKmsKeyId.value}" does not exist in Vault.`;
+          setEncError.value = `Key "${setEncKmsKeyId.value}" does not exist in Vault (engine: ${engineType}).`;
         } else if (v.exportable === false) {
           setEncError.value = `Transit key "${setEncKmsKeyId.value}" exists but is not exportable. Ceph RGW requires exportable keys. Recreate the key with exportable=true.`;
         } else {
@@ -544,26 +566,32 @@ async function applySetEncryption() {
       setEncAlgo.value,
       backend,
       setEncAlgo.value === "aws:kms" ? setEncKmsKeyId.value || undefined : undefined,
+      connConfig.value?.endpoint,
+      connectionName.value || undefined,
     );
-    setEncBusy.value = false;
-    if (!cpRes.success) {
-      const msg = cpRes.message || "Failed to set encryption";
-      if (backend === "minio" && /kms|kes|encrypt/i.test(msg)) {
-        setEncError.value = "MinIO requires KES (Key Encryption Service) configured to support SSE-KMS. "
-          + "Set up KES in the Encryption Manager first, or use AES-256 (SSE-S3) for server-managed encryption.";
-      } else if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
-        setEncError.value = "KMS is not configured on this S3 backend. Configure it in the Encryption Manager first.";
-      } else {
-        setEncError.value = msg;
+    // If control plane fails due to missing target registration, fall through to direct S3 API
+    const fallThroughToDirectApi = !cpRes.success && /targetId is required|connectionName.*metadata/i.test(cpRes.message || "");
+    if (!fallThroughToDirectApi) {
+      setEncBusy.value = false;
+      if (!cpRes.success) {
+        const msg = cpRes.message || "Failed to set encryption";
+        if (backend === "minio" && /kms|kes|encrypt/i.test(msg)) {
+          setEncError.value = "MinIO requires KES (Key Encryption Service) configured to support SSE-KMS. "
+            + "Set up KES in the Encryption Manager first, or use AES-256 (SSE-S3) for server-managed encryption.";
+        } else if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
+          setEncError.value = "KMS is not configured on this S3 backend. Configure it in the Encryption Manager first.";
+        } else {
+          setEncError.value = msg;
+        }
+        return;
       }
+      showSetEncModal.value = false;
+      pushNotification(
+        new Notification("Encryption updated", `Default encryption set on "${setEncBucket.value}".`, "success", 4000)
+      );
+      fetchBucketEncryptions([setEncBucket.value]);
       return;
     }
-    showSetEncModal.value = false;
-    pushNotification(
-      new Notification("Encryption updated", `Default encryption set on "${setEncBucket.value}".`, "success", 4000)
-    );
-    fetchBucketEncryptions([setEncBucket.value]);
-    return;
   }
 
   // Fallback: direct S3 API when control plane is not available
@@ -646,7 +674,7 @@ const verifyBusy = ref<string | null>(null);
 
 async function verifyEncryption(bucketName: string) {
   verifyBusy.value = bucketName;
-  const result = await cpStore.verifyBucketEncryptionAction(bucketName, effectiveBackendType.value);
+  const result = await cpStore.verifyBucketEncryptionAction(bucketName, effectiveBackendType.value, connConfig.value?.endpoint, connectionName.value || undefined);
   verifyBusy.value = null;
   if (result.success) {
     pushNotification(

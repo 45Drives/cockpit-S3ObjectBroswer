@@ -35,6 +35,7 @@ export interface PolicySummary {
   algorithm: string;
   transit_key_name: string;
   provider_id: string;
+  key_engine?: string;
   rotation_interval_days: number | null;
 }
 

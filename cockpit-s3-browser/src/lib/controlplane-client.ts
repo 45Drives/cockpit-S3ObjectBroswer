@@ -208,7 +208,7 @@ export interface KmsKeyValidation {
 /** Validate a KMS key exists and is accessible in Vault before setting encryption. */
 export function validateKmsKey(
   keyName: string,
-  engineType: "transit" | "kv2" = "transit",
+  engineType: "transit" | "kv2" | "kv2_rustfs" | "kv1_kes" = "transit",
   requireExportable = false
 ): ResultAsync<KmsKeyValidation | null, Error> {
   return guarded(() =>
@@ -221,7 +221,9 @@ export function setBucketEncryption(
   algorithm: "AES256" | "aws:kms",
   backendType: BackendType,
   kmsKeyId?: string,
-  targetId?: string
+  targetId?: string,
+  endpoint?: string,
+  connectionName?: string
 ): ResultAsync<ActionResult | null, Error> {
   const methodMap: Partial<Record<BackendType, string>> = {
     rgw: "ceph.rgwSetBucketEncryption",
@@ -235,6 +237,8 @@ export function setBucketEncryption(
   const params: Record<string, unknown> = { bucket, bucketName: bucket, algorithm };
   if (kmsKeyId) params.kmsKeyId = kmsKeyId;
   if (targetId) params.targetId = targetId;
+  if (endpoint) params.endpoint = endpoint;
+  if (connectionName) params.connectionName = connectionName;
 
   return guarded(() => rpc<ActionResult>(method, params));
 }
@@ -242,7 +246,9 @@ export function setBucketEncryption(
 export function removeBucketEncryption(
   bucket: string,
   backendType: BackendType,
-  targetId?: string
+  targetId?: string,
+  endpoint?: string,
+  connectionName?: string
 ): ResultAsync<ActionResult | null, Error> {
   const methodMap: Partial<Record<BackendType, string>> = {
     rgw: "ceph.rgwRemoveBucketEncryption",
@@ -255,6 +261,8 @@ export function removeBucketEncryption(
 
   const params: Record<string, unknown> = { bucket, bucketName: bucket };
   if (targetId) params.targetId = targetId;
+  if (endpoint) params.endpoint = endpoint;
+  if (connectionName) params.connectionName = connectionName;
 
   return guarded(() => rpc<ActionResult>(method, params));
 }
@@ -262,7 +270,9 @@ export function removeBucketEncryption(
 export function verifyBucketEncryption(
   bucket: string,
   backendType: BackendType,
-  targetId?: string
+  targetId?: string,
+  endpoint?: string,
+  connectionName?: string
 ): ResultAsync<ActionResult | null, Error> {
   const methodMap: Partial<Record<BackendType, string>> = {
     rgw: "ceph.rgwVerifyBucket",
@@ -275,6 +285,8 @@ export function verifyBucketEncryption(
 
   const params: Record<string, unknown> = { bucket, bucketName: bucket };
   if (targetId) params.targetId = targetId;
+  if (endpoint) params.endpoint = endpoint;
+  if (connectionName) params.connectionName = connectionName;
 
   return guarded(() => rpc<ActionResult>(method, params));
 }

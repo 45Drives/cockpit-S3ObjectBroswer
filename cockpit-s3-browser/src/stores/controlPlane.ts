@@ -16,6 +16,8 @@ import {
   setBucketEncryption as cpSetBucketEncryption,
   removeBucketEncryption as cpRemoveBucketEncryption,
   verifyBucketEncryption as cpVerifyBucketEncryption,
+  verifyRoundtrip as cpVerifyRoundtrip,
+  getTargetByBucketName,
   navigateToEncryptionManager,
 } from "../lib/controlplane-client";
 
@@ -102,13 +104,26 @@ export const useControlPlaneStore = defineStore("controlPlane", () => {
     }
   }
 
+  async function resolveTargetId(bucket: string, backendType: BackendType): Promise<string | undefined> {
+    const targetResult = await getTargetByBucketName(bucket, backendType);
+    let targetId: string | undefined;
+    targetResult.match(
+      (target) => { targetId = target?.id; },
+      () => { /* ignore lookup failures */ }
+    );
+    return targetId;
+  }
+
   async function setBucketEncryptionAction(
     bucket: string,
     algorithm: "AES256" | "aws:kms",
     backendType: BackendType,
-    kmsKeyId?: string
+    kmsKeyId?: string,
+    endpoint?: string,
+    connectionName?: string
   ): Promise<{ success: boolean; message?: string }> {
-    const result = await cpSetBucketEncryption(bucket, algorithm, backendType, kmsKeyId);
+    const targetId = await resolveTargetId(bucket, backendType);
+    const result = await cpSetBucketEncryption(bucket, algorithm, backendType, kmsKeyId, targetId, endpoint, connectionName);
     let outcome: { success: boolean; message?: string } = { success: false, message: "Control plane unavailable" };
     result.match(
       (val) => {
@@ -117,14 +132,42 @@ export const useControlPlaneStore = defineStore("controlPlane", () => {
       },
       (err) => { outcome = { success: false, message: String(err) }; }
     );
+    if (!outcome.success) return outcome;
+
+    // For SSE-KMS, verify RustFS can actually use the key with a roundtrip test
+    if (algorithm === "aws:kms") {
+      const rtResult = await cpVerifyRoundtrip(bucket, kmsKeyId);
+      let roundtripOk = false;
+      let roundtripError = "";
+      rtResult.match(
+        (val) => {
+          if (val && val.roundtripVerified) {
+            roundtripOk = true;
+          } else {
+            roundtripError = val?.error || "Roundtrip encryption test failed — the S3 backend cannot use this key.";
+          }
+        },
+        (err) => { roundtripError = String(err); }
+      );
+      if (!roundtripOk) {
+        // Roll back: remove the encryption config we just set
+        await cpRemoveBucketEncryption(bucket, backendType, targetId, endpoint, connectionName);
+        clearBucketCache(bucket);
+        return { success: false, message: roundtripError };
+      }
+    }
+
     return outcome;
   }
 
   async function removeBucketEncryptionAction(
     bucket: string,
-    backendType: BackendType
+    backendType: BackendType,
+    endpoint?: string,
+    connectionName?: string
   ): Promise<{ success: boolean; message?: string }> {
-    const result = await cpRemoveBucketEncryption(bucket, backendType);
+    const targetId = await resolveTargetId(bucket, backendType);
+    const result = await cpRemoveBucketEncryption(bucket, backendType, targetId, endpoint, connectionName);
     let outcome: { success: boolean; message?: string } = { success: false, message: "Control plane unavailable" };
     result.match(
       (val) => {
@@ -138,9 +181,12 @@ export const useControlPlaneStore = defineStore("controlPlane", () => {
 
   async function verifyBucketEncryptionAction(
     bucket: string,
-    backendType: BackendType
+    backendType: BackendType,
+    endpoint?: string,
+    connectionName?: string
   ): Promise<{ success: boolean; message?: string }> {
-    const result = await cpVerifyBucketEncryption(bucket, backendType);
+    const targetId = await resolveTargetId(bucket, backendType);
+    const result = await cpVerifyBucketEncryption(bucket, backendType, targetId, endpoint, connectionName);
     let outcome: { success: boolean; message?: string } = { success: false, message: "Control plane unavailable" };
     result.match(
       (val) => { outcome = val ?? { success: false, message: "Not supported for this backend" }; },
