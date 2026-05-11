@@ -3,8 +3,8 @@
     "name": "cockpit-s3-browser",
     "title": "s3-browser",
     "stable": true,
-    "version": "encryption key fixes",
-    "build_number": "5",
+    "version": "1.1.1",
+    "build_number": "1",
     "author": "Rachit Hans <rhans@45drives.com>",
     "git_url": "https://github.com/45Drives/cockpit-s3-browser",
     "license": "GPL-3.0+",
@@ -58,8 +58,8 @@
     ],
     "changelog": {
         "urgency": "medium",
-        "version": "encryption key fixes",
-        "build_number": "5",
+        "version": "1.1.1",
+        "build_number": "1",
         "date": null,
         "packager": "Rachit Hans <rhans@45drives.com>",
         "changes": []

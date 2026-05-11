@@ -1,3 +1,9 @@
+cockpit-s3-browser (1.1.1-1jammy) jammy; urgency=medium
+
+  * encryption key fixes
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 08:02:16 -0300
+
 cockpit-s3-browser (encryption key fixes-5jammy) jammy; urgency=medium
 
   * encryption key fixes

@@ -1,3 +1,3 @@
-## s3-browser encryption key fixes-5
+## s3-browser 1.1.1-1
 
 * encryption key fixes
