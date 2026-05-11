@@ -1,4 +1,3 @@
-## s3-browser 1.1.1-3
+## s3-browser 1.1.1-4
 
-* encryption key fixes
 * build
