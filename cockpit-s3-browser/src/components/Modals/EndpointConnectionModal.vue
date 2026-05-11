@@ -124,6 +124,19 @@
                     </div>
                   </label>
 
+                  <label v-if="form.useTls" class="flex items-start gap-3 rounded-md border border-default bg-default p-4">
+                    <input type="checkbox" v-model="form.tlsVerify"
+                      class="mt-1 h-4 w-4 rounded border-default bg-default text-default focus:ring-default/30" />
+                    <div class="min-w-0">
+                      <p class="text-sm font-semibold text-default">
+                        Verify TLS certificate
+                      </p>
+                      <p class="mt-1 text-xs text-default/70">
+                        Disable this if your endpoint uses a self-signed certificate.
+                      </p>
+                    </div>
+                  </label>
+
                   <div>
                     <label class="text-sm font-semibold text-default" for="m-backend-type">Backend Type</label>
                     <p class="mt-1 text-xs text-default/70">
@@ -258,6 +271,7 @@ const form = reactive<EndpointConfig>({
   accessKeyId: "",
   secretAccessKey: "",
   useTls: false,
+  tlsVerify: true,
   defaultSse: "none",
   defaultSseKmsKeyId: "",
   backendType: "auto",
@@ -300,6 +314,7 @@ function resetForm() {
   endpointHost.value = "";
   showSecret.value = false;
   form.useTls = false;
+  form.tlsVerify = true;
   form.defaultSse = "none";
   form.defaultSseKmsKeyId = "";
   form.backendType = "auto";
@@ -326,6 +341,7 @@ async function loadForEdit(id: string) {
     form.accessKeyId = res.value.accessKeyId;
     form.secretAccessKey = res.value.secretAccessKey;
     form.useTls = !!(res.value as any).useTls;
+    form.tlsVerify = (res.value as any).tlsVerify !== false;
     form.defaultSse = (res.value as any).defaultSse || "none";
     form.defaultSseKmsKeyId = (res.value as any).defaultSseKmsKeyId || "";
     endpointHost.value = normalizeHost(res.value.endpoint);
@@ -403,6 +419,7 @@ async function save() {
       region: (form.region || "").trim() || undefined,
       accessKeyId: (form.accessKeyId || "").trim(),
       useTls: form.useTls,
+      tlsVerify: form.tlsVerify,
       secretAccessKey: form.secretAccessKey,
       defaultSse: form.defaultSse === "none" ? undefined : form.defaultSse,
       defaultSseKmsKeyId: form.defaultSse === "aws:kms" && form.defaultSseKmsKeyId ? form.defaultSseKmsKeyId : undefined,
@@ -424,6 +441,7 @@ async function save() {
       region: cfg.region,
       updatedAt: now,
       useTls: cfg.useTls,
+      tlsVerify: cfg.tlsVerify,
       lastUsedAt: undefined,
     };
 

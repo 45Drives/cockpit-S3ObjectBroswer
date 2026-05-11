@@ -6,6 +6,7 @@ export type EndpointConfig = {
     accessKeyId: string;
     secretAccessKey: string;
     useTls: boolean;
+    tlsVerify: boolean;
     defaultSse?: 'AES256' | 'aws:kms' | 'none';
     defaultSseKmsKeyId?: string;
     backendType?: 'auto' | 'rgw' | 'rustfs' | 'minio' | 'generic';
@@ -17,6 +18,7 @@ export type EndpointConfig = {
 	endpoint: string;
 	region?: string;
 	useTls: boolean;
+	tlsVerify: boolean;
 	updatedAt: string;
 	lastUsedAt?: string;
   };
