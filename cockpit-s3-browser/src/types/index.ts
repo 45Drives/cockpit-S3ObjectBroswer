@@ -5,7 +5,8 @@ export type EndpointConfig = {
     region?: string;
     accessKeyId: string;
     secretAccessKey: string;
-    useTls: boolean
+    useTls: boolean;
+    tlsVerify: boolean;
   };
 
   export type ConnectionSummary = {
@@ -14,6 +15,7 @@ export type EndpointConfig = {
 	endpoint: string;
 	region?: string;
 	useTls: boolean;
+	tlsVerify: boolean;
 	updatedAt: string;
 	lastUsedAt?: string;
   };
