@@ -59,9 +59,11 @@
     "changelog": {
         "urgency": "medium",
         "version": "1.1.1",
-        "build_number": "5",
-        "date": null,
+        "build_number": "6",
+        "date": "2026-05-12T10:43:39.094624",
         "packager": "Rachit Hans <rhans@45drives.com>",
-        "changes": []
+        "changes": [
+            "fixes"
+        ]
     }
 }
