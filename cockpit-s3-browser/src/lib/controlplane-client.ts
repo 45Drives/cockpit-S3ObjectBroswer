@@ -272,7 +272,9 @@ export function verifyBucketEncryption(
   backendType: BackendType,
   targetId?: string,
   endpoint?: string,
-  connectionName?: string
+  connectionName?: string,
+  accessKey?: string,
+  secretKey?: string
 ): ResultAsync<ActionResult | null, Error> {
   const methodMap: Partial<Record<BackendType, string>> = {
     rgw: "ceph.rgwVerifyBucket",
@@ -287,6 +289,8 @@ export function verifyBucketEncryption(
   if (targetId) params.targetId = targetId;
   if (endpoint) params.endpoint = endpoint;
   if (connectionName) params.connectionName = connectionName;
+  if (accessKey) params.accessKeyId = accessKey;
+  if (secretKey) params.secretAccessKey = secretKey;
 
   return guarded(() => rpc<ActionResult>(method, params));
 }

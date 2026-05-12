@@ -568,6 +568,8 @@ async function applySetEncryption() {
       setEncAlgo.value === "aws:kms" ? setEncKmsKeyId.value || undefined : undefined,
       connConfig.value?.endpoint,
       connectionName.value || undefined,
+      connConfig.value?.accessKeyId,
+      connConfig.value?.secretAccessKey,
     );
     // If control plane fails due to missing target registration, fall through to direct S3 API
     const fallThroughToDirectApi = !cpRes.success && /targetId is required|connectionName.*metadata/i.test(cpRes.message || "");
