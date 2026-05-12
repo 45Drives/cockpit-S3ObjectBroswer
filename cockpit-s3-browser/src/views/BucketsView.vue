@@ -709,7 +709,14 @@ async function deepVerify(bucketName: string) {
   roundtripBusy.value = bucketName;
   const enc = bucketEncryption.value[bucketName];
   const kmsKeyId = enc?.kmsKeyId || undefined;
-  const res = await verifyRoundtrip(bucketName, kmsKeyId);
+  const res = await verifyRoundtrip(
+    bucketName,
+    kmsKeyId,
+    undefined, // targetId not set for direct connection
+    connConfig.value?.endpoint,
+    connConfig.value?.accessKeyId,
+    connConfig.value?.secretAccessKey
+  );
   roundtripBusy.value = null;
   if (res.isOk() && res.value) {
     if (res.value.roundtripVerified) {
