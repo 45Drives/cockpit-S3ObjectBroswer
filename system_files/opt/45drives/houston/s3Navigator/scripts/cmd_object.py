@@ -682,12 +682,13 @@ def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
     # user metadata
     "metadata": {str(k): str(v) for (k, v) in user_meta.items()},
 
-    # encryption metadata — some backends (e.g. rustfs) don't echo
-    # ServerSideEncryption in HeadObject even when bucket-default encryption
-    # is active, so fall back to the bucket encryption config.
-    "serverSideEncryption": head.get("ServerSideEncryption") or _bucket_default_sse(client, bucket, "algorithm"),
-    "sseKmsKeyId": head.get("SSEKMSKeyId") or _bucket_default_sse(client, bucket, "kmsKeyId"),
-    "bucketKeyEnabled": head.get("BucketKeyEnabled") or _bucket_default_sse(client, bucket, "bucketKeyEnabled") or False,
+    # encryption metadata — report only what HEAD says, not bucket defaults
+    # RGW/MinIO/etc echo the actual object encryption in HEAD responses.
+    # If HEAD returns None, the object is truly not encrypted (uploaded before
+    # bucket encryption was enabled, or uploaded without encryption).
+    "serverSideEncryption": head.get("ServerSideEncryption") or None,
+    "sseKmsKeyId": head.get("SSEKMSKeyId") or None,
+    "bucketKeyEnabled": head.get("BucketKeyEnabled") or False,
   }) + "\n")
 
 
