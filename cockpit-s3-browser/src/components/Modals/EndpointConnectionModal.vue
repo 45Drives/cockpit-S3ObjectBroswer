@@ -114,7 +114,7 @@
 
                   <label class="flex items-start gap-3 rounded-md border border-default bg-default p-4">
                     <input type="checkbox" v-model="form.useTls"
-                      class="mt-1 h-4 w-4 rounded border-default bg-default text-default focus:ring-default/30" />
+                      class="mt-1 h-4 w-4 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500/30" />
                     <div class="min-w-0">
                       <p class="text-sm font-semibold text-default">
                         Use secure transfer (SSL/TLS)</p>
@@ -126,7 +126,7 @@
 
                   <label v-if="form.useTls" class="flex items-start gap-3 rounded-md border border-default bg-default p-4">
                     <input type="checkbox" v-model="form.tlsVerify"
-                      class="mt-1 h-4 w-4 rounded border-default bg-default text-default focus:ring-default/30" />
+                      class="mt-1 h-4 w-4 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500/30" />
                     <div class="min-w-0">
                       <p class="text-sm font-semibold text-default">
                         Verify TLS certificate
