@@ -1,7 +1,7 @@
 # s3browser.py
 import sys
 
-from cmd_list import cmd_list_buckets, cmd_list_objects
+from cmd_list import cmd_list_buckets, cmd_list_objects, cmd_detect_backend_type
 from cmd_object import cmd_download_object, cmd_copy_object, cmd_rename_object, cmd_delete_object, cmd_upload_stdin, cmd_stat_object, cmd_get_bucket_encryption, cmd_put_bucket_encryption, cmd_delete_bucket_encryption
 from cmd_version import cmd_list_object_versions, cmd_delete_object_version, cmd_rollback_object_version
 from cmd_tag import cmd_put_object_tags, cmd_get_object_tags
@@ -27,6 +27,12 @@ def main() -> None:
       if len(sys.argv) < 3:
         raise ValueError("Usage: s3browser-cli list-buckets <connectionId>")
       cmd_list_buckets(sys.argv[2])
+      return
+
+    if cmd == "detect-backend-type":
+      if len(sys.argv) < 3:
+        raise ValueError("Usage: s3browser-cli detect-backend-type <connectionId>")
+      cmd_detect_backend_type(sys.argv[2])
       return
 
     if cmd == "list-objects":

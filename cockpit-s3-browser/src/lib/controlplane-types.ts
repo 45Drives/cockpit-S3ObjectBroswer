@@ -7,15 +7,13 @@
 export type BackendType = "rgw" | "minio" | "rustfs" | "generic";
 
 /**
- * Detect backend type from a connection name/endpoint.
- * Used as fallback when backendType is "auto" or unset.
+ * Resolve backend type from the connection config.
+ * Returns the explicitly configured type, or "generic" when set to "auto" / unset.
+ * Heuristic guessing (name, port, endpoint) was removed because it is unreliable —
+ * users should select the correct backend type in the connection setup form.
  */
-export function detectBackendType(name: string, endpoint?: string): BackendType {
-  const n = (name ?? "").toLowerCase();
-  const e = (endpoint ?? "").toLowerCase();
-  if (n.includes("rustfs") || e.includes("rustfs")) return "rustfs";
-  if (n.includes("rgw") || n.includes("ceph") || e.includes(":8080") || e.includes(":7480")) return "rgw";
-  if (n.includes("minio") || e.includes(":9000")) return "minio";
+export function resolveBackendType(backendType?: string): BackendType {
+  if (backendType && backendType !== "auto") return backendType as BackendType;
   return "generic";
 }
 

@@ -3,7 +3,7 @@ import type { ProcessError } from "@45drives/houston-common-lib";
 import { okAsync, errAsync, type ResultAsync } from "neverthrow";
 
 import type { BucketSummary } from "../types";
-import type { BucketEncryptionConfig } from "./controlplane-types";
+import type { BackendType, BucketEncryptionConfig } from "./controlplane-types";
 
 
 function safeJsonParse<T>(raw: string): ResultAsync<T, SyntaxError> {
@@ -116,5 +116,26 @@ export function deleteBucketEncryption(
       if (!res.ok)
         return errAsync(new SyntaxError(res.error || "Failed to remove bucket encryption"));
       return okAsync(undefined);
+    });
+}
+
+type DetectBackendTypeResult = {
+  ok: boolean;
+  backendType?: string;
+  serverHeader?: string;
+  error?: string;
+};
+
+export function detectBackendType(
+  connectionId: string
+): ResultAsync<BackendType, ProcessError | SyntaxError> {
+  return server
+    .execute(pyCmd(["detect-backend-type", connectionId], "try"))
+    .map((proc) => proc.getStdout().trim())
+    .andThen((stdout) => safeJsonParse<DetectBackendTypeResult>(stdout))
+    .andThen((res) => {
+      if (!res.ok)
+        return errAsync(new SyntaxError(res.error || "Failed to detect backend type"));
+      return okAsync((res.backendType || "generic") as BackendType);
     });
 }

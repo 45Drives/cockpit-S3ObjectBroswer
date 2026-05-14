@@ -9,6 +9,7 @@
             <div>
               <div class="text-base font-semibold text-default">Buckets</div>
               <div class="text-sm text-default">Connection: {{ connectionName || "—" }}</div>
+              <div class="text-xs text-default opacity-60">Backend: {{ effectiveBackendType }}{{ detectedBackendType ? ` (detected: ${detectedBackendType})` : '' }}</div>
             </div>
           </div>
           <div class="flex items-center gap-2 shrink-0">
@@ -336,13 +337,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { listBuckets, getBucketEncryption, putBucketEncryption, deleteBucketEncryption } from "../lib/s3Buckets";
+import { listBuckets, getBucketEncryption, putBucketEncryption, deleteBucketEncryption, detectBackendType } from "../lib/s3Buckets";
 import { navigateToEncryptionManager, validateKmsKey, verifyRoundtrip } from "../lib/controlplane-client";
 import { useControlPlaneStore } from "../stores/controlPlane";
 import { getConnection } from "../lib/endpointConnection";
 import type { BucketSummary, EndpointConfig } from "../types";
 import type { BackendType, BucketEncryptionConfig } from "../lib/controlplane-types";
-import { detectBackendType } from "../lib/controlplane-types";
+import { resolveBackendType } from "../lib/controlplane-types";
 import { ArchiveBoxIcon, ArrowUturnLeftIcon, MagnifyingGlassIcon, ArrowPathIcon, LockClosedIcon, LockOpenIcon, EllipsisVerticalIcon, ArrowTopRightOnSquareIcon } from "@heroicons/vue/20/solid";
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
@@ -356,10 +357,11 @@ const connectionId = computed(() => String(route.query.connectionId || ""));
 const connectionName = computed(() => String(route.query.connectionName || ""));
 
 const connConfig = ref<EndpointConfig | null>(null);
+const detectedBackendType = ref<BackendType | null>(null);
 const effectiveBackendType = computed<BackendType>(() => {
-  const cfg = connConfig.value;
-  if (cfg?.backendType && cfg.backendType !== "auto") return cfg.backendType as BackendType;
-  return detectBackendType(connectionName.value, cfg?.endpoint);
+  const explicit = resolveBackendType(connConfig.value?.backendType);
+  if (explicit !== "generic") return explicit;
+  return detectedBackendType.value || "generic";
 });
 
 /** Only show policies whose key_engine is compatible with the current backend. */
@@ -452,6 +454,14 @@ async function refresh() {
     const connRes = await getConnection(connectionId.value);
     if (connRes.isOk() && connRes.value) {
       connConfig.value = connRes.value;
+    }
+
+    // Auto-detect backend type by probing the S3 server header
+    if (!connConfig.value?.backendType || connConfig.value.backendType === "auto") {
+      const dtRes = await detectBackendType(connectionId.value);
+      if (dtRes.isOk()) {
+        detectedBackendType.value = dtRes.value;
+      }
     }
 
     const res = await listBuckets(connectionId.value);
