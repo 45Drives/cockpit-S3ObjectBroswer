@@ -1,3 +1,4 @@
-## s3-browser 1.1.1-5
+## s3-browser 1.1.1-7
 
-* build
+* fixes
+* building test package fro storage encryption
