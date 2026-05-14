@@ -30,6 +30,9 @@
         <div class="p-4">
           <div v-if="error" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
             {{ error }}
+            <p v-if="isSslError" class="mt-2 text-xs font-medium">
+              💡 Tip: Edit this connection and uncheck <strong>"Verify TLS certificate"</strong> to allow self-signed certificates.
+            </p>
           </div>
 
           <div class="mb-3 flex items-center gap-3">
@@ -380,6 +383,10 @@ const compatiblePolicies = computed(() => {
 const buckets = ref<BucketSummary[]>([]);
 const busy = ref(false);
 const error = ref("");
+const isSslError = computed(() => {
+  const e = error.value.toLowerCase();
+  return e.includes("certificate_verify_failed") || e.includes("self-signed certificate") || e.includes("verify tls certificate");
+});
 
 const query = ref("");
 

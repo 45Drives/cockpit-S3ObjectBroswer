@@ -19,8 +19,22 @@ def cmd_list_buckets(conn_id: str) -> None:
     sys.stdout.write(json.dumps({"ok": False, "error": "Connection not found"}) + "\n")
     return
 
-  client = make_client(cfg)
-  resp = client.list_buckets()
+  try:
+    client = make_client(cfg)
+    resp = client.list_buckets()
+  except Exception as e:
+    err_msg = str(e)
+    if "CERTIFICATE_VERIFY_FAILED" in err_msg or "self-signed certificate" in err_msg.lower() or "certificate verify failed" in err_msg.lower():
+      sys.stdout.write(json.dumps({
+        "ok": False,
+        "error": "SSL certificate verification failed. The endpoint appears to use a self-signed certificate. "
+                 "Please edit this connection and uncheck 'Verify TLS certificate' to connect.",
+        "errorType": "SSL_SELF_SIGNED"
+      }) + "\n")
+    else:
+      sys.stdout.write(json.dumps({"ok": False, "error": err_msg}) + "\n")
+    return
+
   buckets = [
     {"name": b["Name"], "creationDate": b["CreationDate"].isoformat()}
     for b in (resp.get("Buckets") or [])
