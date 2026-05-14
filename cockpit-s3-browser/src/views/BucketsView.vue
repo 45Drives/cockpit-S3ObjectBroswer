@@ -569,22 +569,9 @@ async function applySetEncryption() {
       connConfig.value?.endpoint,
       connectionName.value || undefined,
     );
-    // If control plane fails due to missing target registration, fall through to direct S3 API
-    const fallThroughToDirectApi = !cpRes.success && /targetId is required|connectionName.*metadata/i.test(cpRes.message || "");
-    if (!fallThroughToDirectApi) {
+    // If control plane fails, fall through to direct S3 API as fallback
+    if (cpRes.success) {
       setEncBusy.value = false;
-      if (!cpRes.success) {
-        const msg = cpRes.message || "Failed to set encryption";
-        if (backend === "minio" && /kms|kes|encrypt/i.test(msg)) {
-          setEncError.value = "MinIO requires KES (Key Encryption Service) configured to support SSE-KMS. "
-            + "Set up KES in the Encryption Manager first, or use AES-256 (SSE-S3) for server-managed encryption.";
-        } else if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
-          setEncError.value = "KMS is not configured on this S3 backend. Configure it in the Encryption Manager first.";
-        } else {
-          setEncError.value = msg;
-        }
-        return;
-      }
       showSetEncModal.value = false;
       pushNotification(
         new Notification("Encryption updated", `Default encryption set on "${setEncBucket.value}".`, "success", 4000)
@@ -709,7 +696,7 @@ async function deepVerify(bucketName: string) {
   roundtripBusy.value = bucketName;
   const enc = bucketEncryption.value[bucketName];
   const kmsKeyId = enc?.kmsKeyId || undefined;
-  const res = await verifyRoundtrip(bucketName, kmsKeyId);
+  const res = await verifyRoundtrip(bucketName, kmsKeyId, undefined, connConfig.value?.endpoint, connectionName.value || undefined);
   roundtripBusy.value = null;
   if (res.isOk() && res.value) {
     if (res.value.roundtripVerified) {

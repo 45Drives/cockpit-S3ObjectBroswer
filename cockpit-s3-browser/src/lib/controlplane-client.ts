@@ -302,10 +302,14 @@ export interface RoundtripResult {
 export function verifyRoundtrip(
   bucket: string,
   kmsKeyId?: string,
-  targetId?: string
+  targetId?: string,
+  endpoint?: string,
+  connectionName?: string
 ): ResultAsync<RoundtripResult | null, Error> {
-  const params: Record<string, unknown> = { bucket, kmsKeyId };
+  const params: Record<string, unknown> = { bucket, bucketName: bucket, kmsKeyId };
   if (targetId) params.targetId = targetId;
+  if (endpoint) params.endpoint = endpoint;
+  if (connectionName) params.connectionName = connectionName;
   return guarded(() => rpc<RoundtripResult>("s3.verifyRoundtrip", params));
 }
 

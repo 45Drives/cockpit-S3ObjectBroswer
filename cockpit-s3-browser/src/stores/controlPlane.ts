@@ -136,7 +136,7 @@ export const useControlPlaneStore = defineStore("controlPlane", () => {
 
     // For SSE-KMS, verify RustFS can actually use the key with a roundtrip test
     if (algorithm === "aws:kms") {
-      const rtResult = await cpVerifyRoundtrip(bucket, kmsKeyId);
+      const rtResult = await cpVerifyRoundtrip(bucket, kmsKeyId, targetId, endpoint, connectionName);
       let roundtripOk = false;
       let roundtripError = "";
       rtResult.match(
