@@ -272,7 +272,9 @@ export function verifyBucketEncryption(
   backendType: BackendType,
   targetId?: string,
   endpoint?: string,
-  connectionName?: string
+  connectionName?: string,
+  accessKey?: string,
+  secretKey?: string
 ): ResultAsync<ActionResult | null, Error> {
   const methodMap: Partial<Record<BackendType, string>> = {
     rgw: "ceph.rgwVerifyBucket",
@@ -287,6 +289,8 @@ export function verifyBucketEncryption(
   if (targetId) params.targetId = targetId;
   if (endpoint) params.endpoint = endpoint;
   if (connectionName) params.connectionName = connectionName;
+  if (accessKey) params.accessKeyId = accessKey;
+  if (secretKey) params.secretAccessKey = secretKey;
 
   return guarded(() => rpc<ActionResult>(method, params));
 }
@@ -304,12 +308,16 @@ export function verifyRoundtrip(
   kmsKeyId?: string,
   targetId?: string,
   endpoint?: string,
-  connectionName?: string
+  connectionName?: string,
+  accessKey?: string,
+  secretKey?: string
 ): ResultAsync<RoundtripResult | null, Error> {
   const params: Record<string, unknown> = { bucket, bucketName: bucket, kmsKeyId };
   if (targetId) params.targetId = targetId;
   if (endpoint) params.endpoint = endpoint;
   if (connectionName) params.connectionName = connectionName;
+  if (accessKey) params.accessKey = accessKey;
+  if (secretKey) params.secretKey = secretKey;
   return guarded(() => rpc<RoundtripResult>("s3.verifyRoundtrip", params));
 }
 

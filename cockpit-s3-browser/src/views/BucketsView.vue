@@ -568,6 +568,8 @@ async function applySetEncryption() {
       setEncAlgo.value === "aws:kms" ? setEncKmsKeyId.value || undefined : undefined,
       connConfig.value?.endpoint,
       connectionName.value || undefined,
+      connConfig.value?.accessKeyId,
+      connConfig.value?.secretAccessKey,
     );
     // If control plane fails, fall through to direct S3 API as fallback
     if (cpRes.success) {
@@ -696,7 +698,15 @@ async function deepVerify(bucketName: string) {
   roundtripBusy.value = bucketName;
   const enc = bucketEncryption.value[bucketName];
   const kmsKeyId = enc?.kmsKeyId || undefined;
-  const res = await verifyRoundtrip(bucketName, kmsKeyId, undefined, connConfig.value?.endpoint, connectionName.value || undefined);
+  const res = await verifyRoundtrip(
+    bucketName,
+    kmsKeyId,
+    undefined,
+    connConfig.value?.endpoint,
+    connectionName.value || undefined,
+    connConfig.value?.accessKeyId,
+    connConfig.value?.secretAccessKey
+  );
   roundtripBusy.value = null;
   if (res.isOk() && res.value) {
     if (res.value.roundtripVerified) {

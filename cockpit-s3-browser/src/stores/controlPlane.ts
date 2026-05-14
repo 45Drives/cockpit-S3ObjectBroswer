@@ -120,7 +120,9 @@ export const useControlPlaneStore = defineStore("controlPlane", () => {
     backendType: BackendType,
     kmsKeyId?: string,
     endpoint?: string,
-    connectionName?: string
+    connectionName?: string,
+    accessKeyId?: string,
+    secretAccessKey?: string
   ): Promise<{ success: boolean; message?: string }> {
     const targetId = await resolveTargetId(bucket, backendType);
     const result = await cpSetBucketEncryption(bucket, algorithm, backendType, kmsKeyId, targetId, endpoint, connectionName);
@@ -136,7 +138,7 @@ export const useControlPlaneStore = defineStore("controlPlane", () => {
 
     // For SSE-KMS, verify RustFS can actually use the key with a roundtrip test
     if (algorithm === "aws:kms") {
-      const rtResult = await cpVerifyRoundtrip(bucket, kmsKeyId, targetId, endpoint, connectionName);
+      const rtResult = await cpVerifyRoundtrip(bucket, kmsKeyId, targetId, endpoint, connectionName, accessKeyId, secretAccessKey);
       let roundtripOk = false;
       let roundtripError = "";
       rtResult.match(
