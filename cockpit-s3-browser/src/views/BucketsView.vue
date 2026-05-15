@@ -28,7 +28,30 @@
           </div>
         </div>
 
-        <div class="p-4">
+        <!-- Tab bar (shown when a backend-specific setup tab is available) -->
+        <div v-if="showKesTab || showRustfsTab" class="border-b border-default px-4 flex gap-0">
+          <button
+            class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            :class="activeTab === 'buckets' ? 'border-blue-500 text-blue-600' : 'border-transparent text-default opacity-60 hover:opacity-100'"
+            @click="activeTab = 'buckets'">
+            Buckets
+          </button>
+          <button v-if="showKesTab"
+            class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            :class="activeTab === 'kes-setup' ? 'border-blue-500 text-blue-600' : 'border-transparent text-default opacity-60 hover:opacity-100'"
+            @click="activeTab = 'kes-setup'">
+            KES / MinIO Setup
+          </button>
+          <button v-if="showRustfsTab"
+            class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            :class="activeTab === 'rustfs-setup' ? 'border-blue-500 text-blue-600' : 'border-transparent text-default opacity-60 hover:opacity-100'"
+            @click="activeTab = 'rustfs-setup'">
+            RustFS KMS Setup
+          </button>
+        </div>
+
+        <!-- Buckets tab content -->
+        <div v-if="activeTab === 'buckets'" class="p-4">
           <div v-if="error" class="mb-3 rounded-md border border-red-300 bg-default p-3 text-sm text-red-700">
             {{ error }}
             <p v-if="isSslError" class="mt-2 text-xs font-medium">
@@ -199,6 +222,17 @@
             </table>
           </div>
         </div>
+
+        <!-- KES / MinIO Setup tab -->
+        <div v-if="activeTab === 'kes-setup'" class="p-4">
+          <KesSetup :connection-host="connectionHost" />
+        </div>
+
+        <!-- RustFS KMS Setup tab -->
+        <div v-if="activeTab === 'rustfs-setup'" class="p-4">
+          <RustfsKmsSetup :connection-host="connectionHost" />
+        </div>
+
       </div>
     </div>
   </div>
@@ -262,8 +296,25 @@
             </div>
           </div>
 
+          <!-- RustFS KMS not configured warning -->
+          <div v-if="setEncAlgo === 'aws:kms' && effectiveBackendType === 'rustfs' && rustfsKmsReady === false && !rustfsKmsChecking"
+            class="rounded-md border border-orange-300 bg-orange-50 p-3 text-sm text-orange-800">
+            <p class="font-medium">RustFS KMS backend not configured</p>
+            <p class="mt-1 text-xs">
+              RustFS requires KMS (Vault) to be configured on the server before SSE-KMS can be used.
+              Open the
+              <a href="#" class="underline font-medium" @click.prevent="openEncryptionManager()">Encryption Manager</a>
+              and use the <strong>RustFS</strong> tab to set up the Vault connection first.
+            </p>
+          </div>
+
+          <div v-if="setEncAlgo === 'aws:kms' && effectiveBackendType === 'rustfs' && rustfsKmsChecking"
+            class="rounded-md border border-default bg-default p-3 text-sm text-default opacity-70">
+            Checking RustFS KMS readiness…
+          </div>
+
           <!-- KMS readiness check -->
-          <div v-if="setEncAlgo === 'aws:kms' && !kmsReady"
+          <div v-if="setEncAlgo === 'aws:kms' && !kmsReady && !(effectiveBackendType === 'rustfs' && rustfsKmsReady === false)"
             class="rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-800">
             <p class="font-medium">KMS backend not configured</p>
             <p class="mt-1 text-xs">
@@ -335,10 +386,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { listBuckets, getBucketEncryption, putBucketEncryption, deleteBucketEncryption, detectBackendType } from "../lib/s3Buckets";
-import { navigateToEncryptionManager, validateKmsKey, verifyRoundtrip } from "../lib/controlplane-client";
+import { navigateToEncryptionManager, validateKmsKey, verifyRoundtrip, kmsPreflight, rustfsGetConfig } from "../lib/controlplane-client";
+import type { KmsPreflightResult, RustfsKmsConfig } from "../lib/controlplane-client";
 import { useControlPlaneStore } from "../stores/controlPlane";
 import { getConnection } from "../lib/endpointConnection";
 import type { BucketSummary, EndpointConfig } from "../types";
@@ -348,6 +400,8 @@ import { ArchiveBoxIcon, ArrowUturnLeftIcon, MagnifyingGlassIcon, ArrowPathIcon,
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 import TaskCenter from "../components/TaskCenter.vue";
+import KesSetup from "../components/KesSetup.vue";
+import RustfsKmsSetup from "../components/RustfsKmsSetup.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -358,6 +412,14 @@ const connectionName = computed(() => String(route.query.connectionName || ""));
 
 const connConfig = ref<EndpointConfig | null>(null);
 const detectedBackendType = ref<BackendType | null>(null);
+
+/** Full endpoint URL with scheme (respects useTls). */
+const fullEndpointUrl = computed(() => {
+  const raw = connConfig.value?.endpoint || "";
+  if (raw.startsWith("http")) return raw;
+  return `${connConfig.value?.useTls ? "https" : "http"}://${raw}`;
+});
+
 const effectiveBackendType = computed<BackendType>(() => {
   const explicit = resolveBackendType(connConfig.value?.backendType);
   if (explicit !== "generic") return explicit;
@@ -391,6 +453,20 @@ const isSslError = computed(() => {
 });
 
 const query = ref("");
+
+const activeTab = ref<"buckets" | "kes-setup" | "rustfs-setup">("buckets");
+
+/** Show KES Setup tab when connected to a minio backend. */
+const showKesTab = computed(() => effectiveBackendType.value === "minio" && cpStore.isAvailable);
+/** Show RustFS KMS tab when connected to a rustfs backend. */
+const showRustfsTab = computed(() => effectiveBackendType.value === "rustfs" && cpStore.isAvailable);
+
+/** Extract host IP from the connection endpoint for SSH-based remote config. */
+const connectionHost = computed(() => {
+  const ep = connConfig.value?.endpoint || "";
+  // Strip scheme and port, keep host/ip
+  return ep.replace(/^https?:\/\//, "").replace(/:\d+$/, "") || undefined;
+});
 
 const filteredBuckets = computed(() => {
   const q = query.value.trim().toLowerCase();
@@ -509,9 +585,35 @@ const isKmsNotConfiguredError = computed(() => {
   return e.includes("kms is not configured") || e.includes("kms not configured");
 });
 
+// RustFS KMS preflight state
+const rustfsKmsReady = ref<boolean | null>(null); // null = not checked yet
+const rustfsKmsChecking = ref(false);
+const rustfsKmsConfig = ref<RustfsKmsConfig | null>(null);
+
+async function checkRustfsKmsReadiness() {
+  if (effectiveBackendType.value !== "rustfs") return;
+  rustfsKmsChecking.value = true;
+  rustfsKmsReady.value = null;
+  try {
+    const cfgRes = await rustfsGetConfig();
+    if (cfgRes.isOk() && cfgRes.value) {
+      rustfsKmsConfig.value = cfgRes.value;
+      rustfsKmsReady.value = cfgRes.value.kmsEnabled;
+    } else {
+      rustfsKmsReady.value = false;
+    }
+  } catch {
+    rustfsKmsReady.value = false;
+  } finally {
+    rustfsKmsChecking.value = false;
+  }
+}
+
 // KMS readiness — based on whether the control plane has providers & policies
 const kmsReady = computed(() => {
   if (setEncAlgo.value !== "aws:kms") return true;
+  // RustFS requires KMS backend to be configured on the service itself
+  if (effectiveBackendType.value === "rustfs" && rustfsKmsReady.value === false) return false;
   // If the control plane hasn't loaded yet, be permissive (let the API error surface naturally)
   if (cpStore.available === null) return true;
   // If CP is available, require at least one compatible policy for SSE-KMS
@@ -538,6 +640,8 @@ function openSetEncryptionModal(bucketName: string) {
   if (cpStore.available === null || cpStore.policies.length === 0) {
     cpStore.refresh();
   }
+  // Check RustFS KMS readiness if this is a RustFS backend
+  checkRustfsKmsReadiness();
 }
 
 function cpProviderName(providerId: string): string {
@@ -583,7 +687,7 @@ async function applySetEncryption() {
       setEncAlgo.value,
       backend,
       setEncAlgo.value === "aws:kms" ? setEncKmsKeyId.value || undefined : undefined,
-      connConfig.value?.endpoint,
+      fullEndpointUrl.value,
       connectionName.value || undefined,
       connConfig.value?.accessKeyId,
       connConfig.value?.secretAccessKey,
@@ -680,7 +784,7 @@ const verifyBusy = ref<string | null>(null);
 
 async function verifyEncryption(bucketName: string) {
   verifyBusy.value = bucketName;
-  const result = await cpStore.verifyBucketEncryptionAction(bucketName, effectiveBackendType.value, connConfig.value?.endpoint, connectionName.value || undefined);
+  const result = await cpStore.verifyBucketEncryptionAction(bucketName, effectiveBackendType.value, fullEndpointUrl.value, connectionName.value || undefined);
   verifyBusy.value = null;
   if (result.success) {
     pushNotification(
@@ -719,10 +823,10 @@ async function deepVerify(bucketName: string) {
     bucketName,
     kmsKeyId,
     undefined,
-    connConfig.value?.endpoint,
+    fullEndpointUrl.value,
     connectionName.value || undefined,
     connConfig.value?.accessKeyId,
-    connConfig.value?.secretAccessKey
+    connConfig.value?.secretAccessKey,
   );
   roundtripBusy.value = null;
   if (res.isOk() && res.value) {

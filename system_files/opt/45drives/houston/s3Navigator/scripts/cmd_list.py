@@ -71,25 +71,38 @@ def _probe_backend_type(endpoint: str) -> str:
   """
   import urllib.request
   import urllib.error
+  import ssl
 
   base = endpoint.rstrip("/")
+
+  # Allow self-signed / untrusted certs for probing
+  ctx = ssl.create_default_context()
+  ctx.check_hostname = False
+  ctx.verify_mode = ssl.CERT_NONE
+
+  def _open(req):
+    return urllib.request.urlopen(req, timeout=5, context=ctx)
 
   # 1. RustFS: GET /health returns JSON with "service":"rustfs-endpoint"
   try:
     req = urllib.request.Request(base + "/health", method="GET")
     req.add_header("Accept", "application/json")
-    resp = urllib.request.urlopen(req, timeout=5)
+    resp = _open(req)
     body = resp.read(1024).decode("utf-8", errors="replace").lower()
     if "rustfs" in body:
       return "rustfs"
   except Exception:
     pass
 
-  # 2. MinIO: GET /minio/health/live returns 200
+  # 2. MinIO: GET /minio/health/live — any non-404 response indicates MinIO
   try:
     req = urllib.request.Request(base + "/minio/health/live", method="GET")
-    resp = urllib.request.urlopen(req, timeout=5)
-    if resp.status == 200:
+    resp = _open(req)
+    # Any successful response (200, 204, etc.) means MinIO
+    return "minio"
+  except urllib.error.HTTPError as e:
+    # MinIO returned an error but the path exists (e.g. 503 unhealthy)
+    if e.code != 404:
       return "minio"
   except Exception:
     pass
@@ -97,7 +110,7 @@ def _probe_backend_type(endpoint: str) -> str:
   # 3. Check Server header and RGW-specific headers via an unauthenticated GET /
   try:
     req = urllib.request.Request(base + "/", method="GET")
-    resp = urllib.request.urlopen(req, timeout=5)
+    resp = _open(req)
     server = (resp.headers.get("Server") or "").lower()
     if "minio" in server:
       return "minio"

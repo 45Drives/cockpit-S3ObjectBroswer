@@ -341,6 +341,7 @@ export interface RustfsKmsConfig {
   kmsEnabled: boolean;
   kmsBackend: string | null;
   vaultAddress: string | null;
+  vaultToken: string | null;
   defaultKeyId: string | null;
 }
 
@@ -359,8 +360,84 @@ export function kmsPreflight(
 }
 
 /** Get current RustFS KMS configuration */
-export function rustfsGetConfig(): ResultAsync<RustfsKmsConfig | null, Error> {
-  return guarded(() => rpc<RustfsKmsConfig>("rustfs.getConfig"));
+export function rustfsGetConfig(host?: string): ResultAsync<RustfsKmsConfig | null, Error> {
+  return guarded(() => rpc<RustfsKmsConfig>("rustfs.getConfig", host ? { host } : {}));
+}
+
+// ─── RustFS KMS configuration ───────────────────────────────────────────────
+
+export interface RustfsConfigureResult {
+  success: boolean;
+  message: string;
+  config?: RustfsKmsConfig;
+  changes?: { param: string; value: string; old: string; success: boolean }[];
+}
+
+export function rustfsConfigureVault(params: {
+  providerId?: string;
+  vaultAddr?: string;
+  vaultToken?: string;
+  defaultKeyId?: string;
+  host?: string;
+}): ResultAsync<RustfsConfigureResult | null, Error> {
+  return guarded(() => rpc<RustfsConfigureResult>("rustfs.configureVault", params));
+}
+
+export interface RustfsConnection {
+  id: string;
+  name: string;
+  endpoint: string;
+  host: string;
+  useTls: boolean;
+  tlsVerify: boolean;
+  backendType: string;
+}
+
+export function rustfsListConnections(): ResultAsync<RustfsConnection[] | null, Error> {
+  return guarded(() => rpc<RustfsConnection[]>("rustfs.listConnections"));
+}
+
+// ─── KES / MinIO management ─────────────────────────────────────────────────
+
+export interface MinIODiscovery {
+  minioInstalled: boolean;
+  minioRunning: boolean;
+  kesInstalled: boolean;
+  kesRunning: boolean;
+  sseConfigured: boolean;
+  kesEndpoint: string | null;
+  minioEndpoint: string | null;
+  config: Record<string, string> | null;
+}
+
+export interface MinIOKesConfigResult {
+  success: boolean;
+  message: string;
+  steps?: { step: string; result: { success: boolean; message: string } }[];
+}
+
+export function minioDiscover(host?: string): ResultAsync<MinIODiscovery | null, Error> {
+  return guarded(() => rpc<MinIODiscovery>("minio.discover", host ? { host } : {}));
+}
+
+export function minioInstallKes(host?: string): ResultAsync<{ success: boolean; message: string } | null, Error> {
+  return guarded(() => rpc<{ success: boolean; message: string }>("minio.installKes", host ? { host } : {}));
+}
+
+export function minioConfigureKes(opts: {
+  vaultAddr: string;
+  vaultToken: string;
+  transitKey?: string;
+  kesListen?: string;
+  vaultNamespace?: string;
+  sslCacert?: string;
+  host?: string;
+}): ResultAsync<MinIOKesConfigResult | null, Error> {
+  return guarded(() => rpc<MinIOKesConfigResult>("minio.configureKes", opts));
+}
+
+export function minioRestartKes(host?: string): ResultAsync<{ success: boolean; message: string } | null, Error> {
+  return guarded(() => rpc<{ success: boolean; message: string }>("minio.restartKes", host ? { host } : {}));
 }
 
 // ─── Deep-link helpers ──────────────────────────────────────────────────────
