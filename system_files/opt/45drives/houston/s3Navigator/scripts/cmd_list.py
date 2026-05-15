@@ -3,7 +3,7 @@ import json
 import sys
 from typing import Any, Dict, List
 import os
-from utils import cfg_path, get_flag_value, read_json, make_client
+from utils import cfg_path, endpoint_url_from_cfg, get_flag_value, read_json, make_client
 
 
 
@@ -19,13 +19,120 @@ def cmd_list_buckets(conn_id: str) -> None:
     sys.stdout.write(json.dumps({"ok": False, "error": "Connection not found"}) + "\n")
     return
 
-  client = make_client(cfg)
-  resp = client.list_buckets()
+  try:
+    client = make_client(cfg)
+    resp = client.list_buckets()
+  except Exception as e:
+    err_msg = str(e)
+    if "CERTIFICATE_VERIFY_FAILED" in err_msg or "self-signed certificate" in err_msg.lower() or "certificate verify failed" in err_msg.lower():
+      sys.stdout.write(json.dumps({
+        "ok": False,
+        "error": "SSL certificate verification failed. The endpoint appears to use a self-signed certificate. "
+                 "Please edit this connection and uncheck 'Verify TLS certificate' to connect.",
+        "errorType": "SSL_SELF_SIGNED"
+      }) + "\n")
+    else:
+      sys.stdout.write(json.dumps({"ok": False, "error": err_msg}) + "\n")
+    return
+
   buckets = [
     {"name": b["Name"], "creationDate": b["CreationDate"].isoformat()}
     for b in (resp.get("Buckets") or [])
   ]
   sys.stdout.write(json.dumps({"ok": True, "buckets": buckets}) + "\n")
+
+
+def cmd_detect_backend_type(conn_id: str) -> None:
+  """Probe the S3 endpoint to identify the backend type (RustFS, MinIO, RGW, or generic)."""
+  try:
+    record = read_json(cfg_path(conn_id))
+  except Exception as e:
+    sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")
+    return
+
+  cfg = (record.get("config") or {}) if isinstance(record, dict) else {}
+  if not cfg:
+    sys.stdout.write(json.dumps({"ok": False, "error": "Connection not found"}) + "\n")
+    return
+
+  endpoint = endpoint_url_from_cfg(cfg)
+  backend = _probe_backend_type(endpoint)
+
+  sys.stdout.write(json.dumps({
+    "ok": True,
+    "backendType": backend,
+  }) + "\n")
+
+
+def _probe_backend_type(endpoint: str) -> str:
+  """
+  Probe the S3 endpoint with unauthenticated HTTP requests to known
+  backend-specific paths. Returns one of: rustfs, minio, rgw, generic.
+  """
+  import urllib.request
+  import urllib.error
+  import ssl
+
+  base = endpoint.rstrip("/")
+
+  # Allow self-signed / untrusted certs for probing
+  ctx = ssl.create_default_context()
+  ctx.check_hostname = False
+  ctx.verify_mode = ssl.CERT_NONE
+
+  def _open(req):
+    return urllib.request.urlopen(req, timeout=5, context=ctx)
+
+  # 1. RustFS: GET /health returns JSON with "service":"rustfs-endpoint"
+  try:
+    req = urllib.request.Request(base + "/health", method="GET")
+    req.add_header("Accept", "application/json")
+    resp = _open(req)
+    body = resp.read(1024).decode("utf-8", errors="replace").lower()
+    if "rustfs" in body:
+      return "rustfs"
+  except Exception:
+    pass
+
+  # 2. MinIO: GET /minio/health/live — any non-404 response indicates MinIO
+  try:
+    req = urllib.request.Request(base + "/minio/health/live", method="GET")
+    resp = _open(req)
+    # Any successful response (200, 204, etc.) means MinIO
+    return "minio"
+  except urllib.error.HTTPError as e:
+    # MinIO returned an error but the path exists (e.g. 503 unhealthy)
+    if e.code != 404:
+      return "minio"
+  except Exception:
+    pass
+
+  # 3. Check Server header and RGW-specific headers via an unauthenticated GET /
+  try:
+    req = urllib.request.Request(base + "/", method="GET")
+    resp = _open(req)
+    server = (resp.headers.get("Server") or "").lower()
+    if "minio" in server:
+      return "minio"
+    if "ceph" in server or "rgw" in server:
+      return "rgw"
+    if "rustfs" in server:
+      return "rustfs"
+  except urllib.error.HTTPError as e:
+    server = (e.headers.get("Server") or "").lower()
+    if "minio" in server:
+      return "minio"
+    if "ceph" in server or "rgw" in server:
+      return "rgw"
+    if "rustfs" in server:
+      return "rustfs"
+    # RGW often returns x-rgw-request-id in error responses
+    if e.headers.get("x-rgw-request-id"):
+      return "rgw"
+  except Exception:
+    pass
+
+  return "generic"
 
 
 def cmd_list_objects(conn_id: str, bucket: str, argv: List[str]) -> None:

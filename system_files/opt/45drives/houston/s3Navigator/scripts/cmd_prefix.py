@@ -902,7 +902,7 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
     })
     raise
 
-def cmd_create_folder(conn_id: str, bucket: str, prefix: str, name: str) -> None:
+def cmd_create_folder(conn_id: str, bucket: str, prefix: str, name: str, argv: list = None) -> None:
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
@@ -916,8 +916,18 @@ def cmd_create_folder(conn_id: str, bucket: str, prefix: str, name: str) -> None
 
   folder_prefix = f"{base}{n}/"
 
+  # Server-side encryption flags
+  argv = argv or []
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params = {}  # type: Dict[str, str]
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
+
   try:
-    client.put_object(Bucket=bucket, Key=folder_prefix, Body=b"")
+    client.put_object(Bucket=bucket, Key=folder_prefix, Body=b"", **sse_params)
     sys.stdout.write(json.dumps({"ok": True, "bucket": bucket, "prefix": folder_prefix}) + "\n")
   except Exception as e:
     sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")

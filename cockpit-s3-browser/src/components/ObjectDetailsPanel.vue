@@ -218,6 +218,42 @@
               </div>
             </div>
           </section>
+
+          <!-- ENCRYPTION -->
+          <section v-if="isFile" class="rounded-md border border-default bg-default p-3">
+            <div class="flex items-center justify-between gap-2 mb-2">
+              <div class="text-sm font-semibold items-center text-default opacity-80 flex">Encryption
+                <LockClosedIcon class="h-4 w-4 ml-1"></LockClosedIcon>
+              </div>
+              <div v-if="loading" class="text-xs text-default opacity-70">Loading…</div>
+            </div>
+
+            <div v-if="!meta?.serverSideEncryption" class="text-sm text-default opacity-80">
+              None
+            </div>
+
+            <div v-else class="divide-y divide-default text-sm">
+              <div class="flex items-start justify-between gap-4 py-2">
+                <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Algorithm</div>
+                <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">
+                  <span class="text-xs rounded-full border px-2 py-0.5"
+                    :class="meta.serverSideEncryption === 'aws:kms' ? 'border-green-400 text-green-700 bg-green-50' : 'border-blue-400 text-blue-700 bg-blue-50'">
+                    {{ meta.serverSideEncryption }}
+                  </span>
+                </div>
+              </div>
+
+              <div v-if="meta.sseKmsKeyId" class="flex items-start justify-between gap-4 py-2">
+                <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">KMS Key ID</div>
+                <div class="text-default text-right flex-1 whitespace-normal break-all leading-snug text-xs font-mono">{{ meta.sseKmsKeyId }}</div>
+              </div>
+
+              <div class="flex items-start justify-between gap-4 py-2">
+                <div class="text-default font-semibold opacity-70 shrink-0 w-[7.5rem]">Bucket Key</div>
+                <div class="text-default text-right flex-1 whitespace-normal break-words leading-snug">{{ meta.bucketKeyEnabled ? "Enabled" : "Disabled" }}</div>
+              </div>
+            </div>
+          </section>
         </div>
       </template>
     </div>
@@ -235,7 +271,7 @@ import {
   statObject, getObjectTags, getObjectVersions, getBucketObjectLock, getObjectLegalHold,
   getObjectRetention, putObjectLegalHold, putObjectRetention,
 } from "../lib/s3Objects";
-import { TagIcon, DocumentDuplicateIcon, InformationCircleIcon, AdjustmentsHorizontalIcon, ArrowRightEndOnRectangleIcon } from "@heroicons/vue/20/solid";
+import { TagIcon, DocumentDuplicateIcon, InformationCircleIcon, AdjustmentsHorizontalIcon, ArrowRightEndOnRectangleIcon, LockClosedIcon } from "@heroicons/vue/20/solid";
 
 const props = defineProps<{
   connectionId: string;
@@ -433,6 +469,9 @@ async function loadStat(r: FileRow, myReq: number) {
       legalHold: (res.value as any).legalHold ?? null,
       retentionMode: (res.value as any).retentionMode ?? null,
       retainUntil: (res.value as any).retainUntil ?? null,
+      serverSideEncryption: (res.value as any).serverSideEncryption ?? null,
+      sseKmsKeyId: (res.value as any).sseKmsKeyId ?? null,
+      bucketKeyEnabled: (res.value as any).bucketKeyEnabled ?? false,
     };
   } finally {
     if (reqId === myReq) {

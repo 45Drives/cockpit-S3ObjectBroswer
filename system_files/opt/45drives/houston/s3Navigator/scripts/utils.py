@@ -64,6 +64,11 @@ def make_client(cfg: Dict[str, Any]):
     if not access_key or not secret_key:
         raise ValueError("Missing credentials")
 
+    use_tls = bool(cfg.get("useTls"))
+    tls_verify = cfg.get("tlsVerify", not use_tls)
+    if tls_verify is None:
+        tls_verify = not use_tls
+
     sess = botocore.session.get_session()
     return sess.create_client(
         "s3",
@@ -71,7 +76,7 @@ def make_client(cfg: Dict[str, Any]):
         region_name=region,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
-        verify=True,
+        verify=tls_verify,
         config=Config(signature_version="s3v4"),
     )
 
@@ -79,7 +84,10 @@ def endpoint_url_from_cfg(cfg: Dict[str, Any]) -> str:
     raw = (cfg.get("endpoint") or "").strip()
     if not raw:
         raise ValueError("Missing endpoint")
-    return raw.rstrip("/") if raw.startswith("http") else f"http://{raw.rstrip('/')}"
+    if raw.startswith("http"):
+        return raw.rstrip("/")
+    scheme = "https" if cfg.get("useTls") else "http"
+    return f"{scheme}://{raw.rstrip('/')}"
     
 def _format_err(e: BaseException) -> str:
     if isinstance(e, ClientError):
