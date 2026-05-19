@@ -256,3 +256,40 @@ export function validate(cleaned: string, allowSlashes): string | null {
       return "Invalid name.";
   return null;
 }
+
+/**
+ * Classify a raw S3/KMS error message into a user-friendly description.
+ * Returns the original message if no known pattern matches.
+ */
+export function classifyS3Error(raw: string): string {
+  const msg = raw || "";
+  const lower = msg.toLowerCase();
+
+  // KMS key not found — MinIO/KES returns .NET-style exception
+  if (
+    msg.includes("KeyNotFoundException") ||
+    msg.includes("key was not present in the dictionary") ||
+    lower.includes("key does not exist") ||
+    (lower.includes("kms") && lower.includes("not found"))
+  ) {
+    return "The encryption key used for this object is not available in the KMS. " +
+      "It may have been encrypted with a key that was created outside this system or has since been deleted.";
+  }
+
+  // KMS not configured
+  if (lower.includes("kms is not configured") || lower.includes("kms not configured")) {
+    return "KMS is not configured on the storage server. Configure a KMS provider in the Encryption Manager.";
+  }
+
+  // Access denied
+  if (lower.includes("accessdenied") || lower.includes("access denied") || lower.includes("invalidaccesskeyid")) {
+    return "Access denied. Check that your credentials have permission to access this object.";
+  }
+
+  // SSE mismatch
+  if (lower.includes("invalidencryptionmethod") || lower.includes("encryption method")) {
+    return "The encryption method used for this object is not supported by the current server configuration.";
+  }
+
+  return msg;
+}
