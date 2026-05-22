@@ -16,7 +16,7 @@
 PLUGIN_SRCS=cockpit-s3-browser
 
 # For installing to a remote machine for testing with `make install-remote`
-REMOTE_TEST_HOST=192.168.207.146
+REMOTE_TEST_HOST=192.168.45.44
 REMOTE_TEST_USER=root
 
 # Restarts cockpit after install

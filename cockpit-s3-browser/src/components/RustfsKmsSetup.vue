@@ -75,7 +75,35 @@
           <span v-if="check.critical && !check.passed" class="text-xs text-red-500 font-medium">(required)</span>
         </div>
       </div>
-      <p class="text-xs text-default opacity-60">
+
+      <!-- SSH Setup helper when SSH fails on remote host -->
+      <div v-if="preflight.sshFailed && preflight.isRemote" class="border-t border-default pt-3 space-y-3">
+        <p class="text-sm text-default opacity-80">
+          <strong>Set up SSH access:</strong> Enter the password for <code>root@{{ effectiveHost }}</code>
+          to automatically deploy the SSH key.
+        </p>
+        <div class="flex gap-3 items-end">
+          <div class="flex-1">
+            <label class="block text-xs font-medium text-default opacity-60 mb-1">Password for root@{{ effectiveHost }}</label>
+            <input v-model="sshPassword" type="password"
+              class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
+              placeholder="Enter password..." @keyup.enter="setupSshKey" />
+          </div>
+          <button
+            class="inline-flex items-center justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 btn-primary"
+            :disabled="!sshPassword || sshSetupBusy" @click="setupSshKey">
+            {{ sshSetupBusy ? 'Setting up...' : 'Deploy SSH Key' }}
+          </button>
+        </div>
+        <div v-if="sshSetupResult" class="text-sm" :class="sshSetupResult.success ? 'text-green-600' : 'text-red-600'">
+          {{ sshSetupResult.success ? '✓' : '✗' }} {{ sshSetupResult.message }}
+        </div>
+        <p v-if="!sshSetupResult" class="text-xs text-default opacity-60">
+          Or manually configure passwordless SSH: <code>ssh-copy-id root@{{ effectiveHost }}</code>
+        </p>
+      </div>
+
+      <p v-if="!preflight.sshFailed" class="text-xs text-default opacity-60">
         Install and start RustFS before configuring KMS. The RustFS binary should be at
         <code>/usr/local/bin/rustfs</code> with a systemd unit file for <code>rustfs.service</code>.
       </p>
@@ -117,7 +145,7 @@
             {{ !selectedProviderId ? 'Select a KMS provider to see available keys.' : rustfsPolicies.length ? 'Compatible kv2_rustfs key policies for this provider.' : 'No kv2_rustfs policies found for this provider.' }}
           </p>
         </div>
-        <div>
+        <div v-if="!selectedProviderId">
           <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Address</label>
           <input v-model="vaultAddr" type="text"
             class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
@@ -128,13 +156,13 @@
           <input v-model="vaultToken" type="password"
             class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
             placeholder="hvs.xxxxx" />
-          <p class="text-xs text-default opacity-60 mt-1">Token with read access to the KV v2 secrets engine.</p>
+          <p class="text-xs text-default opacity-60 mt-1">{{ selectedProviderId ? 'Leave blank to use token from provider credentials.' : 'Token with read access to the KV v2 secrets engine.' }}</p>
         </div>
       </div>
 
       <button
         class="inline-flex items-center justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 btn-primary"
-        :disabled="!vaultAddr || !vaultToken || configuring" @click="configureKms">
+        :disabled="(!vaultAddr && !selectedProviderId) || (!vaultToken && !selectedProviderId) || configuring" @click="configureKms">
         {{ configuring ? 'Configuring...' : (config?.kmsEnabled ? 'Update KMS Configuration' : 'Enable KMS') }}
       </button>
 
@@ -165,6 +193,7 @@ import {
   rustfsConfigureVault,
   listProviders,
   listPolicies,
+  sshCopyId,
 } from '../lib/controlplane-client';
 import type {
   RustfsKmsConfig,
@@ -180,6 +209,14 @@ const props = defineProps<{
 const error = ref('');
 const successMsg = ref('');
 const refreshing = ref(false);
+
+// Effective host for SSH
+const effectiveHost = computed(() => props.connectionHost || 'localhost');
+
+// SSH setup
+const sshPassword = ref('');
+const sshSetupBusy = ref(false);
+const sshSetupResult = ref<{ success: boolean; message: string } | null>(null);
 
 // Preflight & config
 const preflight = ref<KmsPreflightResult | null>(null);
@@ -224,6 +261,22 @@ async function loadPreflight() {
     val => { preflight.value = val; },
     err => { error.value = err.message; },
   );
+}
+
+async function setupSshKey() {
+  if (!sshPassword.value || !effectiveHost.value) return;
+  sshSetupBusy.value = true;
+  sshSetupResult.value = null;
+  const result = await sshCopyId(effectiveHost.value, sshPassword.value);
+  result.match(
+    val => {
+      sshSetupResult.value = val;
+      sshPassword.value = '';
+      if (val?.success) loadPreflight();
+    },
+    err => { sshSetupResult.value = { success: false, message: err.message }; },
+  );
+  sshSetupBusy.value = false;
 }
 
 async function loadConfig() {

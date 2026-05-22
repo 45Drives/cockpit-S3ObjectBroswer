@@ -335,6 +335,9 @@ export interface KmsPreflightResult {
   kmsEnabled?: boolean;
   ready?: boolean;
   message?: string;
+  // SSH status
+  isRemote?: boolean;
+  sshFailed?: boolean;
 }
 
 export interface RustfsKmsConfig {
@@ -397,6 +400,68 @@ export function rustfsListConnections(): ResultAsync<RustfsConnection[] | null, 
   return guarded(() => rpc<RustfsConnection[]>("rustfs.listConnections"));
 }
 
+// ─── RGW Vault KMS configuration ────────────────────────────────────────────
+
+export interface RgwVaultConfig {
+  backend: string;
+  vaultAddr: string | null;
+  vaultAuth: string | null;
+  vaultTokenFile: string | null;
+  vaultSecretEngine: string | null;
+  vaultSslCacert: string | null;
+  vaultNamespace: string | null;
+}
+
+export interface RgwConfigureResult {
+  success: boolean;
+  message: string;
+  changes?: { param: string; value: string; success: boolean; error?: string | null }[];
+}
+
+/** Get current RGW Vault backend config from a remote Ceph host */
+export function rgwGetConfig(cephHost: string, sshUser?: string): ResultAsync<RgwVaultConfig | null, Error> {
+  return guarded(() => rpc<RgwVaultConfig>("s3.rgwGetConfig", { cephHost, sshUser }));
+}
+
+/** Pre-flight checks for RGW Vault configuration */
+export function rgwPreflight(
+  cephHost: string,
+  vaultAddr?: string,
+  sshUser?: string
+): ResultAsync<KmsPreflightResult | null, Error> {
+  return guarded(() => rpc<KmsPreflightResult>("s3.rgwPreflight", { cephHost, vaultAddr, sshUser }));
+}
+
+/** Configure Vault backend on a remote RGW host via SSH */
+export function rgwConfigureVault(params: {
+  cephHost: string;
+  vaultAddr: string;
+  vaultToken?: string;
+  providerId?: string;
+  secretEngine?: string;
+  sslCacert?: string;
+  vaultNamespace?: string;
+  vaultTokenFile?: string;
+  sshUser?: string;
+}): ResultAsync<RgwConfigureResult | null, Error> {
+  return guarded(() => rpc<RgwConfigureResult>("s3.rgwConfigureVault", params));
+}
+
+/** Get the control plane's SSH public key */
+export function sshGetPublicKey(): ResultAsync<{ publicKey: string; keyPath: string } | null, Error> {
+  return guarded(() => rpc<{ publicKey: string; keyPath: string }>("ssh.getPublicKey", {}));
+}
+
+/** Test SSH connectivity to a host */
+export function sshTestConnection(host: string, user?: string): ResultAsync<{ connected: boolean; message: string } | null, Error> {
+  return guarded(() => rpc<{ connected: boolean; message: string }>("ssh.testConnection", { host, user }));
+}
+
+/** Copy SSH key to a remote host using password */
+export function sshCopyId(host: string, password: string, user?: string): ResultAsync<{ success: boolean; message: string } | null, Error> {
+  return guarded(() => rpc<{ success: boolean; message: string }>("ssh.copyId", { host, password, user }));
+}
+
 // ─── KES / MinIO management ─────────────────────────────────────────────────
 
 export interface MinIODiscovery {
@@ -408,6 +473,9 @@ export interface MinIODiscovery {
   kesEndpoint: string | null;
   minioEndpoint: string | null;
   config: Record<string, string> | null;
+  // SSH status
+  isRemote?: boolean;
+  sshFailed?: boolean;
 }
 
 export interface MinIOKesConfigResult {
@@ -425,8 +493,9 @@ export function minioInstallKes(host?: string): ResultAsync<{ success: boolean; 
 }
 
 export function minioConfigureKes(opts: {
-  vaultAddr: string;
-  vaultToken: string;
+  providerId?: string;
+  vaultAddr?: string;
+  vaultToken?: string;
   transitKey?: string;
   kesListen?: string;
   vaultNamespace?: string;

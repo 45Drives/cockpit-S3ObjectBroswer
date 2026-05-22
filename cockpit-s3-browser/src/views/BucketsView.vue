@@ -29,7 +29,7 @@
         </div>
 
         <!-- Tab bar (shown when a backend-specific setup tab is available) -->
-        <div v-if="showKesTab || showRustfsTab" class="border-b border-default px-4 flex gap-0">
+        <div v-if="showKesTab || showRustfsTab || showRgwTab" class="border-b border-default px-4 flex gap-0">
           <button
             class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
             :class="activeTab === 'buckets' ? 'border-blue-500 text-blue-600' : 'border-transparent text-default opacity-60 hover:opacity-100'"
@@ -47,6 +47,12 @@
             :class="activeTab === 'rustfs-setup' ? 'border-blue-500 text-blue-600' : 'border-transparent text-default opacity-60 hover:opacity-100'"
             @click="activeTab = 'rustfs-setup'">
             RustFS KMS Setup
+          </button>
+          <button v-if="showRgwTab"
+            class="px-4 py-2 text-sm font-medium border-b-2 transition-colors"
+            :class="activeTab === 'rgw-setup' ? 'border-blue-500 text-blue-600' : 'border-transparent text-default opacity-60 hover:opacity-100'"
+            @click="activeTab = 'rgw-setup'">
+            RGW Vault Setup
           </button>
         </div>
 
@@ -233,6 +239,11 @@
           <RustfsKmsSetup :connection-host="connectionHost" />
         </div>
 
+        <!-- RGW Vault Setup tab -->
+        <div v-if="activeTab === 'rgw-setup'" class="p-4">
+          <RgwVaultSetup :connection-host="connectionHost" />
+        </div>
+
       </div>
     </div>
   </div>
@@ -402,6 +413,7 @@ import { pushNotification, Notification } from "@45drives/houston-common-ui";
 import TaskCenter from "../components/TaskCenter.vue";
 import KesSetup from "../components/KesSetup.vue";
 import RustfsKmsSetup from "../components/RustfsKmsSetup.vue";
+import RgwVaultSetup from "../components/RgwVaultSetup.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -454,12 +466,14 @@ const isSslError = computed(() => {
 
 const query = ref("");
 
-const activeTab = ref<"buckets" | "kes-setup" | "rustfs-setup">("buckets");
+const activeTab = ref<"buckets" | "kes-setup" | "rustfs-setup" | "rgw-setup">("buckets");
 
 /** Show KES Setup tab when connected to a minio backend. */
 const showKesTab = computed(() => effectiveBackendType.value === "minio" && cpStore.isAvailable);
 /** Show RustFS KMS tab when connected to a rustfs backend. */
 const showRustfsTab = computed(() => effectiveBackendType.value === "rustfs" && cpStore.isAvailable);
+/** Show RGW Vault Setup tab when connected to an rgw backend. */
+const showRgwTab = computed(() => effectiveBackendType.value === "rgw" && cpStore.isAvailable);
 
 /** Extract host IP from the connection endpoint for SSH-based remote config. */
 const connectionHost = computed(() => {
