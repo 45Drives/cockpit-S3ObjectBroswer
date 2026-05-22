@@ -17,6 +17,7 @@ import {
   normalizePrefixNoLead,
   rateEtaText,
   updateRateAndEta,
+  classifyS3Error,
 } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
@@ -293,7 +294,7 @@ export function useTransfers(deps: Deps) {
           }
 
           j.state = "failed";
-          j.error = msg;
+          j.error = classifyS3Error(msg);
           j.phase = j.phase || "transfer";
           syncTask(j);
           scheduleUi();
@@ -302,9 +303,9 @@ export function useTransfers(deps: Deps) {
             pushNotification(
               new Notification(
                 "Transfer failed",
-                `Transfer failed: ${j.name} - ${msg}`,
+                `Transfer failed: ${j.name} - ${j.error}`,
                 "error",
-                5000
+                8000
               )
             );
           }

@@ -70,6 +70,33 @@
       <div v-if="restartResult" class="text-sm" :class="restartResult.success ? 'text-green-600' : 'text-red-600'">
         {{ restartResult.message }}
       </div>
+
+      <!-- SSH Setup helper when SSH fails on remote host -->
+      <div v-if="discovery?.sshFailed && discovery?.isRemote" class="border-t border-default pt-3 space-y-3">
+        <p class="text-sm text-default opacity-80">
+          <strong>Set up SSH access:</strong> Enter the password for <code>root@{{ effectiveHost }}</code>
+          to automatically deploy the SSH key.
+        </p>
+        <div class="flex gap-3 items-end">
+          <div class="flex-1">
+            <label class="block text-xs font-medium text-default opacity-60 mb-1">Password for root@{{ effectiveHost }}</label>
+            <input v-model="sshPassword" type="password"
+              class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
+              placeholder="Enter password..." @keyup.enter="setupSshKey" />
+          </div>
+          <button
+            class="inline-flex items-center justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 btn-primary"
+            :disabled="!sshPassword || sshSetupBusy" @click="setupSshKey">
+            {{ sshSetupBusy ? 'Setting up...' : 'Deploy SSH Key' }}
+          </button>
+        </div>
+        <div v-if="sshSetupResult" class="text-sm" :class="sshSetupResult.success ? 'text-green-600' : 'text-red-600'">
+          {{ sshSetupResult.success ? '✓' : '✗' }} {{ sshSetupResult.message }}
+        </div>
+        <p v-if="!sshSetupResult" class="text-xs text-default opacity-60">
+          Or manually configure passwordless SSH: <code>ssh-copy-id root@{{ effectiveHost }}</code>
+        </p>
+      </div>
     </div>
 
     <!-- Configure KES → Vault -->
@@ -113,23 +140,24 @@
             {{ !selectedProviderId ? 'Select a KMS provider to see available keys.' : kesPolicies.length ? 'Compatible kv1_kes key policies for this provider.' : 'No kv1_kes policies found for this provider.' }}
           </p>
         </div>
-        <div>
+        <div v-if="!selectedProviderId">
           <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Address</label>
           <input v-model="vaultAddr"
             class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
             placeholder="https://10.20.0.142:8200" />
         </div>
         <div>
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Token (one-time, for AppRole setup)</label>
+          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Token{{ selectedProviderId ? '' : ' (one-time, for AppRole setup)' }}</label>
           <input v-model="vaultToken" type="password"
             class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
             placeholder="hvs.xxxxx" />
+          <p v-if="selectedProviderId" class="text-xs text-default opacity-60 mt-1">Leave blank to use token from provider credentials.</p>
         </div>
       </div>
 
       <button
         class="inline-flex items-center justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 btn-primary"
-        :disabled="!vaultAddr || !vaultToken || configuring" @click="configureKes">
+        :disabled="(!vaultAddr && !selectedProviderId) || (!vaultToken && !selectedProviderId) || configuring" @click="configureKes">
         {{ configuring ? 'Configuring...' : (discovery?.sseConfigured ? 'Reconfigure KES + MinIO' : 'Setup KES + MinIO') }}
       </button>
 
@@ -159,6 +187,7 @@ import {
   minioRestartKes,
   listProviders,
   listPolicies,
+  sshCopyId,
 } from '../lib/controlplane-client';
 import type { MinIODiscovery, MinIOKesConfigResult } from '../lib/controlplane-client';
 import type { ProviderSummary, PolicySummary } from '../lib/controlplane-types';
@@ -169,6 +198,14 @@ const props = defineProps<{
 
 const error = ref('');
 const successMsg = ref('');
+
+// Effective host for SSH
+const effectiveHost = computed(() => props.connectionHost || 'localhost');
+
+// SSH setup
+const sshPassword = ref('');
+const sshSetupBusy = ref(false);
+const sshSetupResult = ref<{ success: boolean; message: string } | null>(null);
 
 // Discovery
 const discovering = ref(false);
@@ -221,6 +258,22 @@ async function runDiscover() {
     err => { error.value = err.message; },
   );
   discovering.value = false;
+}
+
+async function setupSshKey() {
+  if (!sshPassword.value || !effectiveHost.value) return;
+  sshSetupBusy.value = true;
+  sshSetupResult.value = null;
+  const result = await sshCopyId(effectiveHost.value, sshPassword.value);
+  result.match(
+    val => {
+      sshSetupResult.value = val;
+      sshPassword.value = '';
+      if (val?.success) runDiscover();
+    },
+    err => { sshSetupResult.value = { success: false, message: err.message }; },
+  );
+  sshSetupBusy.value = false;
 }
 
 async function loadProviders() {
@@ -277,8 +330,9 @@ async function configureKes() {
   configuring.value = true;
   configResult.value = null;
   const result = await minioConfigureKes({
-    vaultAddr: vaultAddr.value,
-    vaultToken: vaultToken.value,
+    providerId: selectedProviderId.value || undefined,
+    vaultAddr: vaultAddr.value || undefined,
+    vaultToken: vaultToken.value || undefined,
     transitKey: transitKey.value || undefined,
     host: props.connectionHost,
   });

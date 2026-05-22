@@ -15,7 +15,7 @@ import type {
   getDownloadJobStatus as getDownloadJobStatusFn,
   cancelDownloadJob as cancelDownloadJobFn,
 } from "../lib/s3Objects";
-import {  newJobId, rateEtaText, updateRateAndEta } from "../lib/helpers";
+import {  newJobId, rateEtaText, updateRateAndEta, classifyS3Error } from "../lib/helpers";
 import { useTaskCenterStore } from "../stores/taskCenter";
 import { pushNotification, Notification } from "@45drives/houston-common-ui";
 
@@ -145,7 +145,7 @@ export function useDownloads(deps: Deps) {
           }
 
           j.state = "failed";
-          j.error = msg;
+          j.error = classifyS3Error(msg);
           syncTask(j);
 
           if (prevState !== "failed") {
@@ -155,7 +155,7 @@ export function useDownloads(deps: Deps) {
                 "Download failed",
                 `Download failed ${j.name}: ${j.error}`,
                 "error",
-                5000
+                8000
               )
             );
           }
@@ -208,13 +208,14 @@ export function useDownloads(deps: Deps) {
             jobStartAt.delete(j.id);
             rateStats.delete(j.id);
           } else if (j.state === "failed") {
-            console.error(`[download] failed ${j.name}: ${j.error ?? "Unknown error"}`);
+            j.error = classifyS3Error(j.error ?? "Unknown error");
+            console.error(`[download] failed ${j.name}: ${j.error}`);
             pushNotification(
               new Notification(
                 "Download failed",
-                `Download failed ${j.name}: ${j.error ?? "Unknown error"}`,
+                `Download failed ${j.name}: ${j.error}`,
                 "error",
-                5000
+                8000
               )
             );
             jobStartAt.delete(j.id);
@@ -241,7 +242,7 @@ export function useDownloads(deps: Deps) {
     const j = downloadJobs.value.find((x) => x.id === jobId);
     if (!j) return;
     j.state = "failed";
-    j.error = msg;
+    j.error = classifyS3Error(msg);
     downloadJobs.value = [...downloadJobs.value];
     syncTask(j);
     jobStartAt.delete(jobId);

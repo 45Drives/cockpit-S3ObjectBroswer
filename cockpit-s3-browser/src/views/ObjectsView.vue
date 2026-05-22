@@ -318,7 +318,7 @@ import ObjectContextMenu from "../components/ObjectContextMenu.vue";
 import ConfirmDeleteModal from "../components/Modals/ConfirmDeleteModal.vue";
 import {
     formatBytes, formatDate, normalizePrefix, guessFileTypeFromKey, fileExt,
-    isSystemFile, isTextFile, isApplicationFile, nameFromKey, nameFromPrefix,
+    isSystemFile, isTextFile, isApplicationFile, nameFromKey, nameFromPrefix, classifyS3Error,
 } from "../lib/helpers";
 import { DeleteKind, FileRow, FolderRow, MenuAction, Row, UiTask, VersionRow, ViewMode } from "../types";
 import { useDownloads } from "../operations/useDownloads";
@@ -660,7 +660,7 @@ async function applyStorageClass(next: string) {
         });
 
         if (res.isErr()) {
-            error.value = res.error.message;
+            error.value = classifyS3Error(res.error.message);
             pushNotification(
                 new Notification(
                     "Storage classe Failed",
@@ -828,7 +828,7 @@ async function fetchPage(reset: boolean) {
 
         if (res.isErr()) {
             if (reset) resetLists();
-            error.value = res.error.message;
+            error.value = classifyS3Error(res.error.message);
             pushNotification(
                 new Notification(
                     "Error",
@@ -1477,7 +1477,7 @@ async function loadVersionsForKey(key: string, name: string) {
         });
 
         if (res.isErr()) {
-            versionsErr.value = res.error.message;
+            versionsErr.value = classifyS3Error(res.error.message);
             return;
         }
 
@@ -1623,7 +1623,7 @@ async function submitNewFolder(name: string) {
         });
 
         if (res.isErr()) {
-            pushNotification(new Notification("Create folder failed", res.error.message, "error", 5000));
+            pushNotification(new Notification("Create folder failed", classifyS3Error(res.error.message), "error", 5000));
             return;
         }
 

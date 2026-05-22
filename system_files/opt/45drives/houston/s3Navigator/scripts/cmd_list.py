@@ -118,6 +118,13 @@ def _probe_backend_type(endpoint: str) -> str:
       return "rgw"
     if "rustfs" in server:
       return "rustfs"
+    # RGW typically returns x-rgw-request-id even on success
+    if resp.headers.get("x-rgw-request-id"):
+      return "rgw"
+    # RGW x-amz-request-id starts with "tx" (e.g. tx00000...)
+    amz_req_id = resp.headers.get("x-amz-request-id") or ""
+    if amz_req_id.startswith("tx"):
+      return "rgw"
   except urllib.error.HTTPError as e:
     server = (e.headers.get("Server") or "").lower()
     if "minio" in server:
@@ -127,6 +134,25 @@ def _probe_backend_type(endpoint: str) -> str:
     if "rustfs" in server:
       return "rustfs"
     # RGW often returns x-rgw-request-id in error responses
+    if e.headers.get("x-rgw-request-id"):
+      return "rgw"
+    # RGW x-amz-request-id starts with "tx"
+    amz_req_id = e.headers.get("x-amz-request-id") or ""
+    if amz_req_id.startswith("tx"):
+      return "rgw"
+  except Exception:
+    pass
+
+  # 4. Try RGW-specific swift/info endpoint (returns JSON with RGW capabilities)
+  try:
+    req = urllib.request.Request(base + "/swift/info", method="GET")
+    req.add_header("Accept", "application/json")
+    resp = _open(req)
+    body = resp.read(2048).decode("utf-8", errors="replace").lower()
+    if "swift" in body or "rgw" in body or "tempurl" in body:
+      return "rgw"
+  except urllib.error.HTTPError as e:
+    # RGW returns 401 on /swift/info but with x-rgw-request-id
     if e.headers.get("x-rgw-request-id"):
       return "rgw"
   except Exception:
