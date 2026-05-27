@@ -344,6 +344,11 @@
           </p>
         </div>
 
+        <div v-if="setEncAlgo === 'aws:kms' && !setEncKmsKeyId" class="mt-3 rounded-md border border-yellow-300 bg-yellow-50 p-3 text-sm text-yellow-800">
+          <p class="font-medium">KMS Key Policy required</p>
+          <p class="mt-1">Please select a key policy from the list above to enable SSE-KMS encryption.</p>
+        </div>
+
         <div class="mt-6 flex justify-end gap-3">
           <button type="button"
             class="inline-flex items-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90"
@@ -352,7 +357,7 @@
           </button>
           <button type="button"
             class="inline-flex items-center btn-primary rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-            :disabled="setEncBusy || !kmsReady" @click="applySetEncryption">
+            :disabled="setEncBusy || !kmsReady || (setEncAlgo === 'aws:kms' && !setEncKmsKeyId)" @click="applySetEncryption">
             {{ setEncBusy ? "Applying…" : "Apply" }}
           </button>
         </div>
