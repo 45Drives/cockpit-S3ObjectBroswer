@@ -1,3 +1,3 @@
-## s3-browser 1.2.2-1
+## s3-browser 1.1.2-1
 
-* Rebuild for testing
+* Require KMS key policy selection for SSE-KMS encryption
