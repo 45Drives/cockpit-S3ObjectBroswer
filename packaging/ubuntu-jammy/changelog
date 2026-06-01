@@ -1,3 +1,10 @@
+cockpit-s3-browser (1.2.3-1jammy) jammy; urgency=medium
+
+  * RGW Vault Setup: clarify Ceph admin host labeling
+  * S3 Browser: require KMS key policy selection for SSE-KMS encryption
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 01 Jun 2026 07:26:04 -0300
+
 cockpit-s3-browser (1.1.2-1jammy) jammy; urgency=medium
 
   * Require KMS key policy selection for SSE-KMS encryption
