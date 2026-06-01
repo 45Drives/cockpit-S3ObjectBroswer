@@ -12,16 +12,16 @@
     <div v-if="error" class="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">{{ error }}</div>
     <div v-if="successMsg" class="rounded-md border border-green-300 bg-green-50 p-3 text-sm text-green-800">{{ successMsg }}</div>
 
-    <!-- Ceph Host Input -->
+    <!-- Ceph Admin Host Input -->
     <div v-if="!cephHost" class="rounded-md border border-default bg-accent p-4 space-y-3">
-      <h3 class="text-sm font-semibold uppercase tracking-wide text-default opacity-60">Ceph Host</h3>
+      <h3 class="text-sm font-semibold uppercase tracking-wide text-default opacity-60">Ceph Admin Host</h3>
       <p class="text-sm text-default opacity-60">
         Enter the hostname or IP of a Ceph node with admin access (mon/mgr).
         This host will be used to configure the RGW Vault backend via SSH.
       </p>
       <div class="flex gap-3 items-end">
         <div class="flex-1">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Ceph Node Address</label>
+          <label class="block text-xs font-medium text-default opacity-60 mb-1">Ceph Admin Node Address</label>
           <input v-model="cephHostInput" type="text"
             class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
             :placeholder="connectionHost || '192.168.x.x'" />
@@ -40,14 +40,14 @@
       </div>
     </div>
 
-    <!-- Status Panel (after ceph host is set) -->
+    <!-- Status Panel (after ceph admin host is set) -->
     <div v-if="cephHost" class="rounded-md border border-default bg-accent p-4 space-y-3">
       <div class="flex items-center justify-between">
         <h3 class="text-sm font-semibold uppercase tracking-wide text-default opacity-60">RGW Vault Status</h3>
         <button class="text-xs text-blue-600 hover:underline" @click="cephHost = ''">Change Host</button>
       </div>
       <div class="text-sm text-default mb-2">
-        <span class="opacity-60">Ceph host:</span> <code>{{ sshUser }}@{{ cephHost }}</code>
+        <span class="opacity-60">Ceph admin host:</span> <code>{{ sshUser }}@{{ cephHost }}</code>
       </div>
 
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
@@ -147,7 +147,7 @@
       <p class="text-sm text-default opacity-60">
         {{ vaultConfigured
           ? 'The RGW is already configured to use Vault. Update the settings below to reconfigure.'
-          : 'Configure the Ceph RGW daemon to use Vault Transit engine for SSE-KMS. This runs `ceph config set` commands on the Ceph node and writes the token file.' }}
+          : 'Configure the Ceph RGW daemon to use Vault Transit engine for SSE-KMS. This runs `ceph config set` commands on the Ceph admin node and writes the token file.' }}
       </p>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -173,7 +173,7 @@
           <input v-model="vaultToken" type="password"
             class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
             placeholder="hvs.xxxxx" />
-          <p class="text-xs text-default opacity-60 mt-1">{{ selectedProviderId ? 'Leave blank to use token from provider credentials. A scoped read-only token will be created for RGW.' : 'Token with access to the Transit secrets engine. Written to /etc/ceph/vault.token on the Ceph host.' }}</p>
+          <p class="text-xs text-default opacity-60 mt-1">{{ selectedProviderId ? 'Leave blank to use token from provider credentials. A scoped read-only token will be created for RGW.' : 'Token with access to the Transit secrets engine. Written to /etc/ceph/vault.token on the Ceph admin host.' }}</p>
         </div>
         <div v-if="!selectedProviderId">
           <label class="block text-xs font-medium text-default opacity-60 mb-1">Secret Engine</label>
@@ -246,7 +246,7 @@ const error = ref('');
 const successMsg = ref('');
 const refreshing = ref(false);
 
-// Ceph host (user-specified or derived from connection endpoint)
+// Ceph admin host (user-specified or derived from connection endpoint)
 const cephHostInput = ref('');
 const sshUserInput = ref('root');
 const cephHost = ref('');
