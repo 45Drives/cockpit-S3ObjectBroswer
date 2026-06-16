@@ -1,0 +1,204 @@
+====== RGW Encryption Setup & Usage Guide ======
+
+This guide walks through configuring HashiCorp Vault KMS encryption for Ceph RGW using the Cockpit S3 Browser, and then using encryption for buckets and objects.
+
+**Video walkthrough**: See the narrated video ''rgw-encryption-guide.mp4'' or listen to individual audio segments in the ''audio/'' folder.
+
+----
+
+===== Prerequisites =====
+
+  * Cockpit installed with the S3 Browser plugin
+  * A Ceph cluster with RGW deployed
+  * HashiCorp Vault server with the Transit secrets engine enabled
+  * SSH access from the Cockpit host to a Ceph admin node (mon/mgr)
+  * (Optional) 45Drives Encryption Manager installed for key policy management
+
+----
+
+===== Accessing the S3 Browser =====
+
+  * Open your browser and navigate to  [[https://<cockpit-host>:9090|https://<cockpit-host>:9090]]
+  * Log in with your system credentials.
+
+{{:rnd:matt-encryption:houston-s3-browser:00-cockpit-login.png|Cockpit Login}}
+
+  * From the Cockpit dashboard, navigate to the **S3 Browser** in the left sidebar.
+  * You'll see your saved endpoint connections.
+
+{{:rnd:matt-encryption:houston-s3-browser:01-connections-list.png|Connections List}}
+
+  * Click on an RGW connection to open the Buckets view.
+
+{{:rnd:matt-encryption:houston-s3-browser:02-buckets-view.png|Buckets View}}
+
+----
+
+===== RGW Vault KMS Configuration =====
+
+The RGW Vault Setup wizard configures your Ceph RGW daemon to use HashiCorp Vault's Transit engine for SSE-KMS encryption.
+
+Click the **RGW Vault Setup** tab in the navigation bar above the buckets list.
+
+{{:rnd:matt-encryption:houston-s3-browser:03-rgw-vault-tab.png|RGW Vault Tab}}
+
+----
+
+==== Step 1: Enter Ceph Admin Host ====
+
+The first screen asks for the address of a Ceph node with admin access. This node will be used to run ''ceph config set'' commands via SSH.
+
+{{:rnd:matt-encryption:houston-s3-browser:04-step1-ceph-host-input.png|Ceph Host Input}}
+
+  * Enter the **Ceph Admin Node Address** (IP or hostname of a mon/mgr node).
+  * Set the **SSH User** (defaults to ''root'').
+  * Click **Connect**.
+
+**Note:** If passwordless SSH is not configured, the wizard will prompt you to deploy an SSH key by entering the password for the remote host.
+
+----
+
+==== Step 2: Preflight Checks ====
+
+After connecting, the system runs automated preflight checks:
+
+{{:rnd:matt-encryption:houston-s3-browser:05-preflight-checks.png|Preflight Checks}}
+
+The status panel shows four indicators:
+
+^ Check ^ Description ^
+| **SSH** | Connectivity to the Ceph admin host |
+| **Ceph CLI** | Whether ''ceph'' command is available on the remote host |
+| **Cluster** | Whether the Ceph cluster is reachable |
+| **Vault Backend** | Whether RGW is already configured with a Vault backend |
+
+  * **Green (●)** = passed
+  * **Yellow (○)** = warning (non-critical)
+  * **Red (✗)** = failed (critical — must be resolved)
+
+If all critical checks pass, the configuration form appears below.
+
+If the **Vault Backend** shows "✓ Configured", you'll also see the current configuration details (backend type, Vault address, secret engine, and token file path).
+
+----
+
+==== Step 3: Configure Vault Backend ====
+
+Once preflight checks pass, the configuration form allows you to set up (or reconfigure) the Vault backend:
+
+{{:rnd:matt-encryption:houston-s3-browser:06-configure-vault.png|Configure Vault}}
+
+Fill in the following fields:
+
+^ Field ^ Description ^
+| **KMS Provider** | Select a provider from the Encryption Manager dropdown (auto-fills Vault address and token) |
+| **Vault Address** | The URL of your Vault server (e.g., ''https://10.20.0.142:8200''). Auto-filled if a provider is selected. |
+| **Vault Token** | A token with access to the Transit secrets engine. Leave blank when using a provider to auto-generate a scoped token. |
+| **Secret Engine** | The Vault secrets engine to use (default: ''transit'') |
+| **Vault Namespace** | Optional. Leave empty for the root namespace. |
+
+Click **Configure Vault Backend** (or **Update Vault Configuration** if reconfiguring).
+
+The result panel will show:
+  * ✓/✗ status for each ''ceph config set'' parameter applied
+  * Whether the RGW daemon was successfully redeployed
+  * Any manual steps required (e.g., ''ceph orch redeploy rgw.<service_id>'')
+
+----
+
+===== Setting Bucket-Level Encryption =====
+
+Bucket-level encryption ensures every new object written to a bucket is encrypted by default.
+
+  * In the **Buckets** view, click the **⋮** (three-dot menu) for the target bucket.
+
+{{:rnd:matt-encryption:houston-s3-browser:07-bucket-context-menu.png|Bucket Context Menu}}
+
+  * Click **Set Encryption**.
+  * In the modal that appears:
+
+{{:rnd:matt-encryption:houston-s3-browser:08-set-encryption-modal.png|Set Encryption Modal}}
+
+      * **Algorithm**: Choose **AES-256 (SSE-S3)** or **SSE-KMS**.
+      * **KMS Key / Policy** (SSE-KMS only): Select a key policy from the Encryption Manager dropdown, or enter a KMS key ID manually.
+      * **Enable S3 Bucket Key** (SSE-KMS only): Check this to reduce KMS API calls by generating a bucket-level data key (recommended for high-throughput buckets).
+  * Click **Apply**.
+
+The bucket's encryption column will update to show a green lock badge with the algorithm.
+
+==== Remove Encryption ====
+
+  * Click the **⋮** menu → **Remove Encryption**
+  * Confirm in the dialog
+
+**Important:** Existing encrypted objects remain encrypted. Only new objects will no longer be automatically encrypted.
+
+----
+
+===== Setting Connection-Level Default Encryption =====
+
+Connection-level encryption provides a fallback default for all uploads when no bucket-level encryption is configured.
+
+  * Edit an existing connection (or create a new one).
+
+{{:rnd:matt-encryption:houston-s3-browser:09-edit-connection.png|Edit Connection}}
+
+  * Scroll to the **Default Encryption** section.
+
+{{:rnd:matt-encryption:houston-s3-browser:10-connection-encryption.png|Connection Encryption Section}}
+
+  * Under **Algorithm**, choose:
+      * **None** — no default encryption.
+      * **SSE-S3 (AES256)** — S3-managed encryption.
+      * **SSE-KMS** — KMS-managed encryption.
+
+  * If you selected **SSE-KMS**, select a KMS key policy from the dropdown or enter a key ID manually.
+  * Click **Save**.
+
+----
+
+===== Viewing Encryption Status =====
+
+==== Bucket List ====
+
+The Buckets view shows an **Encryption** column:
+  * **🔒 AES256** or **🔒 aws:kms** (green) — bucket has default encryption
+  * **🔓 None** (gray) — no default encryption
+
+==== Object Details Panel ====
+
+Select any object and open the Details side panel. The **Encryption** section shows:
+  * **Algorithm** — ''AES256'' or ''aws:kms''
+  * **KMS Key ID** — the key used (SSE-KMS only)
+  * **Bucket Key** — Enabled/Disabled
+
+----
+
+===== Verifying Encryption =====
+
+When the Encryption Manager is installed, additional verification actions appear in the bucket **⋮** menu:
+
+^ Action ^ Description ^
+| **Verify Encryption** | Checks that the bucket's encryption config is correctly applied and readable |
+| **Deep Verify (Round-trip)** | SSE-KMS only. Writes a test object → reads metadata → downloads → deletes. Confirms the KMS key is accessible and encryption/decryption works end-to-end. |
+
+----
+
+===== Encryption Priority Order =====
+
+When determining which encryption to apply, the system uses this priority:
+
+  * **Bucket encryption config** — highest priority
+  * **Connection default encryption** — fallback if bucket has none
+  * **No encryption** — if neither is configured
+
+----
+
+===== Troubleshooting =====
+
+^ Issue ^ Solution ^
+| SSH check fails | Deploy SSH key via the wizard, or manually run ''ssh-copy-id root@<ceph-host>'' |
+| Vault Backend shows "Not set" | Complete the Configure Vault Backend form |
+| RGW daemon not picking up changes | Manually redeploy: ''ceph orch redeploy rgw.<service_id>'' |
+| KMS key dropdown is empty | Ensure the Encryption Manager is installed and has Transit key policies configured |
+| Deep Verify fails | Check that the Vault token has read/write access to the Transit engine and the key exists |

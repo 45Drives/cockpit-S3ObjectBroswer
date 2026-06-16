@@ -1,0 +1,31 @@
+This video walkthrough covers the RGW Encryption setup and usage in the 45Drives Cockpit S3 Browser application.
+
+Section 1: Introduction
+We'll start by logging into the Cockpit web interface and navigating to the S3 Browser plugin.
+
+Section 2: Connections Overview
+The S3 Browser home page shows your saved endpoint connections. We have an RGW connection configured at 192.168.97.11. Let's connect to it.
+
+Section 3: Buckets View
+After connecting, we see the Buckets view showing our test bucket with an SSE-KMS encryption badge, confirming encryption is active. Notice the tab bar above with a "RGW Vault Setup" tab.
+
+Section 4: RGW Vault KMS Configuration - Step 1
+Clicking the RGW Vault Setup tab opens the configuration wizard. The first step asks for the Ceph Admin Host — the IP address or hostname of a Ceph node with admin access. We also specify the SSH user, defaulting to root.
+
+Section 5: Preflight Checks
+After clicking Connect, the system runs preflight checks. Green indicators show SSH connectivity is established, the Ceph CLI is available, the cluster is reachable, and the Vault backend is configured. Below that, we see the current configuration details: the backend type, Vault address, secret engine, and token file path.
+
+Section 6: Configure Vault Backend
+If you need to configure or reconfigure the Vault backend, the form below lets you select a KMS Provider from the Encryption Manager, set the Vault address, token, secret engine, and optional namespace. Click "Configure Vault Backend" to apply the changes.
+
+Section 7: Bucket-Level Encryption
+Back in the Buckets view, clicking the three-dot menu on a bucket reveals encryption actions: Set Encryption, Remove Encryption, Verify Encryption, and Deep Verify round-trip.
+
+Section 8: Set Encryption Modal
+The Set Encryption modal lets you choose between AES-256 (SSE-S3) and SSE-KMS algorithms. With SSE-KMS selected, a dropdown shows available key policies from the Encryption Manager. You can also enable the S3 Bucket Key optimization for high-throughput buckets.
+
+Section 9: Connection-Level Default Encryption
+Editing a connection reveals the Default Encryption section. Here you set a fallback encryption algorithm — None, SSE-S3, or SSE-KMS — that applies to all uploads through this connection when no bucket-level encryption is configured.
+
+Section 10: Summary
+That covers the full RGW encryption workflow: configuring the Vault KMS backend, setting bucket-level and connection-level encryption defaults, and verifying encryption status. The S3 Browser handles encryption automatically for all file operations once configured.
