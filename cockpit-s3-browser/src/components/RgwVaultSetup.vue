@@ -190,6 +190,15 @@
         </div>
       </div>
 
+      <div class="flex items-center gap-2">
+        <input id="rgw-skip-tls-verify" v-model="skipTlsVerify" type="checkbox"
+          class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+        <label for="rgw-skip-tls-verify" class="text-sm text-default">Skip TLS certificate verification</label>
+      </div>
+      <p v-if="skipTlsVerify" class="text-xs text-yellow-600 -mt-2 ml-6">
+        Warning: Disables certificate validation for Vault connections. Use only if your Vault server uses a self-signed certificate or has mismatched SANs.
+      </p>
+
       <button
         class="inline-flex items-center justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 btn-primary"
         :disabled="(!vaultAddr && !selectedProviderId) || (!vaultToken && !selectedProviderId) || configuring" @click="configureVault">
@@ -285,6 +294,7 @@ const vaultToken = ref('');
 const secretEngine = ref('transit');
 const vaultNamespace = ref('');
 const transitKeyName = ref('');
+const skipTlsVerify = ref(false);
 const configuring = ref(false);
 const configResult = ref<RgwConfigureResult | null>(null);
 
@@ -390,6 +400,7 @@ async function configureVault() {
     providerId: selectedProviderId.value || undefined,
     secretEngine: secretEngine.value,
     vaultNamespace: vaultNamespace.value || undefined,
+    skipTlsVerify: skipTlsVerify.value || undefined,
     sshUser: sshUser.value || undefined,
   });
   result.match(

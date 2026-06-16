@@ -1,0 +1,122 @@
+====== RustFS KMS Encryption Setup Guide ======
+
+This guide walks you through configuring RustFS with HashiCorp Vault for server-side encryption (SSE-KMS) using the Houston S3 Browser Cockpit plugin. The entire process is managed through the web interface.
+
+===== Video Walkthrough =====
+
+A narrated video walkthrough is available: [[rustfs-kms-guide.mp4|rustfs-kms-guide.mp4]]
+
+----
+
+===== Prerequisites =====
+
+  * RustFS server installed and running (binary at ''/usr/local/bin/rustfs'', systemd unit ''rustfs.service'')
+  * HashiCorp Vault server with a KV v2 secrets engine
+  * A KMS provider configured in the Control Plane
+  * A ''kv2_rustfs'' key policy created in the Control Plane
+  * Cockpit with the Houston S3 Browser plugin installed
+
+----
+
+===== 1. Connect to RustFS =====
+
+Open Cockpit and navigate to the **S3 Browser** plugin. On the Connections page, locate your RustFS endpoint and click **Connect**. The backend is automatically detected as RustFS.
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:01-connections-list.png|Connections List}}
+
+----
+
+===== 2. View Buckets =====
+
+After connecting, the **Buckets** tab displays your storage buckets. Notice the **RustFS KMS Setup** tab in the navigation — this tab only appears for RustFS-backed connections.
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:02-buckets-view.png|Buckets View}}
+
+----
+
+===== 3. Check KMS Status (Unconfigured) =====
+
+Click the **RustFS KMS Setup** tab. The Service Status panel shows:
+  * **Binary**: Installed
+  * **Service**: Running
+  * **Config File**: Present
+  * **KMS**: Disabled
+
+Below the status is the **Configure RustFS KMS (Vault)** section.
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:03-kms-unconfigured.png|KMS Unconfigured}}
+
+----
+
+===== 4. Configure KMS =====
+
+  - **Select KMS Provider** from the dropdown — this automatically fills the Vault address
+  - **Select Default Key ID** from the available key policies (e.g., ''rustfs-encryption'')
+  - **Vault Token** is optional when a provider is selected — credentials are supplied via AppRole
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:04-form-filled.png|Form Filled}}
+
+----
+
+===== 5. Enable KMS =====
+
+Click **Enable KMS** to apply the configuration. The system:
+  - Writes Vault environment variables to ''/etc/default/rustfs''
+  - Sets ''RUSTFS_KMS_ENABLE=true''
+  - Configures the Vault address and token
+  - Restarts the RustFS service
+
+A green confirmation message appears when successful.
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:05-kms-enabled-result.png|KMS Enabled}}
+
+----
+
+===== 6. Verify Configured Status =====
+
+After configuration, the Service Status panel shows everything healthy:
+  * **Binary**: Installed
+  * **Service**: Running
+  * **Config File**: Present
+  * **KMS**: Enabled
+
+The detail row shows the Vault backend, address, default key ID, and confirms the token is set.
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:06-configured-status.png|Configured Status}}
+
+----
+
+===== 7. Enable Bucket Encryption =====
+
+Switch to the **Buckets** tab. With KMS configured, you can now enable server-side encryption on individual buckets.
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:07-buckets-after-setup.png|Buckets After Setup}}
+
+Click the three-dot menu (⋮) on a bucket row and select **Set Encryption**. In the modal:
+  * **Algorithm**: Choose ''SSE-KMS'' for Vault-backed encryption
+  * **KMS Key Policy**: Select from available key policies (e.g., ''rustfs-encryption'')
+
+Click **Apply** to enable encryption on the bucket.
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:08-set-encryption-modal.png|Set Encryption Modal}}
+
+----
+
+===== 8. Upload Files =====
+
+Navigate into the encrypted bucket. Any files uploaded will be encrypted at rest using the Vault-managed key. The encryption is transparent — files are encrypted automatically on write and decrypted on read.
+
+{{:rnd:matt-encryption:houston-s3-browser:rustfs-kms:09-object-encryption-info.png|Files in Encrypted Bucket}}
+
+----
+
+===== Troubleshooting =====
+
+^ Issue ^ Resolution ^
+| KMS shows "Disabled" after Enable | Check that Vault is reachable from the RustFS host and the token is valid |
+| "Failed to create service token" | Verify the AppRole credentials in the Control Plane are correct |
+| Enable KMS button stays disabled | Select both a KMS provider and a default key ID |
+| Bucket encryption fails | Ensure KMS is enabled and RustFS was restarted after configuration |
+| "No kv2_rustfs policies found" | Create a ''kv2_rustfs'' key policy in the Control Plane for your provider |
+
+----
