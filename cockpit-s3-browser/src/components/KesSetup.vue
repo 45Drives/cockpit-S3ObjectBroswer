@@ -126,6 +126,7 @@
             <option value="" disabled>Select Vault provider</option>
             <option v-for="p in providers" :key="p.id" :value="p.id">{{ p.name }} ({{ p.url }})</option>
           </select>
+          <p class="text-xs text-default opacity-60 mt-1">Selects the Vault address and token automatically.</p>
         </div>
         <div>
           <label class="block text-xs font-medium text-default opacity-60 mb-1">Default Key Name</label>
@@ -147,13 +148,22 @@
             placeholder="https://10.20.0.142:8200" />
         </div>
         <div>
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Token{{ selectedProviderId ? '' : ' (one-time, for AppRole setup)' }}</label>
+          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Token (one-time, for AppRole setup)</label>
           <input v-model="vaultToken" type="password"
             class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
             placeholder="hvs.xxxxx" />
-          <p v-if="selectedProviderId" class="text-xs text-default opacity-60 mt-1">Leave blank to use token from provider credentials.</p>
+          <p class="text-xs text-default opacity-60 mt-1">{{ selectedProviderId ? 'Leave blank to use token from provider credentials.' : 'Token with permissions to create a Vault AppRole. Used once during setup.' }}</p>
         </div>
       </div>
+
+      <div class="flex items-center gap-2">
+        <input id="kes-skip-tls-verify" v-model="skipTlsVerify" type="checkbox"
+          class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+        <label for="kes-skip-tls-verify" class="text-sm text-default">Skip TLS certificate verification</label>
+      </div>
+      <p v-if="skipTlsVerify" class="text-xs text-yellow-600 -mt-2 ml-6">
+        Warning: Disables certificate validation for Vault connections. Use only if your Vault server uses a self-signed certificate or has mismatched SANs.
+      </p>
 
       <button
         class="inline-flex items-center justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 btn-primary"
@@ -227,6 +237,7 @@ const selectedProviderId = ref('');
 const vaultAddr = ref('');
 const vaultToken = ref('');
 const transitKey = ref('');
+const skipTlsVerify = ref(false);
 const configuring = ref(false);
 const configResult = ref<MinIOKesConfigResult | null>(null);
 
@@ -334,6 +345,7 @@ async function configureKes() {
     vaultAddr: vaultAddr.value || undefined,
     vaultToken: vaultToken.value || undefined,
     transitKey: transitKey.value || undefined,
+    skipTlsVerify: skipTlsVerify.value || undefined,
     host: props.connectionHost,
   });
   result.match(

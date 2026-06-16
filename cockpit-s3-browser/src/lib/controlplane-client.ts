@@ -381,6 +381,7 @@ export function rustfsConfigureVault(params: {
   vaultAddr?: string;
   vaultToken?: string;
   defaultKeyId?: string;
+  skipTlsVerify?: boolean;
   host?: string;
 }): ResultAsync<RustfsConfigureResult | null, Error> {
   return guarded(() => rpc<RustfsConfigureResult>("rustfs.configureVault", params));
@@ -442,6 +443,7 @@ export function rgwConfigureVault(params: {
   sslCacert?: string;
   vaultNamespace?: string;
   vaultTokenFile?: string;
+  skipTlsVerify?: boolean;
   sshUser?: string;
 }): ResultAsync<RgwConfigureResult | null, Error> {
   return guarded(() => rpc<RgwConfigureResult>("s3.rgwConfigureVault", params));
@@ -500,6 +502,7 @@ export function minioConfigureKes(opts: {
   kesListen?: string;
   vaultNamespace?: string;
   sslCacert?: string;
+  skipTlsVerify?: boolean;
   host?: string;
 }): ResultAsync<MinIOKesConfigResult | null, Error> {
   return guarded(() => rpc<MinIOKesConfigResult>("minio.configureKes", opts));
