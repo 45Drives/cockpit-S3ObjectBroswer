@@ -1,3 +1,12 @@
+cockpit-s3-browser (1.2.5-1focal) focal; urgency=medium
+
+  * Fix: pass connectionHost to rustfsGetConfig for remote KMS check
+  * Fix: remove SSE-S3 option, fix RGW vault addr from provider, CopyObject fallback
+    for RGW SSE-KMS
+  * Fix: encryption UI fixes and connection defaults persistence
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 29 Jun 2026 13:57:44 -0300
+
 cockpit-s3-browser (1.2.4-1focal) focal; urgency=medium
 
   * Add 'Skip TLS certificate verification' checkbox to KMS setup UIs

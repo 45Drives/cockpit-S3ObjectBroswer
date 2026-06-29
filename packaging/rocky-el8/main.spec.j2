@@ -28,6 +28,11 @@ make DESTDIR=%{buildroot} install
 /opt/45drives/houston/s3Navigator/*
 
 %changelog
+* Mon Jun 29 2026 Rachit Hans <rhans@45drives.com> 1.2.5-1
+- Fix: pass connectionHost to rustfsGetConfig for remote KMS check
+- Fix: remove SSE-S3 option, fix RGW vault addr from provider, CopyObject fallback
+  for RGW SSE-KMS
+- Fix: encryption UI fixes and connection defaults persistence
 * Tue Jun 16 2026 Rachit Hans <rhans@45drives.com> 1.2.4-1
 - Add 'Skip TLS certificate verification' checkbox to KMS setup UIs
 - Add encryption setup documentation and test plans

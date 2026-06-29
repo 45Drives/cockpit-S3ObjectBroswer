@@ -1,4 +1,5 @@
-## s3-browser 1.2.4-1
+## s3-browser 1.2.5-1
 
-* Add 'Skip TLS certificate verification' checkbox to KMS setup UIs
-* Add encryption setup documentation and test plans
+* Fix: pass connectionHost to rustfsGetConfig for remote KMS check
+* Fix: remove SSE-S3 option, fix RGW vault addr from provider, CopyObject fallback for RGW SSE-KMS
+* Fix: encryption UI fixes and connection defaults persistence
