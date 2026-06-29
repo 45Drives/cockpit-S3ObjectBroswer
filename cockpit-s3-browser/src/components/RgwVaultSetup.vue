@@ -162,37 +162,6 @@
           </select>
           <p class="text-xs text-default opacity-60 mt-1">Selects the Vault address and token automatically.</p>
         </div>
-        <div v-if="!selectedProviderId">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Address</label>
-          <input v-model="vaultAddr" type="text"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            :class="{ 'border-red-400': vaultAddrError }"
-            placeholder="https://10.20.0.142:8200" />
-          <p v-if="vaultAddrError" class="text-xs text-red-600 mt-1">{{ vaultAddrError }}</p>
-          <p v-else-if="isHttpVault" class="text-xs text-yellow-600 mt-1">
-            ⚠ Using HTTP (unencrypted) for Vault. In production, use HTTPS to protect tokens and secrets in transit.
-          </p>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Token</label>
-          <input v-model="vaultToken" type="password"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="hvs.xxxxx" />
-          <p class="text-xs text-default opacity-60 mt-1">{{ selectedProviderId ? 'Leave blank to use token from provider credentials. A scoped read-only token will be created for RGW.' : 'Token with access to the Transit secrets engine. Written to /etc/ceph/vault.token on the Ceph admin host.' }}</p>
-        </div>
-        <div v-if="!selectedProviderId">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Secret Engine</label>
-          <select v-model="secretEngine"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
-            <option value="transit">transit</option>
-          </select>
-        </div>
-        <div v-if="!selectedProviderId">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Namespace <span class="opacity-60">(optional)</span></label>
-          <input v-model="vaultNamespace" type="text"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="Leave empty for root namespace" />
-        </div>
       </div>
 
       <button
@@ -355,7 +324,9 @@ async function loadConfig() {
   result.match(
     val => {
       config.value = val;
-      if (val?.vaultAddr) vaultAddr.value = val.vaultAddr;
+      // Only pre-fill vaultAddr from existing config if no provider is selected;
+      // the provider's URL takes precedence over stale ceph config values.
+      if (val?.vaultAddr && !selectedProviderId.value) vaultAddr.value = val.vaultAddr;
     },
     () => { /* non-fatal */ },
   );
@@ -425,9 +396,17 @@ async function configureVault() {
   configuring.value = true;
   configResult.value = null;
 
+  // When a provider is selected, always resolve the vault address from it
+  // so stale values in the vaultAddr ref cannot override the provider's URL.
+  let effectiveVaultAddr = vaultAddr.value;
+  if (selectedProviderId.value) {
+    const p = providers.value.find(prov => prov.id === selectedProviderId.value);
+    if (p?.url) effectiveVaultAddr = p.url;
+  }
+
   const result = await rgwConfigureVault({
     cephHost: cephHost.value,
-    vaultAddr: vaultAddr.value,
+    vaultAddr: effectiveVaultAddr,
     vaultToken: vaultToken.value,
     providerId: selectedProviderId.value || undefined,
     secretEngine: secretEngine.value,

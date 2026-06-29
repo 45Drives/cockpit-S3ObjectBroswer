@@ -263,12 +263,8 @@
             <label class="block text-sm font-medium text-default mb-1">Algorithm</label>
             <select v-model="setEncAlgo"
               class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
-              <option value="AES256" :disabled="effectiveBackendType === 'rustfs'">AES-256 (SSE-S3){{ effectiveBackendType === 'rustfs' ? ' (not supported)' : '' }}</option>
               <option value="aws:kms">SSE-KMS</option>
             </select>
-            <p v-if="setEncAlgo === 'AES256' && effectiveBackendType === 'rustfs'" class="text-xs text-yellow-600 mt-1">
-              ⚠ RustFS does not support SSE-S3 (AES256). Use SSE-KMS instead.
-            </p>
           </div>
 
           <div v-if="setEncAlgo === 'aws:kms'">
@@ -596,7 +592,7 @@ function openBucket(bucketName: string) {
 
 const showSetEncModal = ref(false);
 const setEncBucket = ref("");
-const setEncAlgo = ref<"AES256" | "aws:kms">("AES256");
+const setEncAlgo = ref<"aws:kms">("aws:kms");
 const setEncKmsKeyId = ref("");
 const setEncBucketKey = ref(false);
 const setEncBusy = ref(false);
@@ -647,11 +643,11 @@ function openSetEncryptionModal(bucketName: string) {
   setEncBucket.value = bucketName;
   const current = bucketEncryption.value[bucketName];
   if (current && current.encrypted) {
-    setEncAlgo.value = current.algorithm === "aws:kms" ? "aws:kms" : "AES256";
+    setEncAlgo.value = "aws:kms";
     setEncKmsKeyId.value = current.kmsKeyId || "";
     setEncBucketKey.value = current.bucketKeyEnabled || false;
   } else {
-    setEncAlgo.value = "AES256";
+    setEncAlgo.value = "aws:kms";
     setEncKmsKeyId.value = "";
     setEncBucketKey.value = false;
   }
@@ -745,10 +741,7 @@ async function applySetEncryption() {
   if (res.isErr()) {
     const msg = res.error.message;
     // Parse common KMS errors into actionable messages
-    if (backend === "minio" && /kms|kes|encrypt/i.test(msg)) {
-      setEncError.value = "MinIO requires KES (Key Encryption Service) configured to support SSE-KMS. "
-        + "Set up KES in the Encryption Manager first, or use AES-256 (SSE-S3) for server-managed encryption.";
-    } else if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
+    if (/InvalidEncryptionMethod|kms.*not.*configured|kms.*not.*enabled/i.test(msg)) {
       setEncError.value = "KMS is not configured on this S3 backend. Configure it in the Encryption Manager first.";
     } else if (/AccessDenied|InvalidAccessKeyId/i.test(msg)) {
       setEncError.value = "Access denied — check that the S3 credentials have permission to configure encryption.";

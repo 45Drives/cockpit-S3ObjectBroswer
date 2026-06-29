@@ -128,40 +128,7 @@
           </select>
           <p class="text-xs text-default opacity-60 mt-1">Selects the Vault address and token automatically.</p>
         </div>
-        <div>
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Default Key Name</label>
-          <select v-if="selectedProviderId" v-model="transitKey"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
-            <option value="">— Select key —</option>
-            <option v-for="p in kesPolicies" :key="p.id" :value="p.transit_key_name || p.name">
-              {{ p.name }} ({{ p.transit_key_name || p.id }})
-            </option>
-          </select>
-          <input v-else v-model="transitKey" type="text"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="e.g. minio" />
-          <p class="text-xs text-default opacity-60 mt-1">
-            {{ selectedProviderId ? (kesPolicies.length ? 'Compatible kv1_kes key policies for this provider.' : 'No kv1_kes policies found for this provider.') : 'Enter the KES key name to use for encryption.' }}
-          </p>
-        </div>
-        <div v-if="!selectedProviderId">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Address</label>
-          <input v-model="vaultAddr"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            :class="{ 'border-red-400': vaultAddrError }"
-            placeholder="https://10.20.0.142:8200" />
-          <p v-if="vaultAddrError" class="text-xs text-red-600 mt-1">{{ vaultAddrError }}</p>
-          <p v-else-if="isHttpVault" class="text-xs text-yellow-600 mt-1">
-            ⚠ Using HTTP (unencrypted) for Vault. In production, use HTTPS to protect tokens and secrets in transit.
-          </p>
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Token (one-time, for AppRole setup)</label>
-          <input v-model="vaultToken" type="password"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="hvs.xxxxx" />
-          <p class="text-xs text-default opacity-60 mt-1">{{ selectedProviderId ? 'Leave blank to use provider credentials. Entering a token will override the provider.' : 'Token with permissions to create a Vault AppRole. Used once during setup.' }}</p>
-        </div>
+
       </div>
 
       <button
