@@ -613,7 +613,7 @@ async function checkRustfsKmsReadiness() {
   rustfsKmsChecking.value = true;
   rustfsKmsReady.value = null;
   try {
-    const cfgRes = await rustfsGetConfig();
+    const cfgRes = await rustfsGetConfig(connectionHost.value);
     if (cfgRes.isOk() && cfgRes.value) {
       rustfsKmsConfig.value = cfgRes.value;
       rustfsKmsReady.value = cfgRes.value.kmsEnabled;
