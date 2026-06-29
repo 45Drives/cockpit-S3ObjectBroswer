@@ -469,13 +469,34 @@ def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str
       copied["bytes"] = size
       write_progress(True)
     else:
-      client.copy_object(
-        Bucket=dst_bucket,
-        Key=dst_key,
-        CopySource={"Bucket": src_bucket, "Key": src_key},
-        MetadataDirective="COPY",
-        **sse_params
-      )
+      try:
+        client.copy_object(
+          Bucket=dst_bucket,
+          Key=dst_key,
+          CopySource={"Bucket": src_bucket, "Key": src_key},
+          MetadataDirective="COPY",
+          **sse_params
+        )
+      except client.exceptions.ClientError as ce:
+        error_code = ce.response.get("Error", {}).get("Code", "")
+        if error_code == "NotImplemented":
+          # RGW does not support server-side CopyObject with SSE-KMS;
+          # fall back to download + re-upload.
+          get_resp = client.get_object(Bucket=src_bucket, Key=src_key)
+          body_bytes = get_resp["Body"].read()
+          put_params = {
+            "Bucket": dst_bucket,
+            "Key": dst_key,
+            "Body": body_bytes,
+          }  # type: Dict[str, Any]
+          # Preserve content type if available
+          if head.get("ContentType"):
+            put_params["ContentType"] = head["ContentType"]
+          # Apply destination SSE params
+          put_params.update(sse_params)
+          client.put_object(**put_params)
+        else:
+          raise
       copied["bytes"] = size
       write_progress(True)
 
@@ -593,12 +614,26 @@ def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, arg
                 })
 
             # Copy the object
-            client.copy_object(
-                Bucket=bucket,
-                Key=dst_key,
-                CopySource={"Bucket": bucket, "Key": src_key},
-                MetadataDirective="COPY",
-            )
+            try:
+                client.copy_object(
+                    Bucket=bucket,
+                    Key=dst_key,
+                    CopySource={"Bucket": bucket, "Key": src_key},
+                    MetadataDirective="COPY",
+                )
+            except client.exceptions.ClientError as ce:
+                error_code = ce.response.get("Error", {}).get("Code", "")
+                if error_code == "NotImplemented":
+                    # RGW does not support server-side CopyObject with SSE-KMS;
+                    # fall back to download + re-upload.
+                    get_resp = client.get_object(Bucket=bucket, Key=src_key)
+                    body_bytes = get_resp["Body"].read()
+                    put_params = {"Bucket": bucket, "Key": dst_key, "Body": body_bytes}
+                    if head.get("ContentType"):
+                        put_params["ContentType"] = head["ContentType"]
+                    client.put_object(**put_params)
+                else:
+                    raise
 
             if stream:
                 emit({"type": "progress", "ok": True, "partsDone": 1, "totalParts": 1, "bytesCopied": size, "size": size})

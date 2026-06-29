@@ -132,6 +132,9 @@ def cmd_upsert(payload_arg: str) -> None:
       "secretAccessKey": cfg.get("secretAccessKey"),
       "useTls": bool(cfg.get("useTls")),
       "tlsVerify": cfg.get("tlsVerify", True) is not False,
+      "defaultSse": cfg.get("defaultSse") or None,
+      "defaultSseKmsKeyId": cfg.get("defaultSseKmsKeyId") or None,
+      "backendType": cfg.get("backendType") or None,
     },
   }
 

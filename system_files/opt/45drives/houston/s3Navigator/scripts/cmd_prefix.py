@@ -260,12 +260,32 @@ def cmd_transfer_prefix(
       with lock:
         partial.pop(src_key, None)
     else:
-      client.copy_object(
-        Bucket=dst_bucket,
-        Key=dst_key,
-        CopySource={"Bucket": src_bucket, "Key": src_key},
-        MetadataDirective="COPY",
-      )
+      try:
+        client.copy_object(
+          Bucket=dst_bucket,
+          Key=dst_key,
+          CopySource={"Bucket": src_bucket, "Key": src_key},
+          MetadataDirective="COPY",
+        )
+      except client.exceptions.ClientError as ce:
+        error_code = ce.response.get("Error", {}).get("Code", "")
+        if error_code == "NotImplemented":
+          # RGW does not support server-side CopyObject with SSE-KMS;
+          # fall back to download + re-upload.
+          get_resp = client.get_object(Bucket=src_bucket, Key=src_key)
+          body_bytes = get_resp["Body"].read()
+          put_params = {"Bucket": dst_bucket, "Key": dst_key, "Body": body_bytes}
+          ct = None
+          try:
+            h = client.head_object(Bucket=src_bucket, Key=src_key)
+            ct = h.get("ContentType")
+          except Exception:
+            pass
+          if ct:
+            put_params["ContentType"] = ct
+          client.put_object(**put_params)
+        else:
+          raise
 
     if delete_source:
       client.delete_object(Bucket=src_bucket, Key=src_key)

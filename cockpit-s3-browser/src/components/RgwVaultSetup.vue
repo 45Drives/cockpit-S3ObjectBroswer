@@ -162,46 +162,11 @@
           </select>
           <p class="text-xs text-default opacity-60 mt-1">Selects the Vault address and token automatically.</p>
         </div>
-        <div v-if="!selectedProviderId">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Address</label>
-          <input v-model="vaultAddr" type="text"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="https://10.20.0.142:8200" />
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Token</label>
-          <input v-model="vaultToken" type="password"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="hvs.xxxxx" />
-          <p class="text-xs text-default opacity-60 mt-1">{{ selectedProviderId ? 'Leave blank to use token from provider credentials. A scoped read-only token will be created for RGW.' : 'Token with access to the Transit secrets engine. Written to /etc/ceph/vault.token on the Ceph admin host.' }}</p>
-        </div>
-        <div v-if="!selectedProviderId">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Secret Engine</label>
-          <select v-model="secretEngine"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
-            <option value="transit">transit</option>
-          </select>
-        </div>
-        <div v-if="!selectedProviderId">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Namespace <span class="opacity-60">(optional)</span></label>
-          <input v-model="vaultNamespace" type="text"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="Leave empty for root namespace" />
-        </div>
       </div>
-
-      <div class="flex items-center gap-2">
-        <input id="rgw-skip-tls-verify" v-model="skipTlsVerify" type="checkbox"
-          class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-        <label for="rgw-skip-tls-verify" class="text-sm text-default">Skip TLS certificate verification</label>
-      </div>
-      <p v-if="skipTlsVerify" class="text-xs text-yellow-600 -mt-2 ml-6">
-        Warning: Disables certificate validation for Vault connections. Use only if your Vault server uses a self-signed certificate or has mismatched SANs.
-      </p>
 
       <button
         class="inline-flex items-center justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 btn-primary"
-        :disabled="(!vaultAddr && !selectedProviderId) || (!vaultToken && !selectedProviderId) || configuring" @click="configureVault">
+        :disabled="(!vaultAddr && !selectedProviderId) || (!vaultToken && !selectedProviderId) || !!vaultAddrError || configuring" @click="configureVault">
         {{ configuring ? 'Configuring...' : (vaultConfigured ? 'Update Vault Configuration' : 'Configure Vault Backend') }}
       </button>
 
@@ -294,14 +259,40 @@ const vaultToken = ref('');
 const secretEngine = ref('transit');
 const vaultNamespace = ref('');
 const transitKeyName = ref('');
-const skipTlsVerify = ref(false);
+
 const configuring = ref(false);
 const configResult = ref<RgwConfigureResult | null>(null);
+
+// Vault address validation
+const isHttpVault = computed(() => {
+  const addr = (vaultAddr.value ?? '').trim().toLowerCase();
+  return addr.startsWith('http://') && !addr.includes('localhost') && !addr.includes('127.0.0.1');
+});
+
+function validateVaultAddr(addr: string): string {
+  if (!addr) return '';
+  if (!/^https?:\/\//i.test(addr)) return 'Must start with http:// or https://';
+  const hostMatch = addr.replace(/^https?:\/\//i, '').split(/[:/]/)[0];
+  if (!hostMatch) return 'Missing hostname';
+  if (/^[\d.]+$/.test(hostMatch)) {
+    const ipMatch = hostMatch.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!ipMatch) return `Invalid IP address: ${hostMatch}. Must be 4 octets (e.g. 10.20.0.142)`;
+    for (let i = 1; i <= 4; i++) {
+      const octet = parseInt(ipMatch[i], 10);
+      if (octet < 0 || octet > 255) return `Invalid IP address: ${hostMatch}`;
+    }
+  } else if (hostMatch.endsWith('-') || hostMatch.endsWith('.')) {
+    return `Invalid hostname: ${hostMatch}`;
+  }
+  return '';
+}
+
+const vaultAddrError = computed(() => validateVaultAddr((vaultAddr.value ?? '').trim()));
 
 watch(selectedProviderId, (id) => {
   if (id) {
     const p = providers.value.find(prov => prov.id === id);
-    if (p) vaultAddr.value = p.url;
+    if (p) vaultAddr.value = p.url ?? '';
   }
   // Reset key if it doesn't belong to the new provider
   if (transitKeyName.value) {
@@ -333,7 +324,9 @@ async function loadConfig() {
   result.match(
     val => {
       config.value = val;
-      if (val?.vaultAddr) vaultAddr.value = val.vaultAddr;
+      // Only pre-fill vaultAddr from existing config if no provider is selected;
+      // the provider's URL takes precedence over stale ceph config values.
+      if (val?.vaultAddr && !selectedProviderId.value) vaultAddr.value = val.vaultAddr;
     },
     () => { /* non-fatal */ },
   );
@@ -390,17 +383,34 @@ async function setupSshKey() {
 async function configureVault() {
   error.value = '';
   successMsg.value = '';
+
+  // Validate vault address before proceeding
+  if (!selectedProviderId.value) {
+    const addrErr = validateVaultAddr((vaultAddr.value ?? '').trim());
+    if (addrErr) {
+      error.value = `Invalid Vault address: ${addrErr}`;
+      return;
+    }
+  }
+
   configuring.value = true;
   configResult.value = null;
 
+  // When a provider is selected, always resolve the vault address from it
+  // so stale values in the vaultAddr ref cannot override the provider's URL.
+  let effectiveVaultAddr = vaultAddr.value;
+  if (selectedProviderId.value) {
+    const p = providers.value.find(prov => prov.id === selectedProviderId.value);
+    if (p?.url) effectiveVaultAddr = p.url;
+  }
+
   const result = await rgwConfigureVault({
     cephHost: cephHost.value,
-    vaultAddr: vaultAddr.value,
+    vaultAddr: effectiveVaultAddr,
     vaultToken: vaultToken.value,
     providerId: selectedProviderId.value || undefined,
     secretEngine: secretEngine.value,
     vaultNamespace: vaultNamespace.value || undefined,
-    skipTlsVerify: skipTlsVerify.value || undefined,
     sshUser: sshUser.value || undefined,
   });
   result.match(

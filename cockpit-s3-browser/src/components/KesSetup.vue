@@ -128,46 +128,12 @@
           </select>
           <p class="text-xs text-default opacity-60 mt-1">Selects the Vault address and token automatically.</p>
         </div>
-        <div>
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Default Key Name</label>
-          <select v-model="transitKey" :disabled="!selectedProviderId"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default disabled:opacity-50">
-            <option value="">{{ selectedProviderId ? '— Select key —' : '— Select a provider first —' }}</option>
-            <option v-for="p in kesPolicies" :key="p.id" :value="p.transit_key_name || p.name">
-              {{ p.name }} ({{ p.transit_key_name || p.id }})
-            </option>
-          </select>
-          <p class="text-xs text-default opacity-60 mt-1">
-            {{ !selectedProviderId ? 'Select a KMS provider to see available keys.' : kesPolicies.length ? 'Compatible kv1_kes key policies for this provider.' : 'No kv1_kes policies found for this provider.' }}
-          </p>
-        </div>
-        <div v-if="!selectedProviderId">
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Address</label>
-          <input v-model="vaultAddr"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="https://10.20.0.142:8200" />
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-default opacity-60 mb-1">Vault Token (one-time, for AppRole setup)</label>
-          <input v-model="vaultToken" type="password"
-            class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default"
-            placeholder="hvs.xxxxx" />
-          <p class="text-xs text-default opacity-60 mt-1">{{ selectedProviderId ? 'Leave blank to use token from provider credentials.' : 'Token with permissions to create a Vault AppRole. Used once during setup.' }}</p>
-        </div>
-      </div>
 
-      <div class="flex items-center gap-2">
-        <input id="kes-skip-tls-verify" v-model="skipTlsVerify" type="checkbox"
-          class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-        <label for="kes-skip-tls-verify" class="text-sm text-default">Skip TLS certificate verification</label>
       </div>
-      <p v-if="skipTlsVerify" class="text-xs text-yellow-600 -mt-2 ml-6">
-        Warning: Disables certificate validation for Vault connections. Use only if your Vault server uses a self-signed certificate or has mismatched SANs.
-      </p>
 
       <button
         class="inline-flex items-center justify-center rounded-md border border-default px-4 py-2 text-sm font-semibold text-default shadow-sm hover:opacity-90 active:opacity-80 disabled:cursor-not-allowed disabled:opacity-60 btn-primary"
-        :disabled="(!vaultAddr && !selectedProviderId) || (!vaultToken && !selectedProviderId) || configuring" @click="configureKes">
+        :disabled="(!vaultAddr && !selectedProviderId) || (!vaultToken && !selectedProviderId) || !!vaultAddrError || configuring" @click="configureKes">
         {{ configuring ? 'Configuring...' : (discovery?.sseConfigured ? 'Reconfigure KES + MinIO' : 'Setup KES + MinIO') }}
       </button>
 
@@ -237,9 +203,34 @@ const selectedProviderId = ref('');
 const vaultAddr = ref('');
 const vaultToken = ref('');
 const transitKey = ref('');
-const skipTlsVerify = ref(false);
 const configuring = ref(false);
 const configResult = ref<MinIOKesConfigResult | null>(null);
+
+// Vault address validation
+const isHttpVault = computed(() => {
+  const addr = (vaultAddr.value ?? '').trim().toLowerCase();
+  return addr.startsWith('http://') && !addr.includes('localhost') && !addr.includes('127.0.0.1');
+});
+
+function validateVaultAddr(addr: string): string {
+  if (!addr) return '';
+  if (!/^https?:\/\//i.test(addr)) return 'Must start with http:// or https://';
+  const hostMatch = addr.replace(/^https?:\/\//i, '').split(/[:/]/)[0];
+  if (!hostMatch) return 'Missing hostname';
+  if (/^[\d.]+$/.test(hostMatch)) {
+    const ipMatch = hostMatch.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (!ipMatch) return `Invalid IP address: ${hostMatch}. Must be 4 octets (e.g. 10.20.0.142)`;
+    for (let i = 1; i <= 4; i++) {
+      const octet = parseInt(ipMatch[i], 10);
+      if (octet < 0 || octet > 255) return `Invalid IP address: ${hostMatch}`;
+    }
+  } else if (hostMatch.endsWith('-') || hostMatch.endsWith('.')) {
+    return `Invalid hostname: ${hostMatch}`;
+  }
+  return '';
+}
+
+const vaultAddrError = computed(() => validateVaultAddr((vaultAddr.value ?? '').trim()));
 
 // Install/restart
 const installing = ref(false);
@@ -250,7 +241,7 @@ const restartResult = ref<{ success: boolean; message: string } | null>(null);
 watch(selectedProviderId, (id) => {
   if (id) {
     const p = providers.value.find(prov => prov.id === id);
-    if (p) vaultAddr.value = p.url;
+    if (p) vaultAddr.value = p.url ?? '';
   }
   // Reset key if it doesn't belong to the new provider
   if (transitKey.value) {
@@ -338,14 +329,22 @@ async function startKes() {
 }
 
 async function configureKes() {
+  // Validate vault address before proceeding
+  if (!selectedProviderId.value) {
+    const addrErr = validateVaultAddr((vaultAddr.value ?? '').trim());
+    if (addrErr) {
+      error.value = `Invalid Vault address: ${addrErr}`;
+      return;
+    }
+  }
+
   configuring.value = true;
   configResult.value = null;
   const result = await minioConfigureKes({
-    providerId: selectedProviderId.value || undefined,
+    providerId: (selectedProviderId.value && !vaultToken.value) ? selectedProviderId.value : undefined,
     vaultAddr: vaultAddr.value || undefined,
     vaultToken: vaultToken.value || undefined,
     transitKey: transitKey.value || undefined,
-    skipTlsVerify: skipTlsVerify.value || undefined,
     host: props.connectionHost,
   });
   result.match(

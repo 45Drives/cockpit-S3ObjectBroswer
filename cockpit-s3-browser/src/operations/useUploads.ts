@@ -158,14 +158,26 @@ export function useUploads(deps: Deps) {
     }
 
     const msg = u.error || "Upload failed";
+    const kmsHint = isKmsError(msg) ? " Check that the KMS key exists in Vault and the backend can reach Vault." : "";
     pushNotification(
       new Notification(
         "Upload failed",
-        `Failed ${name} (${bucket}:${key}) - ${msg}`,
+        `Failed ${name} (${bucket}:${key}) - ${msg}${kmsHint}`,
         "error",
-        5000
+        8000
       )
     );
+  }
+
+  /** Detect common KMS/Vault error patterns in upload failures */
+  function isKmsError(msg: string): boolean {
+    const lower = msg.toLowerCase();
+    return lower.includes("failed to create data key")
+      || lower.includes("failed to read key from vault")
+      || lower.includes("kms-keyid")
+      || (lower.includes("nosuchkey") && lower.includes("kms"))
+      || lower.includes("kms is not configured")
+      || lower.includes("failed to retrieve the actual key");
   }
 
   function notifyBatchSummary(opts: {
