@@ -263,9 +263,12 @@
             <label class="block text-sm font-medium text-default mb-1">Algorithm</label>
             <select v-model="setEncAlgo"
               class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
-              <option value="AES256">AES-256 (SSE-S3)</option>
+              <option value="AES256" :disabled="effectiveBackendType === 'rustfs'">AES-256 (SSE-S3){{ effectiveBackendType === 'rustfs' ? ' (not supported)' : '' }}</option>
               <option value="aws:kms">SSE-KMS</option>
             </select>
+            <p v-if="setEncAlgo === 'AES256' && effectiveBackendType === 'rustfs'" class="text-xs text-yellow-600 mt-1">
+              ⚠ RustFS does not support SSE-S3 (AES256). Use SSE-KMS instead.
+            </p>
           </div>
 
           <div v-if="setEncAlgo === 'aws:kms'">
@@ -674,9 +677,16 @@ async function applySetEncryption() {
 
   // Pre-validate KMS key if SSE-KMS with a specific key
   if (setEncAlgo.value === "aws:kms" && setEncKmsKeyId.value && cpStore.isAvailable) {
-    // Determine engine type from the selected policy
+    // Determine engine type from the selected policy, or infer from backend type
     const selectedPolicy = cpStore.policies.find((p) => p.transit_key_name === setEncKmsKeyId.value);
-    const engineType = (selectedPolicy?.key_engine || "transit") as "transit" | "kv2" | "kv2_rustfs" | "kv1_kes";
+    let engineType: "transit" | "kv2" | "kv2_rustfs" | "kv1_kes";
+    if (selectedPolicy?.key_engine) {
+      engineType = selectedPolicy.key_engine as typeof engineType;
+    } else {
+      // Infer engine type from the backend when key was entered manually
+      const bt = effectiveBackendType.value;
+      engineType = bt === "rustfs" ? "kv2_rustfs" : bt === "minio" ? "kv1_kes" : "transit";
+    }
     const requireExportable = engineType === "transit";
     const vr = await validateKmsKey(setEncKmsKeyId.value, engineType, requireExportable);
     if (vr.isOk() && vr.value) {

@@ -166,9 +166,12 @@
                       <select id="m-sse" v-model="form.defaultSse" :disabled="busy"
                         class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
                         <option value="none">None</option>
-                        <option value="AES256">SSE-S3 (AES256)</option>
+                        <option value="AES256" :disabled="form.backendType === 'rustfs'">SSE-S3 (AES256){{ form.backendType === 'rustfs' ? ' (not supported)' : '' }}</option>
                         <option value="aws:kms">SSE-KMS</option>
                       </select>
+                      <p v-if="form.defaultSse === 'AES256' && form.backendType === 'rustfs'" class="text-xs text-yellow-600 mt-1">
+                        ⚠ RustFS does not support SSE-S3. Uploads will not be encrypted. Use SSE-KMS instead.
+                      </p>
                     </div>
 
                     <div v-if="form.defaultSse === 'aws:kms'">
@@ -344,6 +347,7 @@ async function loadForEdit(id: string) {
     form.tlsVerify = (res.value as any).tlsVerify !== false;
     form.defaultSse = (res.value as any).defaultSse || "none";
     form.defaultSseKmsKeyId = (res.value as any).defaultSseKmsKeyId || "";
+    form.backendType = (res.value as any).backendType || "auto";
     endpointHost.value = normalizeHost(res.value.endpoint);
     showSecret.value = false;
     clearErrors();
@@ -423,6 +427,7 @@ async function save() {
       secretAccessKey: form.secretAccessKey,
       defaultSse: form.defaultSse === "none" ? undefined : form.defaultSse,
       defaultSseKmsKeyId: form.defaultSse === "aws:kms" && form.defaultSseKmsKeyId ? form.defaultSseKmsKeyId : undefined,
+      backendType: form.backendType || "auto",
     };
 
     const res = await upsertConnection(cfg, props.mode === "edit" ? props.id : undefined);
