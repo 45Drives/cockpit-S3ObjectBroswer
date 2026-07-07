@@ -1,5 +1,5 @@
-## s3-browser 1.2.5-1
+## s3-browser 1.2.6-1
 
-* Fix: pass connectionHost to rustfsGetConfig for remote KMS check
-* Fix: remove SSE-S3 option, fix RGW vault addr from provider, CopyObject fallback for RGW SSE-KMS
-* Fix: encryption UI fixes and connection defaults persistence
+* fix: apply SSE encryption params to prefix copy/move operations
+* fix: resolve pull request findings
+* chore: add tsconfig.tsbuildinfo to .gitignore

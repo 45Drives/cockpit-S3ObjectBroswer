@@ -29,6 +29,10 @@ make DESTDIR=%{buildroot} install
 
 
 %changelog
+* Tue Jul 07 2026 Rachit Hans <rhans@45drives.com> 1.2.6-1
+- fix: apply SSE encryption params to prefix copy/move operations
+- fix: resolve pull request findings
+- chore: add tsconfig.tsbuildinfo to .gitignore
 * Mon Jun 29 2026 Rachit Hans <rhans@45drives.com> 1.2.5-1
 - Fix: pass connectionHost to rustfsGetConfig for remote KMS check
 - Fix: remove SSE-S3 option, fix RGW vault addr from provider, CopyObject fallback

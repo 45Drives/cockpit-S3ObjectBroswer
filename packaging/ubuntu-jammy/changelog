@@ -1,3 +1,11 @@
+cockpit-s3-browser (1.2.6-1jammy) jammy; urgency=medium
+
+  * fix: apply SSE encryption params to prefix copy/move operations
+  * fix: resolve pull request findings
+  * chore: add tsconfig.tsbuildinfo to .gitignore
+
+ -- Rachit Hans <rhans@45drives.com>  Tue, 07 Jul 2026 08:26:39 -0300
+
 cockpit-s3-browser (1.2.5-1jammy) jammy; urgency=medium
 
   * Fix: pass connectionHost to rustfsGetConfig for remote KMS check
