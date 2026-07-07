@@ -73,6 +73,15 @@ def cmd_transfer_prefix(
   concurrency = _parse_concurrency(argv)
   MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
 
+  # Server-side encryption flags
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params: Dict[str, str] = {}
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
+
   canceled = {"yes": False}
   def abort():
     canceled["yes"] = True
@@ -255,17 +264,43 @@ def cmd_transfer_prefix(
         dst_key,
         concurrency,
         emit=emit,
+        sse_params=sse_params,
       )
 
       with lock:
         partial.pop(src_key, None)
     else:
-      client.copy_object(
-        Bucket=dst_bucket,
-        Key=dst_key,
-        CopySource={"Bucket": src_bucket, "Key": src_key},
-        MetadataDirective="COPY",
-      )
+      try:
+        copy_args = {
+          "Bucket": dst_bucket,
+          "Key": dst_key,
+          "CopySource": {"Bucket": src_bucket, "Key": src_key},
+          "MetadataDirective": "COPY",
+        }
+        if sse_params:
+          copy_args.update(sse_params)
+        client.copy_object(**copy_args)
+      except client.exceptions.ClientError as ce:
+        error_code = ce.response.get("Error", {}).get("Code", "")
+        if error_code == "NotImplemented":
+          # RGW does not support server-side CopyObject with SSE-KMS;
+          # fall back to download + re-upload.
+          get_resp = client.get_object(Bucket=src_bucket, Key=src_key)
+          body_bytes = get_resp["Body"].read()
+          put_params = {"Bucket": dst_bucket, "Key": dst_key, "Body": body_bytes}
+          ct = None
+          try:
+            h = client.head_object(Bucket=src_bucket, Key=src_key)
+            ct = h.get("ContentType")
+          except Exception:
+            pass
+          if ct:
+            put_params["ContentType"] = ct
+          if sse_params:
+            put_params.update(sse_params)
+          client.put_object(**put_params)
+        else:
+          raise
 
     if delete_source:
       client.delete_object(Bucket=src_bucket, Key=src_key)
@@ -404,24 +439,36 @@ def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
   if p and not p.endswith("/"):
     p += "/"
 
-  token = None
   deleted_requested = 0
   error_total = 0
   first_error = None
 
   emit({"type": "start", "ok": True, "prefix": p})
 
-  try:
-    while True:
-      req: Dict[str, Any] = {"Bucket": bucket, "Prefix": p, "MaxKeys": 1000}
-      if token:
-        req["ContinuationToken"] = token
+  def _delete_keys_individually(key_list: List[Dict[str, str]]) -> None:
+    nonlocal deleted_requested, error_total, first_error
+    for obj in key_list:
+      try:
+        client.delete_object(Bucket=bucket, Key=obj["Key"])
+        deleted_requested += 1
+      except Exception as e:
+        deleted_requested += 1
+        error_total += 1
+        if first_error is None:
+          first_error = {"Key": obj["Key"], "Message": str(e)}
 
-      resp = client.list_objects_v2(**req)
+  try:
+    # Delete all objects under the prefix (re-list each iteration to avoid
+    # stale continuation tokens after deletions).
+    while True:
+      resp = client.list_objects_v2(Bucket=bucket, Prefix=p, MaxKeys=1000)
       items = resp.get("Contents") or []
       keys = [{"Key": o["Key"]} for o in items if o.get("Key")]
 
-      if keys:
+      if not keys:
+        break
+
+      try:
         dresp = client.delete_objects(
           Bucket=bucket,
           Delete={"Objects": keys, "Quiet": True},
@@ -434,17 +481,25 @@ def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
           error_total += len(errs)
           if first_error is None:
             first_error = errs[0]
+      except Exception:
+        # Batch delete_objects failed (e.g. MissingContentMD5 on some backends).
+        # Fall back to individual delete_object calls.
+        _delete_keys_individually(keys)
 
-        emit({
-          "type": "progress",
-          "ok": True,
-          "deletedRequested": deleted_requested,
-          "errors": error_total,
-        })
+      emit({
+        "type": "progress",
+        "ok": True,
+        "deletedRequested": deleted_requested,
+        "errors": error_total,
+      })
 
-      if not resp.get("IsTruncated"):
-        break
-      token = resp.get("NextContinuationToken")
+    # Explicitly delete the folder marker itself. Some S3-compatible backends
+    # (RustFS, MinIO) maintain folder markers that may not appear in
+    # list_objects_v2 results or survive batch deletion of children.
+    try:
+      client.delete_object(Bucket=bucket, Key=p)
+    except Exception:
+      pass  # marker may not exist; that's fine
 
     out: Dict[str, Any] = {
       "type": "result",
@@ -457,9 +512,6 @@ def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
 
     emit(out)
 
-    if error_total != 0:
-      raise ValueError(out.get("error") or "Delete completed with errors")
-
   except Exception as e:
     emit({
       "type": "result",
@@ -468,98 +520,6 @@ def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
       "errors": error_total,
       "error": str(e),
     })
-    return
-def cmd_delete_prefix(conn_id: str, bucket: str, prefix: str) -> None:
-    record = read_json(cfg_path(conn_id))
-    cfg = record.get("config") or {}
-    client = make_client(cfg)
-
-    def emit(obj: Dict[str, Any]) -> None:
-        sys.stdout.write(json.dumps(obj) + "\n")
-        sys.stdout.flush()
-
-    p = (prefix or "").strip()
-    if p and not p.endswith("/"):
-        p += "/"
-
-    token = None
-    deleted_requested = 0
-    error_total = 0
-    first_error = None
-
-    emit({"type": "start", "ok": True, "prefix": p})
-
-    try:
-        while True:
-            req: Dict[str, Any] = {"Bucket": bucket, "Prefix": p, "MaxKeys": 1000}
-            if token:
-                req["ContinuationToken"] = token
-
-            resp = client.list_objects_v2(**req)
-            items = resp.get("Contents") or []
-
-            # Check if no objects are found (empty response)
-            if not items and not resp.get("IsTruncated"):
-                emit({
-                    "type": "result",
-                    "ok": True,
-                    "deletedRequested": 0,
-                    "errors": 0,
-                    "message": "No objects found to delete. Operation completed successfully."
-                })
-                return  # No objects to delete
-
-            keys = [{"Key": o["Key"]} for o in items if o.get("Key")]
-
-            if keys:
-                dresp = client.delete_objects(
-                    Bucket=bucket,
-                    Delete={"Objects": keys, "Quiet": True},
-                )
-
-                deleted_requested += len(keys)
-
-                errs = dresp.get("Errors") or []
-                if errs:
-                    error_total += len(errs)
-                    if first_error is None:
-                        first_error = errs[0]
-
-                emit({
-                    "type": "progress",
-                    "ok": True,
-                    "deletedRequested": deleted_requested,
-                    "errors": error_total,
-                })
-
-            if not resp.get("IsTruncated"):
-                break
-            token = resp.get("NextContinuationToken")
-
-        # Final result after delete operation (even if empty)
-        out: Dict[str, Any] = {
-            "type": "result",
-            "ok": (error_total == 0),
-            "deletedRequested": deleted_requested,
-            "errors": error_total,
-        }
-        if first_error:
-            out["error"] = str(first_error)
-
-        emit(out)
-
-        if error_total != 0:
-            raise ValueError(out.get("error") or "Delete completed with errors")
-
-    except Exception as e:
-        emit({
-            "type": "result",
-            "ok": False,
-            "deletedRequested": deleted_requested,
-            "errors": error_total,
-            "error": str(e),
-        })
-        return
 
 
 def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List[str]) -> None:
@@ -902,7 +862,7 @@ def cmd_download_prefix_targz(conn_id: str, bucket: str, prefix: str, argv: List
     })
     raise
 
-def cmd_create_folder(conn_id: str, bucket: str, prefix: str, name: str) -> None:
+def cmd_create_folder(conn_id: str, bucket: str, prefix: str, name: str, argv: list = None) -> None:
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}
   client = make_client(cfg)
@@ -916,8 +876,18 @@ def cmd_create_folder(conn_id: str, bucket: str, prefix: str, name: str) -> None
 
   folder_prefix = f"{base}{n}/"
 
+  # Server-side encryption flags
+  argv = argv or []
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params = {}  # type: Dict[str, str]
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
+
   try:
-    client.put_object(Bucket=bucket, Key=folder_prefix, Body=b"")
+    client.put_object(Bucket=bucket, Key=folder_prefix, Body=b"", **sse_params)
     sys.stdout.write(json.dumps({"ok": True, "bucket": bucket, "prefix": folder_prefix}) + "\n")
   except Exception as e:
     sys.stdout.write(json.dumps({"ok": False, "error": str(e)}) + "\n")

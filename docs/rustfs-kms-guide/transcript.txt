@@ -1,0 +1,42 @@
+RustFS KMS Encryption Setup – Video Transcript
+================================================
+
+Section 1: Introduction (0:00)
+------------------------------
+Welcome to the RustFS encryption setup guide. In this walkthrough, we'll configure server-side encryption for RustFS using HashiCorp Vault as the key management service. Unlike MinIO which uses KES as an intermediary, RustFS connects directly to Vault for encryption key management.
+
+Section 2: Connections (0:14)
+-----------------------------
+We start at the S3 Browser plugin in Cockpit. Here you can see our available connections. We'll connect to our RustFS endpoint which is running on port 9200. The backend type is automatically detected when you connect.
+
+Section 3: Buckets (0:26)
+-------------------------
+After connecting, we see the Buckets view. Notice the RustFS KMS Setup tab in the navigation bar — this tab only appears for RustFS-backed connections. We currently have a test bucket ready. Let's navigate to the KMS setup.
+
+Section 4: KMS Unconfigured (0:38)
+-----------------------------------
+On the RustFS KMS Setup page, the service status panel shows that RustFS is installed and running, but KMS is currently disabled. Below the status section, you'll find the configuration form where we can connect RustFS to our Vault instance.
+
+Section 5: Configure Form (0:54)
+---------------------------------
+To configure KMS, first select a KMS provider from the dropdown. This automatically fills in the Vault address. Next, select the default key ID from the available key policies. The provider credentials, including the AppRole configuration, are managed through the Control Plane.
+
+Section 6: Enable KMS (1:12)
+-----------------------------
+Now we click Enable KMS to apply the configuration. The system writes the necessary Vault environment variables to the RustFS configuration, sets KMS enable to true, and restarts the RustFS service. A green confirmation message tells us the operation succeeded.
+
+Section 7: Configured Status (1:27)
+------------------------------------
+Looking at the service status panel again, everything is now healthy. KMS shows Enabled, and the details confirm our Vault backend address, default key ID, and that the authentication token is configured. RustFS is now ready to encrypt data at rest.
+
+Section 8: Bucket Encryption (1:41)
+------------------------------------
+Back on the Buckets tab, we can now enable encryption on individual buckets. Click the three-dot menu on a bucket and select Set Encryption. In the modal, choose SSE-KMS as the algorithm and select your key policy. Click Apply to enable encryption on this bucket.
+
+Section 9: Upload and Verify (1:55)
+------------------------------------
+Let's open our encrypted bucket and upload a file. The file is stored encrypted at rest using the Vault-managed key. The encryption is completely transparent — files are automatically encrypted on write and decrypted on read. No changes are needed to your upload workflow.
+
+Section 10: Outro (2:12)
+-------------------------
+That completes the RustFS encryption setup. Your data is now protected at rest with Vault-managed keys. To recap: we connected to RustFS, configured the Vault integration through the KMS Setup tab, enabled encryption on our bucket, and verified that uploads work seamlessly. For more details, refer to the written guide.

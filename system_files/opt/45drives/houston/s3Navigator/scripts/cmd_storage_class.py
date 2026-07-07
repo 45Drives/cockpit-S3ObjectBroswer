@@ -43,6 +43,15 @@ def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str
 
   force = (get_flag_value(argv, "--force", "0") or "0").strip() in ("1", "true", "yes", "on")
 
+  # Server-side encryption flags
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params = {}  # type: Dict[str, str]
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
+
   canceled = {"yes": False}
   def abort():
     canceled["yes"] = True
@@ -106,6 +115,7 @@ def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str
         create_args["ContentLanguage"] = head["ContentLanguage"]
       if head.get("Metadata"):
         create_args["Metadata"] = head["Metadata"]
+      create_args.update(sse_params)
 
       mpu = client.create_multipart_upload(**create_args)
       upload_id = mpu["UploadId"]
@@ -210,6 +220,7 @@ def cmd_change_storage_class(conn_id: str, bucket: str, key: str, argv: List[str
       "MetadataDirective": "COPY",
       "StorageClass": storage_class,
     }
+    copy_args.update(sse_params)
 
     ct = head.get("ContentType")
     if ct:

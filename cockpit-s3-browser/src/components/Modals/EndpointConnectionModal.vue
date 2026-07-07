@@ -114,16 +114,98 @@
 
                   <label class="flex items-start gap-3 rounded-md border border-default bg-default p-4">
                     <input type="checkbox" v-model="form.useTls"
-                      class="mt-1 h-4 w-4 rounded border-default bg-default text-default focus:ring-default/30" />
+                      class="mt-1 h-4 w-4 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500/30" />
                     <div class="min-w-0">
                       <p class="text-sm font-semibold text-default">
-                        Use secure transfer (SSL/TLS)
-                      </p>
+                        Use secure transfer (SSL/TLS)</p>
                       <p class="mt-1 text-xs text-default/70">
                         When enabled, all connections to this endpoint will use HTTPS.
                       </p>
                     </div>
                   </label>
+
+                  <label v-if="form.useTls" class="flex items-start gap-3 rounded-md border border-default bg-default p-4">
+                    <input type="checkbox" v-model="form.tlsVerify"
+                      class="mt-1 h-4 w-4 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500/30" />
+                    <div class="min-w-0">
+                      <p class="text-sm font-semibold text-default">
+                        Verify TLS certificate
+                      </p>
+                      <p class="mt-1 text-xs text-default/70">
+                        Disable this if your endpoint uses a self-signed certificate.
+                      </p>
+                    </div>
+                  </label>
+
+                  <div>
+                    <label class="text-sm font-semibold text-default" for="m-backend-type">Backend Type</label>
+                    <p class="mt-1 text-xs text-default/70">
+                      Identifies the S3 backend for encryption routing. "Auto" detects by probing the endpoint.
+                    </p>
+                    <select id="m-backend-type" v-model="form.backendType" :disabled="busy"
+                      class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
+                      <option value="auto">Auto-detect</option>
+                      <option value="rgw">Ceph RGW</option>
+                      <option value="rustfs">RustFS</option>
+                      <option value="minio">MinIO</option>
+                      <option value="generic">Generic S3</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Default Encryption -->
+                <div class="space-y-3 md:col-span-2">
+                  <p class="text-sm font-semibold text-default">Default Encryption</p>
+                  <p class="text-xs text-default/70">
+                    When set, all uploads through this connection will use server-side encryption by default.
+                  </p>
+
+                  <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label class="text-sm font-semibold text-default" for="m-sse">Algorithm</label>
+                      <select id="m-sse" v-model="form.defaultSse" :disabled="busy"
+                        class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
+                        <option value="none">None</option>
+                        <option value="AES256" :disabled="form.backendType === 'rustfs'">SSE-S3 (AES256){{ form.backendType === 'rustfs' ? ' (not supported)' : '' }}</option>
+                        <option value="aws:kms">SSE-KMS</option>
+                      </select>
+                      <p v-if="form.defaultSse === 'AES256' && form.backendType === 'rustfs'" class="text-xs text-yellow-600 mt-1">
+                        ⚠ RustFS does not support SSE-S3. Uploads will not be encrypted. Use SSE-KMS instead.
+                      </p>
+                    </div>
+
+                    <div v-if="form.defaultSse === 'aws:kms'">
+                      <label class="text-sm font-semibold text-default" for="m-kms-key">KMS Key / Policy</label>
+
+                      <!-- Control plane available: show policy dropdown -->
+                      <template v-if="cpStore.isAvailable && cpPolicies.length > 0">
+                        <select id="m-kms-key" v-model="form.defaultSseKmsKeyId" :disabled="busy"
+                          class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">
+                          <option value="">— Use bucket default —</option>
+                          <option v-for="p in cpPolicies" :key="p.id" :value="p.transit_key_name">
+                            {{ p.name }} ({{ providerName(p.provider_id) }} · {{ p.algorithm }})
+                          </option>
+                        </select>
+                        <p class="mt-1 text-xs text-default/70">
+                          Key policies from the Encryption Manager.
+                        </p>
+                      </template>
+
+                      <!-- Control plane unavailable: free-text fallback -->
+                      <template v-else>
+                        <input id="m-kms-key" v-model.trim="form.defaultSseKmsKeyId" type="text" autocomplete="off"
+                          placeholder="KMS key ID or alias"
+                          :class="inputClass(false)" />
+                        <p class="mt-1 text-xs text-default/70">
+                          {{ cpStore.isAvailable === false
+                            ? 'Encryption Manager not installed — enter key ID manually.'
+                            : cpLoading
+                              ? 'Loading key policies…'
+                              : 'No key policies configured. Enter key ID manually or configure policies in the Encryption Manager.' }}
+                        </p>
+                      </template>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -153,9 +235,10 @@
 
 
 <script setup lang="ts">
-import { reactive, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import type { ConnectionSummary, EndpointConfig } from "../../types";
 import { getConnection, upsertConnection } from "../../lib/endpointConnection";
+import { useControlPlaneStore } from "../../stores/controlPlane";
 
 type Mode = "create" | "edit";
 
@@ -171,6 +254,15 @@ const emit = defineEmits<{
   (e: "error", message: string): void;
 }>();
 
+const cpStore = useControlPlaneStore();
+const cpLoading = ref(false);
+const cpPolicies = computed(() => cpStore.policies);
+
+function providerName(providerId: string): string {
+  const p = cpStore.providers.find((prov) => prov.id === providerId);
+  return p ? p.name : "Unknown provider";
+}
+
 const busy = ref(false);
 const showSecret = ref(false);
 const endpointHost = ref("");
@@ -182,6 +274,10 @@ const form = reactive<EndpointConfig>({
   accessKeyId: "",
   secretAccessKey: "",
   useTls: false,
+  tlsVerify: true,
+  defaultSse: "none",
+  defaultSseKmsKeyId: "",
+  backendType: "auto",
 });
 
 const errors = reactive<Record<string, string>>({
@@ -221,6 +317,10 @@ function resetForm() {
   endpointHost.value = "";
   showSecret.value = false;
   form.useTls = false;
+  form.tlsVerify = true;
+  form.defaultSse = "none";
+  form.defaultSseKmsKeyId = "";
+  form.backendType = "auto";
 
   clearErrors();
 }
@@ -244,6 +344,10 @@ async function loadForEdit(id: string) {
     form.accessKeyId = res.value.accessKeyId;
     form.secretAccessKey = res.value.secretAccessKey;
     form.useTls = !!(res.value as any).useTls;
+    form.tlsVerify = (res.value as any).tlsVerify !== false;
+    form.defaultSse = (res.value as any).defaultSse || "none";
+    form.defaultSseKmsKeyId = (res.value as any).defaultSseKmsKeyId || "";
+    form.backendType = (res.value as any).backendType || "auto";
     endpointHost.value = normalizeHost(res.value.endpoint);
     showSecret.value = false;
     clearErrors();
@@ -256,6 +360,13 @@ watch(
   () => [props.open, props.mode, props.id] as const,
   async ([open, mode, id]) => {
     if (!open) return;
+
+    // Load control plane policies/providers when modal opens
+    if (cpStore.available === null || cpStore.policies.length === 0) {
+      cpLoading.value = true;
+      await cpStore.refresh();
+      cpLoading.value = false;
+    }
 
     if (mode === "create") {
       resetForm();
@@ -312,8 +423,11 @@ async function save() {
       region: (form.region || "").trim() || undefined,
       accessKeyId: (form.accessKeyId || "").trim(),
       useTls: form.useTls,
+      tlsVerify: form.tlsVerify,
       secretAccessKey: form.secretAccessKey,
-
+      defaultSse: form.defaultSse === "none" ? undefined : form.defaultSse,
+      defaultSseKmsKeyId: form.defaultSse === "aws:kms" && form.defaultSseKmsKeyId ? form.defaultSseKmsKeyId : undefined,
+      backendType: form.backendType || "auto",
     };
 
     const res = await upsertConnection(cfg, props.mode === "edit" ? props.id : undefined);
@@ -332,6 +446,7 @@ async function save() {
       region: cfg.region,
       updatedAt: now,
       useTls: cfg.useTls,
+      tlsVerify: cfg.tlsVerify,
       lastUsedAt: undefined,
     };
 

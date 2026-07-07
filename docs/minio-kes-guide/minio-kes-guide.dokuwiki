@@ -1,0 +1,137 @@
+====== MinIO KES Encryption Setup Guide ======
+
+This guide walks you through configuring MinIO Key Encryption Service (KES) with HashiCorp Vault using the Houston S3 Browser Cockpit plugin. The entire process is automated through the web interface.
+
+===== Video Walkthrough =====
+
+A narrated video walkthrough is available: [[minio-kes-guide.mp4|minio-kes-guide.mp4]]
+
+----
+
+===== Prerequisites =====
+
+  * MinIO server configured and accessible
+  * HashiCorp Vault server running with a KMS provider configured in the Control Plane
+  * Cockpit with the Houston S3 Browser plugin installed
+
+----
+
+===== 1. Connect to MinIO =====
+
+Open Cockpit and navigate to the **S3 Browser** plugin. On the Connections page, locate your MinIO endpoint and click **Connect**.
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:01-connections-list.png|Connections List}}
+
+----
+
+===== 2. View Buckets =====
+
+After connecting, the **Buckets** tab displays your storage buckets. Notice the **KES / MinIO Setup** tab in the navigation — this tab only appears for MinIO-backed connections.
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:02-buckets-view.png|Buckets View}}
+
+----
+
+===== 3. Check KES Status (Unconfigured) =====
+
+Click the **KES / MinIO Setup** tab. The Service Status panel shows:
+  * **MinIO**: Running
+  * **KES**: Stopped
+  * **SSE**: Not configured
+
+Below the status is the **Configure KES to Vault** section.
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:03-kes-unconfigured.png|KES Unconfigured}}
+
+----
+
+===== 4. Configure KES =====
+
+  - **Select KMS Provider** from the dropdown — this automatically provides the Vault address and token (no manual token entry required)
+  - **Select Key Policy** from the second dropdown (e.g., ''minio'')
+
+The Vault Token field remains visible but is optional when a provider is selected — the provider supplies credentials automatically via AppRole.
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:04-form-filled.png|Form Filled}}
+
+----
+
+===== 5. Run Setup =====
+
+Click **Setup KES + MinIO** to start the automated configuration. The wizard:
+  - Generates TLS certificates for KES
+  - Creates a MinIO identity in Vault
+  - Writes the KES configuration file
+  - Starts the KES service
+  - Configures MinIO environment variables
+  - Restarts MinIO
+
+All steps complete with green checkmarks.
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:05-setup-results.png|Setup Results}}
+
+----
+
+===== 6. Verify Configured Status =====
+
+After setup completes, the Service Status panel shows everything healthy:
+  * **MinIO**: Running
+  * **KES**: Running
+  * **SSE**: Configured (endpoint ''127.0.0.1:7373'', default key active)
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:06-configured-status.png|Configured Status}}
+
+----
+
+===== 7. Enable Bucket Encryption =====
+
+Switch to the **Buckets** tab. With KES configured, you can now enable server-side encryption on individual buckets.
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:07-buckets-after-setup.png|Buckets After Setup}}
+
+Click the three-dot menu (⋮) on a bucket row to open the context menu.
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:08-bucket-menu.png|Bucket Menu}}
+
+Select **Set Encryption** to open the encryption configuration modal:
+  * **Algorithm**: Choose ''aws:kms'' (SSE-KMS) for Vault-backed encryption
+  * **KMS Key Policy**: Select from available key policies
+  * **S3 Bucket Key**: Optionally enable to reduce KMS requests
+
+Click **Apply** to enable encryption on the bucket.
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:09-set-encryption-modal.png|Set Encryption Modal}}
+
+----
+
+===== 8. Verify Object Encryption =====
+
+Upload a file to the encrypted bucket. Click on the file to open the details panel. The **Encryption** section confirms:
+  * **Algorithm**: ''aws:kms''
+  * **KMS Key ID**: The Vault-managed key used for encryption
+
+{{:rnd:matt-encryption:houston-s3-browser:minio-kes:10-object-encryption-info.png|Object Encryption Info}}
+
+----
+
+===== Troubleshooting =====
+
+^ Issue ^ Resolution ^
+| KES shows "Not Installed" | Click the **Install KES** button in the Service Status panel |
+| Setup fails at "generateKesCerts" | Ensure SSH access from Cockpit host to MinIO server is working |
+| "Failed to get token for provider" | Verify the Vault server is reachable and the token/credentials are valid |
+| SSE-KMS fails on bucket | Ensure KES is running and MinIO was restarted after configuration |
+| Button remains disabled | Select both a KMS provider and a key policy |
+
+----
+
+===== Summary =====
+
+^ Step ^ Action ^
+| 1 | Connect to MinIO endpoint |
+| 2 | Navigate to KES / MinIO Setup tab |
+| 3 | Select KMS Provider and key policy |
+| 4 | Click Setup KES + MinIO |
+| 5 | Verify all services are running |
+| 6 | Enable SSE-KMS on buckets |
+| 7 | Upload files — automatically encrypted |

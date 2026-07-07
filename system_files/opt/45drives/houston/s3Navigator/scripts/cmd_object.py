@@ -216,6 +216,15 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
 
   content_type = (get_flag_value(argv, "--content-type", "application/octet-stream") or "application/octet-stream").strip()
 
+  # Server-side encryption flags
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params = {}  # type: Dict[str, str]
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
+
   multipart_threshold = 64 * 1024 * 1024  # 64 MiB
 
   def emit(obj: Dict[str, Any]) -> None:
@@ -262,6 +271,7 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
         Body=buf,
         ContentType=content_type or "application/octet-stream",
         ContentLength=total_size,
+        **sse_params
       )
 
       emit({"type": "result", "ok": True, "bucket": bucket, "key": key, "size": total_size})
@@ -274,6 +284,7 @@ def cmd_upload_stdin(conn_id: str, bucket: str, key: str, argv: List[str]) -> No
       Bucket=bucket,
       Key=key,
       ContentType=content_type or "application/octet-stream",
+      **sse_params
     )
     upload_id = mpu["UploadId"]
     upload_id_holder["id"] = upload_id
@@ -339,6 +350,15 @@ def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str
   cfg = record.get("config") or {}
   client = make_client(cfg)
 
+  # Server-side encryption flags for copy destination
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params = {}  # type: Dict[str, str]
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
+
   if not src_key or not dst_key:
     raise ValueError("Missing src or dst key")
   if src_bucket == dst_bucket and src_key == dst_key:
@@ -375,7 +395,7 @@ def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str
   head = client.head_object(Bucket=src_bucket, Key=src_key)
   size = int(head.get("ContentLength") or 0)
 
-  MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
+  MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100 MiB – avoids CopyObject internal errors on some backends
 
   # Create job file immediately
   write_job(job_id, {
@@ -449,12 +469,34 @@ def cmd_copy_object(conn_id: str, src_bucket: str, src_key: str, dst_bucket: str
       copied["bytes"] = size
       write_progress(True)
     else:
-      client.copy_object(
-        Bucket=dst_bucket,
-        Key=dst_key,
-        CopySource={"Bucket": src_bucket, "Key": src_key},
-        MetadataDirective="COPY",
-      )
+      try:
+        client.copy_object(
+          Bucket=dst_bucket,
+          Key=dst_key,
+          CopySource={"Bucket": src_bucket, "Key": src_key},
+          MetadataDirective="COPY",
+          **sse_params
+        )
+      except client.exceptions.ClientError as ce:
+        error_code = ce.response.get("Error", {}).get("Code", "")
+        if error_code == "NotImplemented":
+          # RGW does not support server-side CopyObject with SSE-KMS;
+          # fall back to download + re-upload.
+          get_resp = client.get_object(Bucket=src_bucket, Key=src_key)
+          body_bytes = get_resp["Body"].read()
+          put_params = {
+            "Bucket": dst_bucket,
+            "Key": dst_key,
+            "Body": body_bytes,
+          }  # type: Dict[str, Any]
+          # Preserve content type if available
+          if head.get("ContentType"):
+            put_params["ContentType"] = head["ContentType"]
+          # Apply destination SSE params
+          put_params.update(sse_params)
+          client.put_object(**put_params)
+        else:
+          raise
       copied["bytes"] = size
       write_progress(True)
 
@@ -552,7 +594,7 @@ def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, arg
         sys.stdout.write(json.dumps({"ok": False, "error": "Source object not found"}) + "\n")
         return
 
-    MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
+    MULTIPART_THRESHOLD = 100 * 1024 * 1024  # 100 MiB – avoids CopyObject internal errors on some backends
 
     try:
         if size >= MULTIPART_THRESHOLD:
@@ -572,12 +614,26 @@ def cmd_rename_object(conn_id: str, bucket: str, src_key: str, dst_key: str, arg
                 })
 
             # Copy the object
-            client.copy_object(
-                Bucket=bucket,
-                Key=dst_key,
-                CopySource={"Bucket": bucket, "Key": src_key},
-                MetadataDirective="COPY",
-            )
+            try:
+                client.copy_object(
+                    Bucket=bucket,
+                    Key=dst_key,
+                    CopySource={"Bucket": bucket, "Key": src_key},
+                    MetadataDirective="COPY",
+                )
+            except client.exceptions.ClientError as ce:
+                error_code = ce.response.get("Error", {}).get("Code", "")
+                if error_code == "NotImplemented":
+                    # RGW does not support server-side CopyObject with SSE-KMS;
+                    # fall back to download + re-upload.
+                    get_resp = client.get_object(Bucket=bucket, Key=src_key)
+                    body_bytes = get_resp["Body"].read()
+                    put_params = {"Bucket": bucket, "Key": dst_key, "Body": body_bytes}
+                    if head.get("ContentType"):
+                        put_params["ContentType"] = head["ContentType"]
+                    client.put_object(**put_params)
+                else:
+                    raise
 
             if stream:
                 emit({"type": "progress", "ok": True, "partsDone": 1, "totalParts": 1, "bytesCopied": size, "size": size})
@@ -640,5 +696,114 @@ def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
 
     # user metadata
     "metadata": {str(k): str(v) for (k, v) in user_meta.items()},
+
+    # encryption metadata — report only what HEAD says, not bucket defaults
+    # RGW/MinIO/etc echo the actual object encryption in HEAD responses.
+    # If HEAD returns None, the object is truly not encrypted (uploaded before
+    # bucket encryption was enabled, or uploaded without encryption).
+    "serverSideEncryption": head.get("ServerSideEncryption") or None,
+    "sseKmsKeyId": head.get("SSEKMSKeyId") or None,
+    "bucketKeyEnabled": head.get("BucketKeyEnabled") or False,
   }) + "\n")
+
+
+def cmd_get_bucket_encryption(conn_id, bucket):
+  # type: (str, str) -> None
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  try:
+    resp = client.get_bucket_encryption(Bucket=bucket)
+    rules = resp.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+    if rules:
+      rule = rules[0].get("ApplyServerSideEncryptionByDefault", {})
+      algo = rule.get("SSEAlgorithm")
+      kms_key = rule.get("KMSMasterKeyID")
+      bucket_key = rules[0].get("BucketKeyEnabled", False)
+      sys.stdout.write(json.dumps({
+        "ok": True,
+        "encryption": {
+          "algorithm": algo,
+          "kmsMasterKeyId": kms_key,
+          "bucketKeyEnabled": bool(bucket_key),
+        }
+      }) + "\n")
+    else:
+      sys.stdout.write(json.dumps({
+        "ok": True,
+        "encryption": None,
+      }) + "\n")
+  except client.exceptions.ClientError as e:
+    code = e.response.get("Error", {}).get("Code", "")
+    if code == "ServerSideEncryptionConfigurationNotFoundError":
+      sys.stdout.write(json.dumps({
+        "ok": True,
+        "encryption": None,
+      }) + "\n")
+    else:
+      raise
+
+
+def cmd_put_bucket_encryption(conn_id, bucket, argv):
+  # type: (str, str, List[str]) -> None
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  algo = get_flag_value(argv, "--algorithm", "AES256")
+  kms_key = get_flag_value(argv, "--kms-key-id", None)
+  bucket_key_raw = get_flag_value(argv, "--bucket-key-enabled", "false")
+  bucket_key = bucket_key_raw.lower() in ("true", "1", "yes")
+
+  rule = {
+    "ApplyServerSideEncryptionByDefault": {
+      "SSEAlgorithm": algo,
+    },
+  }
+  if kms_key:
+    rule["ApplyServerSideEncryptionByDefault"]["KMSMasterKeyID"] = kms_key
+
+  if bucket_key:
+    rule["BucketKeyEnabled"] = True
+
+  try:
+    client.put_bucket_encryption(
+      Bucket=bucket,
+      ServerSideEncryptionConfiguration={
+        "Rules": [rule],
+      },
+    )
+  except (client.exceptions.ClientError, Exception) as e:
+    # Older boto3 / S3 backends (e.g. Ceph RGW) may not support BucketKeyEnabled
+    msg = str(e)
+    if "BucketKeyEnabled" in msg and "BucketKeyEnabled" in rule:
+      del rule["BucketKeyEnabled"]
+      client.put_bucket_encryption(
+        Bucket=bucket,
+        ServerSideEncryptionConfiguration={
+          "Rules": [rule],
+        },
+      )
+    else:
+      raise
+
+  sys.stdout.write(json.dumps({"ok": True}) + "\n")
+
+
+def cmd_delete_bucket_encryption(conn_id, bucket):
+  # type: (str, str) -> None
+  record = read_json(cfg_path(conn_id))
+  cfg = record.get("config") or {}
+  client = make_client(cfg)
+
+  try:
+    client.delete_bucket_encryption(Bucket=bucket)
+  except client.exceptions.ClientError as e:
+    code = e.response.get("Error", {}).get("Code", "")
+    if code == "ServerSideEncryptionConfigurationNotFoundError":
+      pass  # already removed
+    else:
+      raise
+  sys.stdout.write(json.dumps({"ok": True}) + "\n")
 

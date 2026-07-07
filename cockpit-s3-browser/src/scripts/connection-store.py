@@ -74,6 +74,7 @@ def summarize(conn_id: str, cfg: dict, updated_at: str, last_used_at: Optional[s
     "endpoint": cfg.get("endpoint") or "",
     "region": cfg.get("region"),
     "useTls": bool(cfg.get("useTls")),
+    "tlsVerify": cfg.get("tlsVerify", True) is not False,
     "updatedAt": updated_at,
     "lastUsedAt": last_used_at,
   }
@@ -130,6 +131,10 @@ def cmd_upsert(payload_arg: str) -> None:
       "accessKeyId": cfg.get("accessKeyId"),
       "secretAccessKey": cfg.get("secretAccessKey"),
       "useTls": bool(cfg.get("useTls")),
+      "tlsVerify": cfg.get("tlsVerify", True) is not False,
+      "defaultSse": cfg.get("defaultSse") or None,
+      "defaultSseKmsKeyId": cfg.get("defaultSseKmsKeyId") or None,
+      "backendType": cfg.get("backendType") or None,
     },
   }
 

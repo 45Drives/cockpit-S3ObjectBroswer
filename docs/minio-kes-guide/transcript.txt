@@ -1,0 +1,32 @@
+MinIO KES Encryption Setup - Video Transcript
+================================================
+
+[Section 1 - Introduction]
+Welcome to the Houston S3 Browser encryption setup guide. In this walkthrough, we'll configure MinIO KES with HashiCorp Vault to enable server-side encryption for your S3-compatible storage. The entire process is automated through the Cockpit web interface.
+
+[Section 2 - Connections]
+On the Connections page, find the MinIO endpoint and click the Connect button. This establishes a session with your MinIO server and unlocks the encryption management features.
+
+[Section 3 - Buckets View]
+After connecting, the Buckets tab shows your storage buckets. Notice the KES / MinIO Setup tab in the navigation bar — this tab only appears for MinIO-backed connections and is where we'll configure encryption.
+
+[Section 4 - KES Unconfigured]
+Click the KES / MinIO Setup tab. The Service Status panel shows MinIO is running, but KES is stopped and Server-Side Encryption is not yet configured. Below is the Configure KES to Vault section.
+
+[Section 5 - Configure Form]
+Select a KMS Provider from the dropdown. When a provider is selected, the Vault address and token are supplied automatically — no manual token entry required. Then choose your encryption key policy from the second dropdown.
+
+[Section 6 - Setup]
+Click Setup KES plus MinIO to run the automated configuration. The wizard generates TLS certificates, creates a MinIO identity in Vault, writes the KES configuration, starts the KES service, configures MinIO environment variables, and restarts MinIO. All steps complete with green checkmarks.
+
+[Section 7 - Configured Status]
+After setup completes, the Service Status panel refreshes to show everything healthy. MinIO and KES are both running. SSE is configured with the KES endpoint at 127.0.0.1 port 7373, and the default encryption key is active.
+
+[Section 8 - Bucket Encryption]
+Switch to the Buckets tab and open the context menu on a bucket. Select Set Encryption to open the encryption modal. Choose SSE-KMS as the algorithm to use your Vault-backed keys, select a key policy, and click Apply.
+
+[Section 9 - Upload and Verify Encryption]
+Navigate into the bucket and upload a file. After uploading, click on the file to open the details panel. The Encryption section now shows the SSE-KMS algorithm and the KMS Key ID, confirming the file was encrypted with your Vault-managed key.
+
+[Section 10 - Outro]
+And that completes the MinIO KES encryption setup. Your S3 buckets are now protected with server-side encryption backed by HashiCorp Vault. All key management, certificate generation, and service configuration was handled automatically through the Cockpit interface. For more details, refer to the written guide in the docs folder.

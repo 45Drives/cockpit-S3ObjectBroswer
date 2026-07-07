@@ -1,3 +1,65 @@
+cockpit-s3-browser (1.1.1-8jammy) jammy; urgency=medium
+
+  * test
+
+ -- Rachit Hans <rhans@45drives.com>  Thu, 14 May 2026 10:34:54 -0300
+
+cockpit-s3-browser (1.1.1-7jammy) jammy; urgency=medium
+
+  * fixes
+  * building test package fro storage encryption
+
+ -- Rachit Hans <rhans@45drives.com>  Thu, 14 May 2026 08:44:01 -0300
+
+cockpit-s3-browser (1.1.1-5jammy) jammy; urgency=medium
+
+  * build
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 12:03:39 -0300
+
+cockpit-s3-browser (1.1.1-4jammy) jammy; urgency=medium
+
+  * build
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 10:58:32 -0300
+
+cockpit-s3-browser (1.1.1-3jammy) jammy; urgency=medium
+
+  * encryption key fixes
+  * build
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 08:58:48 -0300
+
+cockpit-s3-browser (1.1.1-1jammy) jammy; urgency=medium
+
+  * encryption key fixes
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 08:02:16 -0300
+
+cockpit-s3-browser (encryption key fixes-5jammy) jammy; urgency=medium
+
+  * encryption key fixes
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 08:01:29 -0300
+
+cockpit-s3-browser (1.1.0-8jammy) jammy; urgency=medium
+
+  * build fix
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 27 Apr 2026 10:54:37 -0300
+
+cockpit-s3-browser (1.1.0-7jammy) jammy; urgency=medium
+
+  * test
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 27 Apr 2026 09:22:33 -0300
+
+cockpit-s3-browser (1.1.0-6jammy) jammy; urgency=medium
+
+  * test
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 27 Apr 2026 09:21:53 -0300
+
 cockpit-s3-browser (1.1.0-5jammy) jammy; urgency=medium
 
   * building package

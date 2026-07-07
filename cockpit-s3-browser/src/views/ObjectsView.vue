@@ -5,8 +5,25 @@
                 <!-- header -->
                 <div class="border-b border-default px-4 py-3 flex items-center justify-between gap-3">
                     <div class="min-w-0">
-                        <div class="text-base font-semibold text-default truncate">{{ bucket || "—" }}</div>
-                        <div class="text-sm text-default truncate">Connection: {{ connectionName || "—" }}</div>
+                        <div class="flex items-center gap-2">
+                            <div class="text-base font-semibold text-default truncate">{{ bucket || "—" }}</div>
+                            <span class="text-default opacity-40">·</span>
+                            <template v-if="bucketEncConfig?.encrypted">
+                                <span class="inline-flex items-center gap-1.5 text-xs font-medium rounded-md border border-green-500/30 text-green-700 dark:text-green-400 bg-green-500/10 px-2.5 py-1 shrink-0 cursor-default"
+                                    :title="`Algorithm: ${bucketEncConfig.algorithm}${bucketEncConfig.kmsKeyId ? '\nKMS Key: ' + bucketEncConfig.kmsKeyId : ''}${bucketEncConfig.bucketKeyEnabled ? '\nBucket Key: Enabled' : ''}`">
+                                    <ShieldCheckIcon class="h-3.5 w-3.5" />
+                                    <span>{{ bucketEncConfig.algorithm === 'aws:kms' ? 'SSE-KMS' : 'SSE-S3' }}</span>
+                                    <span v-if="bucketEncConfig.kmsKeyId" class="opacity-60 font-normal">· {{ bucketEncConfig.kmsKeyId }}</span>
+                                </span>
+                            </template>
+                            <template v-else-if="bucketEncConfig !== null">
+                                <span class="inline-flex items-center gap-1.5 text-xs font-medium rounded-md border border-default text-default opacity-50 px-2.5 py-1 shrink-0 cursor-default">
+                                    <LockOpenIcon class="h-3.5 w-3.5" />
+                                    <span>No Encryption</span>
+                                </span>
+                            </template>
+                        </div>
+                        <div class="text-sm text-default opacity-70 truncate mt-0.5">Connection: {{ connectionName || "—" }}</div>
                     </div>
 
                     <div class="flex items-center gap-2">
@@ -179,6 +196,7 @@
                                                     <span v-if="r.type === 'file'">{{ r.storageClass || "—" }}</span>
                                                     <span v-else>—</span>
                                                 </div>
+
                                             </div>
                                         </RecycleScroller>
                                     </div>
@@ -288,15 +306,19 @@ import {
     , copyPrefix, movePrefix, copyObject, getObjectTags, putObjectTags, statObject, changeStorageClass, cancelDownloadJob, getObjectVersions,
     downloadObjectVersion, deleteObjectVersion, rollbackObjectVersion, createFolder
 } from "../lib/s3Objects";
+import { getBucketEncryption } from "../lib/s3Buckets";
+import { getConnection } from "../lib/endpointConnection";
+import type { BucketEncryptionConfig } from "../lib/controlplane-types";
+import type { EndpointConfig } from "../types";
 import { useClipboardStore } from "../stores/clipboard";
-import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon } from "@heroicons/vue/20/solid";
+import { ArrowRightStartOnRectangleIcon, ArrowUpIcon, ArrowPathIcon, MagnifyingGlassIcon, ArrowUpOnSquareIcon, ArrowUturnLeftIcon, FolderIcon, DocumentIcon, LockClosedIcon, LockOpenIcon, ShieldCheckIcon } from "@heroicons/vue/20/solid";
 import { RecycleScroller } from "vue-virtual-scroller";
 import "vue-virtual-scroller/dist/vue-virtual-scroller.css";
 import ObjectContextMenu from "../components/ObjectContextMenu.vue";
 import ConfirmDeleteModal from "../components/Modals/ConfirmDeleteModal.vue";
 import {
     formatBytes, formatDate, normalizePrefix, guessFileTypeFromKey, fileExt,
-    isSystemFile, isTextFile, isApplicationFile, nameFromKey, nameFromPrefix,
+    isSystemFile, isTextFile, isApplicationFile, nameFromKey, nameFromPrefix, classifyS3Error,
 } from "../lib/helpers";
 import { DeleteKind, FileRow, FolderRow, MenuAction, Row, UiTask, VersionRow, ViewMode } from "../types";
 import { useDownloads } from "../operations/useDownloads";
@@ -387,7 +409,7 @@ const pendingDeleteName = computed(() => {
 });
 
 const colsStyle =
-    "display:grid; grid-template-columns: 1.6fr 0.6fr 0.6fr 0.9fr 0.8fr 0.7fr; width:100%;";
+    "display:grid; grid-template-columns: 1.8fr 0.7fr 0.7fr 1fr 0.8fr; width:100%;";
 
 const viewMode = ref<ViewMode>("table");
 const route = useRoute();
@@ -462,11 +484,69 @@ const downloads = useDownloads({
 });
 
 const downloadBusy = downloads.downloadBusy;
+
+// Bucket-level encryption config — used to auto-pass SSE on uploads/copies
+const bucketEncConfig = ref<BucketEncryptionConfig | null>(null);
+// Connection-level SSE defaults — fallback when bucket has no encryption
+const connConfig = ref<EndpointConfig | null>(null);
+const bucketSse = computed(() => {
+    // Prefer bucket-level encryption, fall back to connection defaults
+    const enc = bucketEncConfig.value;
+    const conn = connConfig.value;
+    if (enc && enc.encrypted) {
+        const out: { sse?: string; sseKmsKeyId?: string } = {};
+        if (enc.algorithm) out.sse = enc.algorithm;
+        if (enc.kmsKeyId) out.sseKmsKeyId = enc.kmsKeyId;
+        // If aws:kms but no key ID from bucket, use connection-level default
+        if (out.sse === "aws:kms" && !out.sseKmsKeyId && conn?.defaultSseKmsKeyId) {
+            out.sseKmsKeyId = conn.defaultSseKmsKeyId;
+        }
+        return out;
+    }
+    // Fall back to connection-level default encryption
+    if (conn?.defaultSse && conn.defaultSse !== "none") {
+        const out: { sse?: string; sseKmsKeyId?: string } = { sse: conn.defaultSse };
+        if (conn.defaultSse === "aws:kms" && conn.defaultSseKmsKeyId) {
+            out.sseKmsKeyId = conn.defaultSseKmsKeyId;
+        }
+        return out;
+    }
+    return {};
+});
+
+async function loadBucketEncryption() {
+    if (!connectionId.value || !bucket.value) return;
+    const res = await getBucketEncryption(connectionId.value, bucket.value);
+    if (res.isOk()) bucketEncConfig.value = res.value;
+}
+
+async function loadConnectionConfig() {
+    if (!connectionId.value) return;
+    const res = await getConnection(connectionId.value);
+    if (res.isOk()) connConfig.value = res.value;
+}
+
+// Wrapped lib functions that auto-inject SSE params
+const sseUploadObjectFromStdinStreamed: typeof uploadObjectFromStdinStreamed = (params) =>
+    uploadObjectFromStdinStreamed({ ...params, ...bucketSse.value });
+
+const sseCopyObject: typeof copyObject = (params) =>
+    copyObject({ ...params, ...bucketSse.value });
+
+const sseCopyPrefix: typeof copyPrefix = (params) =>
+    copyPrefix({ ...params, ...bucketSse.value });
+
+const sseMovePrefix: typeof movePrefix = (params) =>
+    movePrefix({ ...params, ...bucketSse.value });
+
+const sseRenameObjectStreamed: typeof renameObjectStreamed = (params) =>
+    renameObjectStreamed({ ...params, ...bucketSse.value });
+
 const uploads = useUploads({
     connectionId,
     bucket,
     prefix,
-    uploadObjectFromStdinStreamed,
+    uploadObjectFromStdinStreamed: sseUploadObjectFromStdinStreamed,
     refresh,
     onUploaded: (key) => {
         upsertFileRowByKey(key);
@@ -484,10 +564,10 @@ const transfers = useTransfers({
     bucket,
     prefix,
     clip,
-    copyObject,
-    copyPrefix,
-    movePrefix,
-    renameObjectStreamed,
+    copyObject: sseCopyObject,
+    copyPrefix: sseCopyPrefix,
+    movePrefix: sseMovePrefix,
+    renameObjectStreamed: sseRenameObjectStreamed,
     setBusy: (b) => (busy.value = b),
 
     onCreated: (it) => {
@@ -509,7 +589,7 @@ const pasteBusy = transfers.pasteBusy;
 const renamer = useRename({
     connectionId,
     bucket,
-    renameObjectStreamed,
+    renameObjectStreamed: sseRenameObjectStreamed,
     setBusy: (busy) => { /* handle busy state */ },
     onRenamed: async (srcKey, dstKey) => {
         // Trigger a refresh of the object list after rename
@@ -576,10 +656,11 @@ async function applyStorageClass(next: string) {
             storageClass: next.trim(),
             concurrency: 6,
             force: true,
+            ...bucketSse.value,
         });
 
         if (res.isErr()) {
-            error.value = res.error.message;
+            error.value = classifyS3Error(res.error.message);
             pushNotification(
                 new Notification(
                     "Storage classe Failed",
@@ -747,7 +828,7 @@ async function fetchPage(reset: boolean) {
 
         if (res.isErr()) {
             if (reset) resetLists();
-            error.value = res.error.message;
+            error.value = classifyS3Error(res.error.message);
             pushNotification(
                 new Notification(
                     "Error",
@@ -1218,7 +1299,8 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
 onMounted(() => {
     document.addEventListener("mousedown", onDocMouseDown);
     window.addEventListener("beforeunload", onBeforeUnload);
-
+    loadBucketEncryption();
+    loadConnectionConfig();
 });
 
 onBeforeUnmount(() => {
@@ -1395,7 +1477,7 @@ async function loadVersionsForKey(key: string, name: string) {
         });
 
         if (res.isErr()) {
-            versionsErr.value = res.error.message;
+            versionsErr.value = classifyS3Error(res.error.message);
             return;
         }
 
@@ -1537,10 +1619,11 @@ async function submitNewFolder(name: string) {
             bucket: bucket.value,
             prefix: prefix.value || "",
             name,
+            ...bucketSse.value,
         });
 
         if (res.isErr()) {
-            pushNotification(new Notification("Create folder failed", res.error.message, "error", 5000));
+            pushNotification(new Notification("Create folder failed", classifyS3Error(res.error.message), "error", 5000));
             return;
         }
 

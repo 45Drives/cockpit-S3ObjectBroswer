@@ -1,9 +1,16 @@
 from datetime import datetime, timedelta, timezone
 import json
+import re
 import sys
 from typing import Any, Dict, List
 from utils import cfg_path, get_flag_value, make_client, read_json
 from botocore.exceptions import ClientError # type: ignore
+
+_ISO_RE = re.compile(
+    r"^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})"
+    r"(\.\d+)?"
+    r"(Z|[+-]\d{2}:\d{2})?$"
+)
 
 
 def parse_iso8601_to_datetime(value: str) -> datetime:
