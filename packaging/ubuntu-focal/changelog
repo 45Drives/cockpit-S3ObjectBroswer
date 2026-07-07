@@ -1,3 +1,10 @@
+cockpit-s3-browser (1.2.8-1focal) focal; urgency=medium
+
+  * Packaging cleanup and removal of debian-trixie target
+  * Simplified RPM spec files for rocky-el8 and rocky-el9
+
+ -- Rachit Hans <rhans@45drives.com>  Tue, 07 Jul 2026 13:22:09 -0300
+
 cockpit-s3-browser (1.2.7-1focal) focal; urgency=medium
 
   * Apply SSE encryption params (--sse, --sse-kms-key-id) to prefix copy/move operations
