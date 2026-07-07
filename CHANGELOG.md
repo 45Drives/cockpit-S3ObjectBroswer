@@ -1,5 +1,7 @@
-## s3-browser 1.2.6-1
+## s3-browser 1.2.7-1
 
-* fix: apply SSE encryption params to prefix copy/move operations
-* fix: resolve pull request findings
-* chore: add tsconfig.tsbuildinfo to .gitignore
+* Apply SSE encryption params (--sse, --sse-kms-key-id) to prefix copy/move operations
+* Fix NotImplemented fallback (RGW SSE-KMS) to preserve encryption on re-upload
+* Support SSE params in multipart copy for large objects
+* Remove unused _bucket_default_sse helper function
+* Add debian architecture to manifest.json
