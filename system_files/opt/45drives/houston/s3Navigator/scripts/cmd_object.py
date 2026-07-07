@@ -662,26 +662,6 @@ def cmd_delete_object(conn_id: str, bucket: str, key: str) -> None:
   sys.stdout.write(json.dumps({"ok": True}) + "\n")
 
 
-def _bucket_default_sse(client: Any, bucket: str, field: str) -> Any:
-  """Return a field from the bucket's default SSE config, or None on any error."""
-  try:
-    resp = client.get_bucket_encryption(Bucket=bucket)
-    rules = resp.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
-    if not rules:
-      return None
-    rule = rules[0]
-    defaults = rule.get("ApplyServerSideEncryptionByDefault", {})
-    if field == "algorithm":
-      return defaults.get("SSEAlgorithm") or None
-    if field == "kmsKeyId":
-      return defaults.get("KMSMasterKeyID") or None
-    if field == "bucketKeyEnabled":
-      return bool(rule.get("BucketKeyEnabled", False))
-    return None
-  except Exception:
-    return None
-
-
 def cmd_stat_object(conn_id: str, bucket: str, key: str) -> None:
   record = read_json(cfg_path(conn_id))
   cfg = record.get("config") or {}

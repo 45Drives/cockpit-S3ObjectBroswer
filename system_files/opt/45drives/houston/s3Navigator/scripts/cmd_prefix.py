@@ -73,6 +73,15 @@ def cmd_transfer_prefix(
   concurrency = _parse_concurrency(argv)
   MULTIPART_THRESHOLD = 5 * 1024 * 1024 * 1024  # 5 GiB
 
+  # Server-side encryption flags
+  sse_algo = (get_flag_value(argv, "--sse", None) or "").strip()
+  sse_kms_key = (get_flag_value(argv, "--sse-kms-key-id", None) or "").strip()
+  sse_params: Dict[str, str] = {}
+  if sse_algo:
+    sse_params["ServerSideEncryption"] = sse_algo
+  if sse_kms_key:
+    sse_params["SSEKMSKeyId"] = sse_kms_key
+
   canceled = {"yes": False}
   def abort():
     canceled["yes"] = True
@@ -255,18 +264,22 @@ def cmd_transfer_prefix(
         dst_key,
         concurrency,
         emit=emit,
+        sse_params=sse_params,
       )
 
       with lock:
         partial.pop(src_key, None)
     else:
       try:
-        client.copy_object(
-          Bucket=dst_bucket,
-          Key=dst_key,
-          CopySource={"Bucket": src_bucket, "Key": src_key},
-          MetadataDirective="COPY",
-        )
+        copy_args = {
+          "Bucket": dst_bucket,
+          "Key": dst_key,
+          "CopySource": {"Bucket": src_bucket, "Key": src_key},
+          "MetadataDirective": "COPY",
+        }
+        if sse_params:
+          copy_args.update(sse_params)
+        client.copy_object(**copy_args)
       except client.exceptions.ClientError as ce:
         error_code = ce.response.get("Error", {}).get("Code", "")
         if error_code == "NotImplemented":
@@ -283,6 +296,8 @@ def cmd_transfer_prefix(
             pass
           if ct:
             put_params["ContentType"] = ct
+          if sse_params:
+            put_params.update(sse_params)
           client.put_object(**put_params)
         else:
           raise
