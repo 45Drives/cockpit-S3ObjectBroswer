@@ -140,7 +140,7 @@
                   <div>
                     <label class="text-sm font-semibold text-default" for="m-backend-type">Backend Type</label>
                     <p class="mt-1 text-xs text-default/70">
-                      Identifies the S3 backend for encryption routing. "Auto" detects from the connection name.
+                      Identifies the S3 backend for encryption routing. "Auto" detects by probing the endpoint.
                     </p>
                     <select id="m-backend-type" v-model="form.backendType" :disabled="busy"
                       class="block w-full rounded-md border border-default bg-default px-3 py-2 text-sm text-default shadow-sm focus:outline-none focus:ring-2 focus:ring-default">

@@ -28,3 +28,5 @@ node_modules/
 
 # Generated files
 src/version.js
+
+cockpit-s3-browser/tsconfig.tsbuildinfo

@@ -67,7 +67,7 @@ def make_client(cfg: Dict[str, Any]):
     use_tls = bool(cfg.get("useTls"))
     tls_verify = cfg.get("tlsVerify", not use_tls)
     if tls_verify is None:
-        tls_verify = not use_tls
+        tls_verify = False
 
     sess = botocore.session.get_session()
     return sess.create_client(
@@ -118,6 +118,7 @@ def multipart_copy_parallel(
   dst_key: str,
   concurrency: int,
   emit: Optional[Any] = None,
+  sse_params: Optional[Dict[str, str]] = None,
 ) -> None:
   head = client.head_object(Bucket=src_bucket, Key=src_key)
   size = int(head.get("ContentLength") or 0)
@@ -141,6 +142,8 @@ def multipart_copy_parallel(
     create_args["ContentLanguage"] = head["ContentLanguage"]
   if head.get("Metadata"):
     create_args["Metadata"] = head["Metadata"]
+  if sse_params:
+    create_args.update(sse_params)
 
   mpu = client.create_multipart_upload(**create_args)
   upload_id = mpu["UploadId"]
