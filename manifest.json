@@ -2,7 +2,7 @@
     "schema_version": "45D_AP_V2.0",
     "name": "cockpit-s3-browser",
     "title": "s3-browser",
-    "stable": false,
+    "stable": true,
     "version": "1.2.7",
     "build_number": "1",
     "author": "Rachit Hans <rhans@45drives.com>",
