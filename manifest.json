@@ -3,7 +3,7 @@
     "name": "cockpit-s3-browser",
     "title": "s3-browser",
     "stable": true,
-    "version": "1.2.8",
+    "version": "1.2.9",
     "build_number": "1",
     "author": "Rachit Hans <rhans@45drives.com>",
     "git_url": "https://github.com/45Drives/cockpit-s3-browser",
@@ -26,6 +26,16 @@
         ],
         "rocky_common": [
             "cockpit",
+            "python3",
+            "python3-pip",
+            "python3-botocore"
+        ],
+        "debian_common": [
+            "cockpit-ws",
+            "cockpit-bridge",
+            "cockpit-system",
+            "cockpit-storaged",
+            "cockpit-packagekit",
             "python3",
             "python3-pip",
             "python3-botocore"
@@ -64,7 +74,7 @@
     ],
     "changelog": {
         "urgency": "medium",
-        "version": "1.2.8",
+        "version": "1.2.9",
         "build_number": "1",
         "date": null,
         "packager": "Rachit Hans <rhans@45drives.com>",

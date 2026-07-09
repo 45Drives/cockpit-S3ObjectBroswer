@@ -1,4 +1,3 @@
-## s3-browser 1.2.8-1
+## s3-browser 1.2.9-1
 
-* Packaging cleanup and removal of debian-trixie target
-* Simplified RPM spec files for rocky-el8 and rocky-el9
+* fix: use explicit cockpit deps for debian to avoid network-manager
