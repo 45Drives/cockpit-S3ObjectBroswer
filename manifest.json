@@ -3,8 +3,8 @@
     "name": "cockpit-s3-browser",
     "title": "s3-browser",
     "stable": true,
-    "version": "1.1.1",
-    "build_number": "8",
+    "version": "1.2.10",
+    "build_number": "1",
     "author": "Rachit Hans <rhans@45drives.com>",
     "git_url": "https://github.com/45Drives/cockpit-s3-browser",
     "license": "GPL-3.0+",
@@ -26,6 +26,16 @@
         ],
         "rocky_common": [
             "cockpit",
+            "python3",
+            "python3-pip",
+            "python3-botocore"
+        ],
+        "debian_common": [
+            "cockpit-ws",
+            "cockpit-bridge",
+            "cockpit-system",
+            "cockpit-storaged",
+            "cockpit-packagekit",
             "python3",
             "python3-pip",
             "python3-botocore"
@@ -51,6 +61,11 @@
             "group": "rocky",
             "os_name": "rocky-el9",
             "image": "ci.cr.45d.io/ci/simple/rocky-el9:1"
+        },
+        {
+            "group": "debian",
+            "os_name": "debian-trixie",
+            "image": "ci.cr.45d.io/ci/simple/debian-trixie:1"
         }
     ],
     "repos": [
@@ -59,8 +74,8 @@
     ],
     "changelog": {
         "urgency": "medium",
-        "version": "1.1.1",
-        "build_number": "8",
+        "version": "1.2.10",
+        "build_number": "1",
         "date": null,
         "packager": "Rachit Hans <rhans@45drives.com>",
         "changes": []

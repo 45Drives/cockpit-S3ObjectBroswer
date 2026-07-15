@@ -1,64 +1,100 @@
-cockpit-s3-browser (1.1.1-8jammy) jammy; urgency=medium
+cockpit-s3-browser (1.2.10-1jammy) jammy; urgency=medium
 
-  * test
+  * fix: change debian source format from 3.0 (native) to 1.0 for build compatibility
 
- -- Rachit Hans <rhans@45drives.com>  Thu, 14 May 2026 10:34:54 -0300
+ -- Rachit Hans <rhans@45drives.com>  Tue, 14 Jul 2026 20:31:17 -0300
 
-cockpit-s3-browser (1.1.1-7jammy) jammy; urgency=medium
+cockpit-s3-browser (1.2.9-1jammy) jammy; urgency=medium
 
-  * fixes
-  * building test package fro storage encryption
+  * fix: use explicit cockpit deps for debian to avoid network-manager
 
- -- Rachit Hans <rhans@45drives.com>  Thu, 14 May 2026 08:44:01 -0300
+ -- Rachit Hans <rhans@45drives.com>  Wed, 08 Jul 2026 19:21:59 -0300
 
-cockpit-s3-browser (1.1.1-5jammy) jammy; urgency=medium
+cockpit-s3-browser (1.2.8-1jammy) jammy; urgency=medium
 
-  * build
+  * Packaging cleanup and removal of debian-trixie target
+  * Simplified RPM spec files for rocky-el8 and rocky-el9
 
- -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 12:03:39 -0300
+ -- Rachit Hans <rhans@45drives.com>  Tue, 07 Jul 2026 13:22:09 -0300
 
-cockpit-s3-browser (1.1.1-4jammy) jammy; urgency=medium
+cockpit-s3-browser (1.2.7-1jammy) jammy; urgency=medium
 
-  * build
+  * Apply SSE encryption params (--sse, --sse-kms-key-id) to prefix copy/move operations
+  * Fix NotImplemented fallback (RGW SSE-KMS) to preserve encryption on re-upload
+  * Support SSE params in multipart copy for large objects
+  * Remove unused _bucket_default_sse helper function
+  * Add debian architecture to manifest.json
 
- -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 10:58:32 -0300
+ -- Rachit Hans <rhans@45drives.com>  Tue, 07 Jul 2026 09:27:22 -0300
 
-cockpit-s3-browser (1.1.1-3jammy) jammy; urgency=medium
+cockpit-s3-browser (1.2.6-1jammy) jammy; urgency=medium
 
-  * encryption key fixes
-  * build
+  * fix: apply SSE encryption params to prefix copy/move operations
+  * fix: resolve pull request findings
+  * chore: add tsconfig.tsbuildinfo to .gitignore
 
- -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 08:58:48 -0300
+ -- Rachit Hans <rhans@45drives.com>  Tue, 07 Jul 2026 08:26:39 -0300
 
-cockpit-s3-browser (1.1.1-1jammy) jammy; urgency=medium
+cockpit-s3-browser (1.2.5-1jammy) jammy; urgency=medium
 
-  * encryption key fixes
+  * Fix: pass connectionHost to rustfsGetConfig for remote KMS check
+  * Fix: remove SSE-S3 option, fix RGW vault addr from provider, CopyObject fallback
+    for RGW SSE-KMS
+  * Fix: encryption UI fixes and connection defaults persistence
 
- -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 08:02:16 -0300
+ -- Rachit Hans <rhans@45drives.com>  Mon, 29 Jun 2026 13:57:44 -0300
 
-cockpit-s3-browser (encryption key fixes-5jammy) jammy; urgency=medium
+cockpit-s3-browser (1.2.4-1jammy) jammy; urgency=medium
 
-  * encryption key fixes
+  * Add 'Skip TLS certificate verification' checkbox to KMS setup UIs
+  * Add encryption setup documentation and test plans
 
- -- Rachit Hans <rhans@45drives.com>  Mon, 11 May 2026 08:01:29 -0300
+ -- Rachit Hans <rhans@45drives.com>  Tue, 16 Jun 2026 08:51:12 -0300
 
-cockpit-s3-browser (1.1.0-8jammy) jammy; urgency=medium
+cockpit-s3-browser (1.2.3-1jammy) jammy; urgency=medium
 
-  * build fix
+  * RGW Vault Setup: clarify Ceph admin host labeling
+  * S3 Browser: require KMS key policy selection for SSE-KMS encryption
 
- -- Rachit Hans <rhans@45drives.com>  Mon, 27 Apr 2026 10:54:37 -0300
+ -- Rachit Hans <rhans@45drives.com>  Mon, 01 Jun 2026 07:26:04 -0300
 
-cockpit-s3-browser (1.1.0-7jammy) jammy; urgency=medium
+cockpit-s3-browser (1.1.2-1jammy) jammy; urgency=medium
 
-  * test
+  * Require KMS key policy selection for SSE-KMS encryption
 
- -- Rachit Hans <rhans@45drives.com>  Mon, 27 Apr 2026 09:22:33 -0300
+ -- Rachit Hans <rhans@45drives.com>  Wed, 27 May 2026 08:24:08 -0300
+
+cockpit-s3-browser (1.2.2-1jammy) jammy; urgency=medium
+
+  * Rebuild for testing
+
+ -- Rachit Hans <rhans@45drives.com>  Tue, 26 May 2026 06:05:40 -0300
+
+cockpit-s3-browser (1.2.1-1jammy) jammy; urgency=medium
+
+  * Provider-first flow for RustFS and KES KMS setup with SSH deploy key helper
+  * Fixed RGW issue with deepberify
+
+ -- Rachit Hans <rhans@45drives.com>  Fri, 22 May 2026 11:12:52 -0300
+
+cockpit-s3-browser (1.2.0-1jammy) jammy; urgency=medium
+
+  * KES/RustFS KMS setup components with remote host support
+  * Replace name/port-based backend detection with endpoint probing
+  * Fix checkbox styling - use visible blue accent
+  * Fix SSL self-signed cert error handling and version string
+  * Fix pass credentials to roundtrip verification
+  * Fix bucket encryption display for unencrypted objects
+  * Fix pass endpoint/credentials to Deep Verify for non-RustFS backends
+  * Fix respect useTls and add tlsVerify for S3 endpoint connections
+
+ -- Rachit Hans <rhans@45drives.com>  Fri, 15 May 2026 11:48:51 -0300
 
 cockpit-s3-browser (1.1.0-6jammy) jammy; urgency=medium
 
-  * test
+  * fixed the app version showing undefined + build package
 
- -- Rachit Hans <rhans@45drives.com>  Mon, 27 Apr 2026 09:21:53 -0300
+ -- Rachit Hans <rhans@45drives.com>  Tue, 10 Feb 2026 06:47:39 -0400
 
 cockpit-s3-browser (1.1.0-5jammy) jammy; urgency=medium
 
