@@ -1,3 +1,9 @@
+cockpit-s3-browser (1.2.10-1trixie) trixie; urgency=medium
+
+  * fix: change debian source format from 3.0 (native) to 1.0 for build compatibility
+
+ -- Rachit Hans <rhans@45drives.com>  Tue, 14 Jul 2026 20:31:17 -0300
+
 cockpit-s3-browser (1.2.9-1trixie) trixie; urgency=medium
 
   * fix: use explicit cockpit deps for debian to avoid network-manager
