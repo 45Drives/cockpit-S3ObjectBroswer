@@ -1,3 +1,10 @@
+cockpit-s3-browser (1.2.11-1trixie) trixie; urgency=medium
+
+  * Add Debian Bookworm build target to manifest
+  * Update manifest.json build configuration
+
+ -- Rachit Hans <rhans@45drives.com>  Mon, 20 Jul 2026 14:05:47 -0300
+
 cockpit-s3-browser (1.2.10-1trixie) trixie; urgency=medium
 
   * fix: change debian source format from 3.0 (native) to 1.0 for build compatibility
